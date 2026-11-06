@@ -32,11 +32,12 @@ One invocation re-enters one parked item, checks that its READY is still current
 ## Scope
 
 - **A new one-time entry,** `/automate --merge-parked <run_id>` (the name may change if a house convention says otherwise; it must not be a `--resume` form). It runs inside the driver and spawns no phase session, so it also works under `--inline-phases` in host mode.
-- **Durable READY record:** when a drain ends READY (and when a fix-now re-drain does), record `ready_sha` and `ready_at` in `## Current`. Any input a later session's gate pass needs lives in the run file, never only in the sidecar; say so in `skills/automate-loop/run-file.md`.
+- **Durable READY record:** when a drain ends READY (and when a fix-now re-drain does), record `ready_sha`, `ready_at` and `termination_reason` in one `## Current` line. `drain_result` comes from the existing `owned_drain_result`. A READY report with no `ready_sha` writes no line, and an item change drops the line. Any input a later session's gate pass needs lives in the run file, never only in the sidecar; say so in `skills/automate-loop/run-file.md`.
 - **Pre-gate guard (this entry only):** before `gate-eval`, park with a named reason if a PR comment or review is newer than `ready_at`, or if the base has moved since READY (compare API `behind_by` > 0; never `mergeStateStatus`, which reads differently with strict protection off).
-- **Gate unchanged:** the entry calls the existing `automate-helpers.sh gate-eval`. No edit to `gate_eval`, its seven conditions or its ctx keys; `gate-eval` stays the only executor of `gh pr merge --squash`.
+- **Gate unchanged:** the entry calls the existing `automate-helpers.sh gate-eval`, feeding `drain_result`, `termination_reason` and `ready_sha` into the existing ctx from `## Current`, never from the sidecar `--resume` wipes. No edit to `gate_eval`, its seven conditions or its ctx keys; `gate-eval` stays the only executor of `gh pr merge --squash`.
 - **Locking:** take the run lock before `gate-eval` and hold it through closeout, so the merge watcher's closeout reads "run lock held" (already treated as transient) and retries.
-- **After `MERGE`:** the closeout `ns_reconcile_merged` uses (with trail), then CHECK OFF, then stop. Items remaining ⇒ `## Status: paused`, `pause_reason: awaiting_go`. None remaining ⇒ the existing done termination.
+- **After `MERGE`:** the closeout `ns_reconcile_merged` uses (with trail), then CHECK OFF, then stop. Items remaining ⇒ `## Status: paused`, `pause_reason: awaiting_go`, with this entry's own message (`ns_awaiting_go`'s default text describes a superseded drain). None remaining ⇒ the existing done termination.
+- **Tests:** a new part, `scripts/test-automate-next-step.d/13-merge-parked.sh`, registered in `test-automate-next-step.sh`. The golden fixtures copy `## Current`, so a replay that records a READY drain carrying `ready_sha` gains the new line in its `expected.md`, and no other byte changes.
 - **`--resume --auto-merge` on a parked open PR:** the park message names `--merge-parked` and states that the flag was not applied; `flag_mode` is not recorded. This flag's behaviour on a run with no open PR is unchanged.
 - **Docs:** `commands/automate.md`, `skills/automate-loop/resume.md` under a section titled exactly `### Merging one parked item`, `run-file.md`, `helpers.md`, `docs/result-schemas/automate-run.md`, and the steps and park reasons in `docs/loop-inventory/automate-loop.md`.
 
@@ -66,8 +67,9 @@ One invocation re-enters one parked item, checks that its READY is still current
 - [ ] Given any outcome, when the entry finishes, then `## Run Config` still reads `mode: safe` and no drain, lane or phase session was spawned.
 
 **Edge cases:**
-- [ ] Given a parked item, when `--resume` runs first and `--merge-parked` after, then the gate receives the recorded `ready_sha` (a test pins this: the sidecar wipe cannot lose a gate input).
-- [ ] Given a fix-now re-drain that ended READY on a new head, when the entry runs, then the recorded `ready_sha` is the re-drain's.
+- [ ] Given a parked item, when `--resume` runs first and `--merge-parked` after, then the ctx handed to `gate-eval` carries the recorded `ready_sha`, `drain_result: READY` and the recorded `termination_reason` (a test pins all three: the sidecar wipe cannot lose a gate input).
+- [ ] Given a fix-now re-drain that ended READY on a new head, when the entry runs, then the recorded `ready_sha` and `termination_reason` are the re-drain's.
+- [ ] Given a READY report with no `ready_sha`, when the drain result is recorded, then no READY line is written. Given `## Current` moves to another item, then the line is dropped.
 - [ ] Given the live head differs from the recorded `ready_sha`, when the entry runs, then it parks `PARK: head_sha_moved`, says a person must decide, and spawns nothing.
 - [ ] Given a PR comment or review newer than `ready_at`, when the entry runs, then it parks with a named reason and `gate-eval` does not run.
 - [ ] Given `behind_by` > 0 for the PR's base, when the entry runs, then it parks with a named reason and `gate-eval` does not run.
@@ -87,7 +89,7 @@ One invocation re-enters one parked item, checks that its READY is still current
 ## Validation (must pass before merge)
 
 1. **Static — the project's gates:** `bash scripts/ci-local.sh --affected` passes, including `check-token-budget.sh`, `check-doc-currency.sh`, `check-prompt-history-refs.sh` and `test-citation-drift.sh`; `bash scripts/check-version-bump.sh` passes, with a `changelog.d/` fragment and no hand-edited version.
-2. **Running system — Studio's p14 on a freshly parked item:** using this branch's plugin copy, park a NEW item on `vikashruhilgit/studio-sandbox` and re-enter it per `probes/p14-loomwright-merge-one-parked-item.md` in `vikashruhilgit/loomwright-studio`, merging only through the gate. The answer is yes only if one invocation merges, finishes the item, starts no drain and needs no hand edit. The output goes in `docs/evidence/merge-one-parked-item.md` with `Verdict: PASS for Validation 2`. PR 6 cannot serve: its failed resume should already have erased its `ready_sha` (from reading the code; no clone was available to confirm it), so it should park.
+2. **Running system — Studio's p14 on a freshly parked item:** using this branch's plugin copy, park a NEW item on `vikashruhilgit/studio-sandbox` and re-enter it per `probes/p14-loomwright-merge-one-parked-item.md` in `vikashruhilgit/loomwright-studio`, merging only through the gate. The answer is yes only if one invocation merges, finishes the item, starts no drain and needs no hand edit. The output goes in `docs/evidence/merge-one-parked-item.md` with `Verdict: PASS for Validation 2`. If the run cannot be completed, the file records exactly what ran with no `Verdict: PASS` line, so the validation gate parks for the owner. PR 6 cannot serve: its failed resume should already have erased its `ready_sha` (from reading the code; no clone was available to confirm it), so it should park.
 
 ### Priority
 - [x] MVP - Core functionality, must ship
@@ -102,7 +104,7 @@ One invocation re-enters one parked item, checks that its READY is still current
 ### Dependencies
 - Depends on: none
 - Blocks: Studio phase 8 items
-- Should land with: `2026-11-05-192935-trust-unprotected-private-free-and-empty-checks.md` (same wave, no shared files)
+- Should land with: `2026-11-05-192935-trust-unprotected-private-free-and-empty-checks.md` (same wave). The one shared file is `docs/loop-inventory/automate-loop.md`: on 2026-11-06 the owner had that item edit the rule cells of rows AL-420 and AL-421 there. This item adds its own rows and leaves those two alone.
 
 ### Risks
 - A busy `main` sends most re-entries back to the owner. Accepted (owner decision); it fails toward a person.
@@ -111,6 +113,9 @@ One invocation re-enters one parked item, checks that its READY is still current
 
 ### Success Metrics
 - p14 answers yes on a fresh sandbox item.
+
+### Plan Review history
+Launch Pad failed Plan Review on all 3 attempts on 2026-11-06 (run `automate-2026-11-06-131342`, lane L1). The last HIGH finding: the gate also needs `drain_result` and `termination_reason`, so the record above now covers them. The unreviewed draft with the reviewer's fixes may still exist at `/private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager-lanes-automate-2026-11-06-131342-L1/198e0ddf-9090-41c6-98d8-433bf2d9929f/scratchpad/brief.md`. Use it as a starting point if it is there, and re-check it against the code; this requirement wins on any difference.
 
 ### Handoff
 Ready for: `/launch-pad goal: ".supervisor/requirements/2026-11-05-192934-merge-one-parked-item-through-the-gate.md"`, or the plan doc's `/automate --backlog` line.
@@ -122,6 +127,8 @@ none
 loomwright/scripts/automate-next-step.sh
 loomwright/scripts/automate-helpers.d/runfile.sh
 loomwright/scripts/test-automate-next-step.sh
+loomwright/scripts/test-automate-next-step.d/13-merge-parked.sh
+loomwright/scripts/fixtures/automate-golden/dismissed-fix-now-re-drain/expected.md
 loomwright/commands/automate.md
 loomwright/skills/automate-loop/resume.md
 loomwright/skills/automate-loop/run-file.md
