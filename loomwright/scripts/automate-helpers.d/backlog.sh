@@ -8,7 +8,8 @@
 # backlog — every requirement item's real state, derived from evidence (parallel-automate/18a).
 # --------------------------------------------------------------------------- #
 #
-# A requirement's first `## Status:` line is not updated on merge (closeout APPENDS its done stamp),
+# A requirement's first `## Status:` line can say `pending` for merged work: a merge outside `/automate`
+# updates nothing, and closeout rewrites only an explicit pending/ready heading (requirement-heading.sh),
 # so a hand count of "pending" first lines over-counts open work and re-offers shipped work. Nothing
 # here is a hand-kept label: every value is recomputed from the sources on every run.
 #
