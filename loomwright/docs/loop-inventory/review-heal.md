@@ -110,7 +110,7 @@ This file lists every branch and rule that the standalone PR review-and-heal loo
 | RH-094 | skills/review-heal/SKILL.md | h: ### Step U2 — Required-check discovery (AC14, PINNED, fail CLOSED) | "checks green" is evaluated | gate on required checks ONLY, discovered from branch-protection metadata; optional failing checks never block READY | rule | global | script:drain-gh-read.sh required-checks | test-drain-gh-read.sh |
 | RH-095 | skills/review-heal/SKILL.md | q: Gate READY only on the discovered required contexts | required contexts are discovered | gate READY only on them, cross-referenced against `statusCheckRollup` | deterministic | prose | - | test-review-heal-next-step.sh |
 | RH-096 | skills/review-heal/SKILL.md | q: **Fail CLOSED:** if required-check metadata is **unavailable** | required-check metadata is unavailable (permissions, no protection, API error) | MUST NOT claim READY ⇒ `decision: ESCALATED`; unverifiable is not-green | deterministic | prose | script:drain-gh-read.sh required-checks | test-drain-gh-read.sh |
-| RH-096a | skills/review-heal/SKILL.md | q: **GitHub's paid-plan refusal is an answer, not a failed read.** | the protection read answers GitHub's paid-plan 403 | no required list can exist: every non-`NEUTRAL`/`SKIPPED` check blocks READY and the wait covers them all; any other 403 stays unavailable | deterministic | script:review-heal-next-step.sh required | script:wait-for-checks.sh | test-review-heal-next-step.sh |
+| RH-392 | skills/review-heal/SKILL.md | q: **GitHub's paid-plan refusal is an answer, not a failed read.** | the protection read answers GitHub's paid-plan 403 | no required list can exist: every non-`NEUTRAL`/`SKIPPED` check blocks READY and the wait covers them all; any other 403 stays unavailable | deterministic | script:review-heal-next-step.sh required | script:wait-for-checks.sh | test-review-heal-next-step.sh |
 | RH-097 | skills/review-heal/SKILL.md | q: **Escape hatch:** `--required-checks all-non-neutral` | `--required-checks all-non-neutral` is passed and metadata is missing | treat every non-`NEUTRAL`/`SKIPPED` check as blocking; the only way to proceed past an unreadable read | deterministic | prose | - | test-review-heal-next-step.sh |
 | RH-098 | skills/review-heal/SKILL.md | h: ### Step U2.5 — Wait-For-Settled-Checks (scoped, bounded) (AC3, AC4, PINNED) | a scoped check is still in flight | never declare READY; wait (bounded) for ONLY the scoped set, then re-scan ALL channels; never wait on the whole rollup | rule | global | script:wait-for-checks.sh | test-wait-for-checks.sh |
 | RH-099 | skills/review-heal/SKILL.md | q: it is a **required** check (always in scope), OR | a check is required | it is always in the scoped set | deterministic | prose | script:wait-for-checks.sh | test-wait-for-checks.sh |
@@ -414,8 +414,8 @@ This file lists every branch and rule that the standalone PR review-and-heal loo
 3. RH-391 — a routed drain fix whose edit step tampered with git must end the drain ESCALATED with no fallback and no push; no test exercises the seat paragraph
 
 ## Counts
-- rows: 391
-- deterministic: 185
+- rows: 392
+- deterministic: 186
 - judgment: 17
 - rule: 178
 - story: 11
