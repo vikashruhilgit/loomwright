@@ -81,6 +81,11 @@ if [ ! -f "$COMMON" ]; then
 fi
 # shellcheck disable=SC1090
 . "$COMMON"
+if [ ! -f "$SCRIPT_DIR/automate-helpers.d/status-stamp.sh" ]; then
+  echo "propose-work: automate-helpers.d/status-stamp.sh not found - skipping, nothing proposed" >&2
+  exit 0
+fi
+. "$SCRIPT_DIR/automate-helpers.d/status-stamp.sh"
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
@@ -209,7 +214,7 @@ cited_entries() {
 # ---------------------------------------------------------------------------
 # superseded_by <evidence-set-token> - path of the first file whose text already covers this
 # evidence set, or empty. Two arms: an existing file in proposed/ (dedup), and any
-# requirement file under REQ_DIR carrying `## Status: done` (supersession).
+# requirement file under REQ_DIR carrying a terminal stamp (status_is_done, supersession).
 #
 # grep is run directly against FILES, never as the right-hand side of a pipe: under
 # `pipefail` a `producer | grep -q` returns 141 on a match, which silently inverts the
@@ -226,7 +231,7 @@ superseded_by() {
     sb_list="$(find "$REQ_DIR" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)"
     while IFS= read -r sb_f; do
       [ -n "$sb_f" ] && [ -f "$sb_f" ] || continue
-      grep -Eq '^##[[:space:]]+Status:[[:space:]]*done[[:space:]]*$' "$sb_f" 2>/dev/null || continue
+      status_is_done "$sb_f" || continue
       if grep -Fq -- "$sb_tok" "$sb_f" 2>/dev/null; then printf '%s' "$sb_f"; return 0; fi
     done <<EOF
 $sb_list

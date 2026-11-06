@@ -109,6 +109,8 @@ else no "positive control: an unlisted subcommand was not reported unknown"; fi
 # Every family the dispatcher sources, in source order.
 FAMS="$(sed -n 's/^_ah_source \([a-z][a-z-]*\)$/\1/p' "$D")"
 NFAM="$(grep -c . <<<"$FAMS")"
+# status-stamp is a library family: it has no subcommand, so no case-table function and no usage block.
+CMD_FAMS="$(grep -vx status-stamp <<<"$FAMS")"
 if [ "$NFAM" -ge 8 ]; then ok "$NFAM family files sourced by name: $(tr '\n' ' ' <<<"$FAMS")"; else no "only $NFAM _ah_source lines found"; fi
 
 # mk_copy — a fresh scripts-dir copy holding the dispatcher + its family dir; prints its path
@@ -165,7 +167,7 @@ while read -r f; do
   MB="$(check_dispatch "$C")"
   if grep -q "function $fn not defined" <<<"$MB"; then ok "mutant (b) $f.sh: $fn renamed ⇒ dispatch check fails ($(grep -c . <<<"$MB") arm(s))"
   else no "mutant (b) $f.sh: $fn renamed but the dispatch check stayed green"; fi
-done <<<"$FAMS"
+done <<<"$CMD_FAMS"
 
 echo "== 5. --help / -h / no-arg output equals the ordered per-segment golden fixtures"
 LOADER="$(awk '/^# >>> family-file loader/,/^# <<< family-file loader/' "$D")"
@@ -227,7 +229,7 @@ else
     elif grep -qF "segment has no usage line: $f" "$T/hme"; then
       ok "usage-block mutant $f.sh: usage block removed ⇒ --help changes and fails, naming the empty segment"
     else no "usage-block mutant $f.sh: --help changed but stderr did not name the empty segment: $(head -1 "$T/hme")"; fi
-  done <<<"$FAMS"
+  done <<<"$CMD_FAMS"
 fi
 
 echo "== 6. every other _ah_usage fail-closed branch: exit non-zero, EMPTY stdout, the reason on stderr"

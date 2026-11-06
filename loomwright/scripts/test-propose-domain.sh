@@ -132,6 +132,7 @@ cp "$READ_PRODUCT" "$MUTDIR/read-product.sh" 2>/dev/null
 # copy beside it would hit the "sibling not found" skip path before it ever exercised the
 # behaviour a mutation control means to test.
 cp "$COMMON" "$MUTDIR/propose-common.sh" 2>/dev/null
+mkdir -p "$MUTDIR/automate-helpers.d"; cp "$HERE/automate-helpers.d/status-stamp.sh" "$MUTDIR/automate-helpers.d/" 2>/dev/null
 [ -f "$MUTDIR/propose-common.sh" ] \
   && ok "staged propose-common.sh beside the mutants, so a mutant sources the same guard the real script does" \
   || no "could not stage propose-common.sh beside the mutants - every mutation control would skip and pass vacuously"
@@ -586,6 +587,23 @@ else
     && ok "the report NAMES the file that caused it: $DONE6" \
     || no "the suppression report does not name the file that caused it:
 $(grep -i suppress "$LOGERR" 2>/dev/null)"
+
+  # A suffixed stamp supersedes too; a stamp only quoted in a code fence does not.
+  { printf '# Card-data vaulting\n\n## Status: pending\n\n%s\n\n## Status: done (PR #269, merge e319536)\n' "$TOK6"; } > "$DONE6"
+  reset_domain
+  D_PROJ="$PROJ"; D_OUT="$A6/run3"; D_REQ="$A6R"
+  run_domain
+  [ ! -f "$A6/run3/domain--card-data-vaulting.md" ] \
+    && ok "a '## Status: done (PR #N, merge <sha>)' file suppresses the gap" \
+    || no "a suffixed done stamp did not suppress the gap, so finished work is proposed again"
+  { printf '# Card-data vaulting\n\n## Status: pending\n\n%s\n\n```\n## Status: done\n```\n' "$TOK6"; } > "$DONE6"
+  reset_domain
+  D_PROJ="$PROJ"; D_OUT="$A6/run4"; D_REQ="$A6R"
+  run_domain
+  [ -f "$A6/run4/domain--card-data-vaulting.md" ] \
+    && ok "a stamp only quoted in a code fence does not suppress the gap" \
+    || no "a stamp quoted in a code fence suppressed the gap"
+  { printf '# Card-data vaulting: decided NOT-FOR-US\n\n## Status: done\n\n%s\n' "$TOK6"; } > "$DONE6"
 
   echo "-- MUTATION CONTROL: delete the done-supersession check and AC6 must go RED --"
   MUT6="$MUTDIR/mutant-nosupersede.sh"

@@ -233,7 +233,11 @@ _ah_source runfile
 # Authority for what is written here: automate-trail.sh closeout step 5 (post-merge),
 # which stamps the value ON this heading for exactly this reason. (Before
 # automate-followups/37, self-heal-advisory step 2.5 stamped it pre-merge.)
-is_done() { grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/dev/null; }
+# A stamp quoted in a code fence does not count: automate-helpers.d/status-stamp.sh.
+# >>> automate-helpers.d/status-stamp.sh
+_ah_source status-stamp
+# <<< automate-helpers.d/status-stamp.sh
+is_done() { status_is_done "$1"; }
 
 # is_not_ready <file> — true when the file carries a not-ready-to-run stamp on
 # its `## Status:` HEADING line (`proposed` or `parked`). This is a SEPARATE
@@ -243,7 +247,7 @@ is_done() { grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/
 # §AUTOMATE_RUN) — a run file stamped `## Status: paused` must never be
 # treated as not-ready, so `is_not_ready` is called ONLY from `resolve_folder`
 # and `resolve_backlog_dir`, never from `resume_glob`.
-is_not_ready() { grep -qE '^## Status:[[:space:]]*(proposed|parked)\b' "$1" 2>/dev/null; }
+is_not_ready() { status_is_not_ready "$1"; }
 
 # is_run_file <file> — true when the file carries the `/automate` run-file title
 # line `# Automate Run:` (docs/RESULT_SCHEMAS.md §AUTOMATE_RUN; the H1 every run
