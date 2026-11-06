@@ -762,6 +762,9 @@ GEPARTS
   # the whole rollup is read instead: every check must have concluded success,
   # neutral or skipped (a StatusContext: state success); a failing, pending or
   # in-progress check parks; an empty rollup holds.
+  # A NAMED required context keeps the stricter bar: success or neutral only (a
+  # StatusContext: state success), so a skipped required check parks
+  # checks_not_green (fail closed); loosening it is a gate-behaviour change.
   local checks_green
   checks_green="$(printf '%s' "$rollup_json" | "$JQ" -r --argjson req "$required_contexts_json" '
     . as $rollup
