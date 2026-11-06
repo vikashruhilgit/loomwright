@@ -799,7 +799,7 @@ CI_RUNNING='[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""}]'
 echo "== 33. paid-plan 403, a green rollup => required=green, under --required-only =="
 D33="$(fresh_stub_dir)"
 write_refusal_stub "$D33" "$PAID_BODY" "$PAID_ERR" "$CI_GREEN"
-OUTP="$(GH="$D33/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
+OUTP="$(WFC_NO_LIST_GRACE=0 GH="$D33/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP"); then
   ok "paid-plan 403 is not unknown: green CI reads green ($OUTP)"
 else
@@ -810,7 +810,7 @@ rm -rf "$D33"
 echo "== 34. paid-plan 403, a failing check that nothing lists as required => required=red, named =="
 D34="$(fresh_stub_dir)"
 write_refusal_stub "$D34" "$PAID_BODY" "$PAID_ERR" "$CI_RED"
-OUTP="$(GH="$D34/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only --names)"
+OUTP="$(WFC_NO_LIST_GRACE=0 GH="$D34/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only --names)"
 if grep -qE '^SETTLED sha=deadbeef00 required=red .*red_names=ci@77$' < <(printf '%s' "$OUTP"); then
   ok "paid-plan 403 never hides a failing check: required=red ($OUTP)"
 else
@@ -832,7 +832,7 @@ rm -rf "$D35"
 echo "== 36. paid-plan 403, an empty rollup just after a push => held through the grace, then the real result =="
 D36="$(fresh_stub_dir)"
 write_refusal_stub "$D36" "$PAID_BODY" "$PAID_ERR" '[]' "$CI_RED"
-OUTP="$(WFC_EMPTY_ROLLUP_GRACE=5 GH="$D36/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+OUTP="$(WFC_NO_LIST_GRACE=5 GH="$D36/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
 if grep -qE '^SETTLED sha=deadbeef00 required=red' < <(printf '%s' "$OUTP"); then
   ok "not-yet-queued checks are not read as green ($OUTP)"
 else
@@ -840,10 +840,22 @@ else
 fi
 rm -rf "$D36"
 
+echo "== 36b. paid-plan 403, one green check first and a red one queued later => held through the grace, reads red =="
+D36B="$(fresh_stub_dir)"
+CI_LATE='[{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS","state":""},{"name":"ci","status":"COMPLETED","conclusion":"FAILURE","state":""}]'
+write_refusal_stub "$D36B" "$PAID_BODY" "$PAID_ERR" '[{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS","state":""}]' "$CI_LATE"
+OUTP="$(WFC_NO_LIST_GRACE=5 GH="$D36B/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+if grep -qE '^SETTLED sha=deadbeef00 required=red' < <(printf '%s' "$OUTP"); then
+  ok "a partly queued rollup is not read as green ($OUTP)"
+else
+  no "paid-plan 403 partly queued rollup wrong (out='$OUTP') -- a green check first hid the red one"
+fi
+rm -rf "$D36B"
+
 echo "== 37. paid-plan 403, a rollup that stays empty (no CI) => settles green after the grace, never elapses =="
 D37="$(fresh_stub_dir)"
 write_refusal_stub "$D37" "$PAID_BODY" "$PAID_ERR" '[]'
-OUTP="$(WFC_EMPTY_ROLLUP_GRACE=1 GH="$D37/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+OUTP="$(WFC_NO_LIST_GRACE=1 GH="$D37/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
 POLLS="$(cat "$D37/count" 2>/dev/null)"
 if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP") && [ "${POLLS:-0}" -ge 2 ]; then
   ok "no CI settles after the grace ($POLLS polls, $OUTP)"

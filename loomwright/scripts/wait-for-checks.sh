@@ -120,9 +120,10 @@
 #     The paid-plan refusal (protection-paid-plan.sh) means the repo cannot have
 #     a required list, so every check in the rollup except NEUTRAL/SKIPPED is
 #     treated as required: `required=` then reads the repo's real CI, under
-#     --required-only too. An EMPTY rollup settles only after a grace
-#     (WFC_EMPTY_ROLLUP_GRACE, default 60 s, at most half of --bound): just
-#     after a push it means "checks not queued yet", not "no CI".
+#     --required-only too. With no list to compare against, a check not queued
+#     yet is invisible, so nothing settles before a grace (WFC_NO_LIST_GRACE,
+#     default 60 s, at most half of --bound). A check that first appears after
+#     the grace is still missed.
 #
 # GH STUB SEAM (tests)
 #   The `gh` binary is invoked via "${GH:-gh}" throughout — a test exports
@@ -443,13 +444,14 @@ SECONDS=0   # bash builtin wall-clock counter — reset here so $SECONDS is the
             # elapsed time since THIS script started, never a `date`-diff
             # (bash 3.2 / BSD safe; no `timeout` binary dependency).
 
-# How long an empty rollup stays unsettled when there is no required list. Kept under the bound, so a
-# repo with no CI settles rather than elapsing, and --bound 0 (a one-shot read) never waits.
-EMPTY_GRACE="${WFC_EMPTY_ROLLUP_GRACE:-60}"
-case "$EMPTY_GRACE" in ''|*[!0-9]*) EMPTY_GRACE=60 ;; esac
+# How long nothing settles when there is no required list: the rollup is the only record of which checks
+# exist, and just after a push it can be empty or partial. Kept under the bound, so a repo with no CI settles
+# rather than elapsing, and --bound 0 (a one-shot read) never waits.
+NO_LIST_GRACE="${WFC_NO_LIST_GRACE:-60}"
+case "$NO_LIST_GRACE" in ''|*[!0-9]*) NO_LIST_GRACE=60 ;; esac
 case "$BOUND" in
-  ''|*[!0-9]*) EMPTY_GRACE=0 ;;
-  *) [ "$EMPTY_GRACE" -gt $((BOUND / 2)) ] && EMPTY_GRACE=$((BOUND / 2)) ;;
+  ''|*[!0-9]*) NO_LIST_GRACE=0 ;;
+  *) [ "$NO_LIST_GRACE" -gt $((BOUND / 2)) ] && NO_LIST_GRACE=$((BOUND / 2)) ;;
 esac
 
 while :; do
@@ -504,7 +506,7 @@ EOF_STATS
     if [ "$_req_materialized" -ge "$_req_total" ] 2>/dev/null && [ "$_req_inflight" -eq 0 ] 2>/dev/null; then
       required_settled=1
     fi
-    if [ "$no_required_list" -eq 1 ] && [ "$rollup" = "[]" ] && [ "$SECONDS" -lt "$EMPTY_GRACE" ]; then
+    if [ "$no_required_list" -eq 1 ] && [ "$SECONDS" -lt "$NO_LIST_GRACE" ]; then
       required_settled=0
     fi
     if [ "$_req_notgreen" -gt 0 ] 2>/dev/null; then

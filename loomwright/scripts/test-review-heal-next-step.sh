@@ -786,17 +786,17 @@ paid_case() {
   rm -f "$C/seq/wait.lines"
 }
 paid_case core-green.json
-DRV_WAIT_CMD="" drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] \
   && ok "B: paid-plan 403 is not required_checks_unavailable: the real wait settles and the drain reads the channels" \
   || no "B: paid-plan 403 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null) $(cat "$C/last.err" | head -n 3)"
-DRV_WAIT_CMD="" drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
 [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && grep -qx '  termination_reason: converged' < <(b_block) \
   && ok "B: paid-plan 403 with green CI ⇒ READY converged, the result the merge gate reads" \
   || no "B: paid-plan 403 green ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision, message}' 2>/dev/null)"
 paid_case core-ci-red.json
-DRV_WAIT_CMD="" drv "$DRIVER" --start drain
-DRV_WAIT_CMD="" drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
 [ "$(printf '%s' "$OUT" | jq -r '.decision // "none"')" != READY ] && [ "$(printf '%s' "$OUT" | jq -r '.required_failing // [] | join(",")')" = ci ] \
   && ok "B: paid-plan 403 with red CI ⇒ never READY: the check nothing lists as required goes to the fix round" \
   || no "B: paid-plan 403 red ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision, message, required_failing}' 2>/dev/null)"
@@ -813,7 +813,7 @@ for bad in 'gh: Resource not accessible by integration (HTTP 403)|{"message":"Re
 done
 # the wait makes its own protection read: a different refusal there still escalates, past a paid-plan required read
 paid_case core-green.json '{"message":"API rate limit exceeded","status":"403"}'
-DRV_WAIT_CMD="" drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
   && ok "B: a rate-limit 403 on the wait's own read ⇒ required=unknown ⇒ ESCALATED, past a paid-plan required read" \
   || no "B: wait's rate-limit 403 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
