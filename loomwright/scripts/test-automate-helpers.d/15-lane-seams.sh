@@ -118,13 +118,16 @@ if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: phase_relay_unavailable'
 # scope_hold (lane-scope-regate Part B) is a --parallel N>1 lane's hold before its Supervisor phase: run-level form
 run_h bash "$H" current-set "$LG_RF" --pause-reason scope_hold
 if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: scope_hold' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "SCOPEHOLD current-set accepts --pause-reason scope_hold (run-level form, item line unchanged — the item stays running)"; else no "SCOPEHOLD current-set scope_hold refused (rc=$RUN_RC): $(tr '\n' '|' < "$LG_RF")"; fi
+# no_pr_stop is a deliberate no-PR stop's park: run-level form, the item stays running
+run_h bash "$H" current-set "$LG_RF" --pause-reason no_pr_stop
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: no_pr_stop' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "NOPRSTOP current-set accepts --pause-reason no_pr_stop (run-level form, item line unchanged)"; else no "NOPRSTOP current-set no_pr_stop wrong (rc=$RUN_RC): $RUN_OUT"; fi
 # Every enum copy carries live_lane (runfile.sh validator, SKILL §3 template, automate-run.md template); the
-# two templates pin the tail exactly — live_lane, then phase_relay_unavailable (automate-speed/09), then null.
+# two templates pin the tail exactly — live_lane, then phase_relay_unavailable (automate-speed/09), then no_pr_stop, then null.
 lg_bad=""
 grep -q '^CURRENT_PAUSE_ENUM=.* live_lane ' "$HERE/automate-helpers.d/runfile.sh" || lg_bad="$lg_bad runfile.sh"
-grep -q '^- pause_reason: .*|live_lane|phase_relay_unavailable|null$' "$SKILL_FILE" || lg_bad="$lg_bad SKILL§3"
-grep -q '^- pause_reason: .*|live_lane|phase_relay_unavailable|null$' "$RUN_DOC" || lg_bad="$lg_bad automate-run.md"
-grep -qF -- '`meta_unreachable`, `closeout_leftover`, `live_lane` | `current-set <rf> --pause-reason <reason>`' "$SKILL_FILE" || lg_bad="$lg_bad SKILL-transition-table"
+grep -q '^- pause_reason: .*|live_lane|phase_relay_unavailable|no_pr_stop|null$' "$SKILL_FILE" || lg_bad="$lg_bad SKILL§3"
+grep -q '^- pause_reason: .*|live_lane|phase_relay_unavailable|no_pr_stop|null$' "$RUN_DOC" || lg_bad="$lg_bad automate-run.md"
+grep -qF -- '`meta_unreachable`, `closeout_leftover`, `live_lane`, `no_pr_stop` | `current-set <rf> --pause-reason <reason>`' "$SKILL_FILE" || lg_bad="$lg_bad SKILL-transition-table"
 if [ -z "$lg_bad" ]; then ok "LANEGUARD live_lane is in every pause_reason enum copy"; else no "LANEGUARD live_lane missing from:$lg_bad"; fi
 # Prose seams (same helper on the real SKILL and on a mutant, like G7): §6 step 1's PICK-time run-lock
 # paragraph runs pick-guard AFTER the acquire and parks live_lane with the lock released; §4's start
