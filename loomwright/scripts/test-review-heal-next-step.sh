@@ -176,7 +176,7 @@ drv() {
     export HOME="$C_HOME" PATH="$C_BIN:$PATH" RH_GH_TABLE="$C/gh.table" RH_CASE="$C_CASE" RH_GH_STATE="$C/ghstate"
     export RH_SEQ_DIR="$C/seq" RH_SEQ_STATE="$C/seqstate" RH_SIDE_LOG="$C/side.log" RH_COMMENTS="$C/comments.log"
     export RH_CALLS="$C/calls.log"
-    export RH_WAIT_CMD="$C_BIN/seq wait" RH_PROBE_CMD="$C_BIN/seq probe" RH_RULES_CMD="$C_BIN/seq rules"
+    export RH_WAIT_CMD="${DRV_WAIT_CMD-$C_BIN/seq wait}" RH_PROBE_CMD="$C_BIN/seq probe" RH_RULES_CMD="$C_BIN/seq rules"
     export RH_ESCALATION_CMD="$C_BIN/seq escalation" RH_NOTIFY_CMD="$C_BIN/rec notify" RH_POSTMORTEM_CMD="$C_BIN/rec postmortem"
     export RH_WEBHOOK_CMD="$C_BIN/rec webhook" RH_READ_RETRY_DELAYS="0 0"
     bash "$d" "$PR" "$@"
@@ -762,6 +762,61 @@ echo "SETTLED sha=$SHA_A required=unknown review_producing=settled" > "$C/seq/wa
 drv "$DRIVER" --start drain --required-checks all-non-neutral
 [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] \
   && ok "B: required=unknown under all-non-neutral proceeds to the read" || no "B: required=unknown + all-non-neutral ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+# GitHub's paid-plan refusal on a private Free repo: no flag needed, and every non-neutral check blocks READY.
+# These legs run the REAL wait-for-checks.sh (DRV_WAIT_CMD empty) against the same gh stub, so they cover the
+# path from the 403 to the drain's result, which is what the merge gate's condition 1 reads.
+REQ_ROW='api --method GET repos/acme/widgets/branches/main/protection/required_status_checks'
+PAID_REQ_OUT='{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-status-checks-protection","status":"403"}'
+PAID_ERR_LINE='gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)'
+# paid_case <core fixture> [<the wait's protection output>] — a converged-ready sandbox whose required read refuses
+# with the paid-plan 403 and whose wait reads the rollup of <core>. The stub's stderr file is shared by every failing
+# row, so a case that gives the wait a different refusal drops it (stdout alone still names the paid-plan 403).
+paid_case() {
+  local core="$FIX/_common/$1" wait_prot="${2:-$PAID_REQ_OUT}"
+  setup_case "$FIX/converged-ready"
+  gh_row "$REQ_ROW" 1 "$PAID_REQ_OUT"
+  gh_row 'pr view * --json statusCheckRollup*' 0 "@../_common/$1"
+  if [ "$#" -lt 2 ]; then printf '%s\n' "$PAID_ERR_LINE" > "$C/gh.stderr"; fi
+  {
+    printf '0\t*\tpr view * --json baseRefName\t{"baseRefName":"main"}\n'
+    printf '0\t*\tpr view * --json headRefOid,statusCheckRollup\t%s\n' \
+      "$(jq -c --arg h "$SHA_A" '{headRefOid: $h, statusCheckRollup}' "$core")"
+    printf '1\t*\tapi repos/acme/widgets/branches/main/protection\t%s\n' "$wait_prot"
+  } >> "$C/gh.table"
+  rm -f "$C/seq/wait.lines"
+}
+paid_case core-green.json
+DRV_WAIT_CMD="" drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] \
+  && ok "B: paid-plan 403 is not required_checks_unavailable: the real wait settles and the drain reads the channels" \
+  || no "B: paid-plan 403 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null) $(cat "$C/last.err" | head -n 3)"
+DRV_WAIT_CMD="" drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+[ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && grep -qx '  termination_reason: converged' < <(b_block) \
+  && ok "B: paid-plan 403 with green CI ⇒ READY converged, the result the merge gate reads" \
+  || no "B: paid-plan 403 green ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision, message}' 2>/dev/null)"
+paid_case core-ci-red.json
+DRV_WAIT_CMD="" drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+[ "$(printf '%s' "$OUT" | jq -r '.decision // "none"')" != READY ] && [ "$(printf '%s' "$OUT" | jq -r '.required_failing // [] | join(",")')" = ci ] \
+  && ok "B: paid-plan 403 with red CI ⇒ never READY: the check nothing lists as required goes to the fix round" \
+  || no "B: paid-plan 403 red ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision, message, required_failing}' 2>/dev/null)"
+# every other refusal still escalates, at the required step and before any wait
+for bad in 'gh: Resource not accessible by integration (HTTP 403)|{"message":"Resource not accessible by integration","status":"403"}|token-scope 403' \
+           'gh: Server Error (HTTP 500)|{"message":"Server Error","status":"500"}|5xx' \
+           'gh: Upgrade to GitHub Pro (HTTP 500)|{"message":"Upgrade to GitHub Pro","status":"500"}|5xx quoting the upgrade text'; do
+  bad_err="${bad%%|*}"; bad_rest="${bad#*|}"; bad_out="${bad_rest%%|*}"; bad_label="${bad_rest#*|}"
+  setup_case "$FIX/converged-ready"; gh_row "$REQ_ROW" 1 "$bad_out"; printf '%s\n' "$bad_err" > "$C/gh.stderr"
+  drv "$DRIVER" --start drain
+  [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
+    && ! grep -q '^wait ' "$C/calls.log" && ok "B: $bad_label on the required read ⇒ ESCALATED before the wait" \
+    || no "B: $bad_label ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+done
+# the wait makes its own protection read: a different refusal there still escalates, past a paid-plan required read
+paid_case core-green.json '{"message":"API rate limit exceeded","status":"403"}'
+DRV_WAIT_CMD="" drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
+  && ok "B: a rate-limit 403 on the wait's own read ⇒ required=unknown ⇒ ESCALATED, past a paid-plan required read" \
+  || no "B: wait's rate-limit 403 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
 # thread classification: a human-authored unresolved thread and a RESOLVED bot thread are no candidates
 setup_case "$FIX/converged-ready"
 gh_row 'api graphql *' 0 '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"alice","__typename":"User"},"body":"Reviewed: one finding, please rename load_config"}]}},{"isResolved":true,"comments":{"nodes":[{"author":{"login":"claude[bot]","__typename":"Bot"},"body":"Reviewed a1b2c3d. One finding: widget.sh line 9 quotes nothing"}]}}]}}}}}'

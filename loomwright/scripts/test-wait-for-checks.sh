@@ -765,6 +765,134 @@ else
 fi
 rm -rf "$D32"
 
+# ----------------------------------------------------------------------------
+# GitHub's paid-plan refusal (a private repo on GitHub Free): no required list can
+# exist, so every non-neutral check in the rollup counts as required. The stub's
+# body and error line are the text a real `gh api` prints on such a repo.
+# ----------------------------------------------------------------------------
+PAID_BODY='{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-branch-protection","status":"403"}'
+PAID_ERR='gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)'
+# write_refusal_stub <dir> <protection stdout> <protection stderr> <rollup json>... — each poll serves the
+# next rollup and the last one repeats; the protection read exits 1.
+write_refusal_stub() {
+  local dir="$1" body="$2" err="$3" i=0 r; shift 3
+  for r in "$@"; do i=$((i + 1)); printf '%s\n' "$r" > "$dir/rollup.$i"; done
+  printf '%s\n' "$body" > "$dir/prot.out"; printf '%s\n' "$err" > "$dir/prot.err"
+  cat > "$dir/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
+  *headRefOid*)
+    n=\$(( \$(cat "$dir/count" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$dir/count"
+    [ "\$n" -le $i ] || n=$i
+    printf '{"headRefOid":"$SHA","statusCheckRollup":%s}\n' "\$(cat "$dir/rollup.\$n")"
+    exit 0 ;;
+esac
+cat "$dir/prot.out"; cat "$dir/prot.err" >&2; exit 1
+EOF
+  chmod +x "$dir/gh"
+}
+CI_RED='[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE","state":"","detailsUrl":"https://github.com/acme/widgets/actions/runs/77/job/1"}]'
+CI_GREEN='[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS","state":""},{"name":"lint","status":"COMPLETED","conclusion":"SKIPPED","state":""}]'
+CI_RUNNING='[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""}]'
+
+echo "== 33. paid-plan 403, a green rollup => required=green, under --required-only =="
+D33="$(fresh_stub_dir)"
+write_refusal_stub "$D33" "$PAID_BODY" "$PAID_ERR" "$CI_GREEN"
+OUTP="$(GH="$D33/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
+if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP"); then
+  ok "paid-plan 403 is not unknown: green CI reads green ($OUTP)"
+else
+  no "paid-plan 403 green rollup wrong (out='$OUTP')"
+fi
+rm -rf "$D33"
+
+echo "== 34. paid-plan 403, a failing check that nothing lists as required => required=red, named =="
+D34="$(fresh_stub_dir)"
+write_refusal_stub "$D34" "$PAID_BODY" "$PAID_ERR" "$CI_RED"
+OUTP="$(GH="$D34/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only --names)"
+if grep -qE '^SETTLED sha=deadbeef00 required=red .*red_names=ci@77$' < <(printf '%s' "$OUTP"); then
+  ok "paid-plan 403 never hides a failing check: required=red ($OUTP)"
+else
+  no "paid-plan 403 red rollup wrong (out='$OUTP') -- a vacuous green here would let red CI reach the gate"
+fi
+rm -rf "$D34"
+
+echo "== 35. paid-plan 403, a running check => the wait stays open and ELAPSED names it =="
+D35="$(fresh_stub_dir)"
+write_refusal_stub "$D35" "$PAID_BODY" "$PAID_ERR" "$CI_RUNNING"
+OUTP="$(GH="$D35/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 1 --interval 1 --required-only --names)"
+if grep -qE '^ELAPSED sha=deadbeef00 required=pending .*pending_names=ci ' < <(printf '%s' "$OUTP"); then
+  ok "paid-plan 403 waits on every check ($OUTP)"
+else
+  no "paid-plan 403 running check wrong (out='$OUTP')"
+fi
+rm -rf "$D35"
+
+echo "== 36. paid-plan 403, an empty rollup just after a push => held through the grace, then the real result =="
+D36="$(fresh_stub_dir)"
+write_refusal_stub "$D36" "$PAID_BODY" "$PAID_ERR" '[]' "$CI_RED"
+OUTP="$(WFC_EMPTY_ROLLUP_GRACE=5 GH="$D36/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+if grep -qE '^SETTLED sha=deadbeef00 required=red' < <(printf '%s' "$OUTP"); then
+  ok "not-yet-queued checks are not read as green ($OUTP)"
+else
+  no "paid-plan 403 late-materializing rollup wrong (out='$OUTP') -- checks not queued yet were read as settled"
+fi
+rm -rf "$D36"
+
+echo "== 37. paid-plan 403, a rollup that stays empty (no CI) => settles green after the grace, never elapses =="
+D37="$(fresh_stub_dir)"
+write_refusal_stub "$D37" "$PAID_BODY" "$PAID_ERR" '[]'
+OUTP="$(WFC_EMPTY_ROLLUP_GRACE=1 GH="$D37/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+POLLS="$(cat "$D37/count" 2>/dev/null)"
+if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP") && [ "${POLLS:-0}" -ge 2 ]; then
+  ok "no CI settles after the grace ($POLLS polls, $OUTP)"
+else
+  no "paid-plan 403 empty rollup wrong (polls=$POLLS out='$OUTP')"
+fi
+rm -rf "$D37"
+
+echo "== 38. paid-plan 403, --bound 0 (a one-shot read) => no grace wait =="
+D38="$(fresh_stub_dir)"
+write_refusal_stub "$D38" "$PAID_BODY" "$PAID_ERR" '[]'
+OUTP="$(GH="$D38/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only)"
+if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP") && [ "$(cat "$D38/count")" = 1 ]; then
+  ok "one-shot read returns at once ($OUTP)"
+else
+  no "paid-plan 403 --bound 0 wrong (polls=$(cat "$D38/count") out='$OUTP')"
+fi
+rm -rf "$D38"
+
+echo "== 39. other refusals stay required=unknown, even with green checks =="
+for pair in \
+  '{"message":"Resource not accessible by integration","status":"403"}|gh: Resource not accessible by integration (HTTP 403)|token-scope 403' \
+  '{"message":"Must have admin rights to Repository.","status":"403"}|gh: Must have admin rights to Repository. (HTTP 403)|permissions 403' \
+  '{"message":"Upgrade to GitHub Pro","status":"500"}|gh: Upgrade to GitHub Pro (HTTP 500)|5xx quoting the upgrade text' \
+  '{"message":"Server Error","status":"502"}|gh: Server Error (HTTP 502)|5xx'; do
+  body="${pair%%|*}"; rest="${pair#*|}"; err="${rest%%|*}"; label="${rest#*|}"
+  D39="$(fresh_stub_dir)"
+  write_refusal_stub "$D39" "$body" "$err" "$CI_GREEN"
+  OUTP="$(GH="$D39/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
+  if grep -qE '^SETTLED sha=deadbeef00 required=unknown' < <(printf '%s' "$OUTP"); then
+    ok "$label: required=unknown ($OUTP)"
+  else
+    no "$label wrong (out='$OUTP') -- only the paid-plan refusal may leave unknown"
+  fi
+  rm -rf "$D39"
+done
+
+echo "== 40. the library missing beside the script => the refusal reads unknown (fail closed) =="
+D40="$(fresh_stub_dir)"
+write_refusal_stub "$D40" "$PAID_BODY" "$PAID_ERR" "$CI_GREEN"
+mkdir "$D40/lib"; cp "$SUT" "$D40/lib/wait-for-checks.sh"
+OUTP="$(GH="$D40/gh" bash "$D40/lib/wait-for-checks.sh" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
+if grep -qE '^SETTLED sha=deadbeef00 required=unknown' < <(printf '%s' "$OUTP"); then
+  ok "no library: required=unknown ($OUTP)"
+else
+  no "missing library wrong (out='$OUTP')"
+fi
+rm -rf "$D40"
+
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
 rm -rf "$D18" "$D20" "$D21" "$D22" "$D25" "$D26" "$D28"
