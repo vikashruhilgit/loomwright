@@ -228,6 +228,18 @@ PROJ="$(new_project "$FIX/product.json")"
 [ -d "$PROJ/.git" ] && ok "built the fixture project as a throwaway git repo outside the repo root: $PROJ" \
   || no "could not build the fixture project - every case below is inconclusive"
 
+# The status library missing: this copy has its other siblings but no automate-helpers.d/.
+NOLIB="$ROOT/nolib"; mkdir -p "$NOLIB"
+cp "$SUT" "$NOLIB/propose-domain.sh"; cp "$READ_PRODUCT" "$COMMON" "$NOLIB/"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$NOLIB/out"; D_REQ="$NOLIB/req"; D_SCRIPT="$NOLIB/propose-domain.sh"
+run_domain; rc=$?
+[ "$rc" -eq 0 ] && ok "status library missing: exit 0" || no "status library missing: exit $rc"
+grep -Fq "status-stamp.sh not found - skipping, nothing proposed" "$LOGERR" 2>/dev/null \
+  && ok "status library missing: the reason is named" || no "status library missing: no named reason"
+[ ! -e "$NOLIB/out" ] && ok "status library missing: nothing was written" || no "status library missing: something was written"
+reset_domain
+
 echo
 echo "== AC1: bare /propose (the ledger basis) makes ZERO external calls =="
 # Asserted by OBSERVING the stub and the network shim, never by grepping propose-work.sh.

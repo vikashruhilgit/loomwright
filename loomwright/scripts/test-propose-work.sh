@@ -380,6 +380,14 @@ grep -Fq "not found - skipping, nothing proposed" "$LOGERR" 2>/dev/null \
   && ok "basis missing: the reason is named" || no "basis missing: no named reason"
 [ "$(count_props "$MO1")" -eq 0 ] && ok "basis missing: nothing was written" || no "basis missing: something was written"
 
+# The status library missing: this copy has no automate-helpers.d/ beside it.
+ML="$(mktmp)"; cp "$SUT" "$ML/propose-work.sh"
+run_sut "$M1/there-is-no-floor.json" "$ML/out" "$ML/req" "$ML/propose-work.sh"; rc=$?
+[ "$rc" -eq 0 ] && ok "status library missing: exit 0" || no "status library missing: exit $rc"
+grep -Fq "status-stamp.sh not found - skipping, nothing proposed" "$LOGERR" 2>/dev/null \
+  && ok "status library missing: the reason is named" || no "status library missing: no named reason"
+[ "$(count_props "$ML/out")" -eq 0 ] && ok "status library missing: nothing was written" || no "status library missing: something was written"
+
 M2="$(mktmp)"; MO2="$M2/out"
 run_sut "$MALFORMED" "$MO2" "$M2/req"; rc=$?
 [ "$rc" -eq 0 ] && ok "basis malformed: exit 0" || no "basis malformed: exit $rc"
