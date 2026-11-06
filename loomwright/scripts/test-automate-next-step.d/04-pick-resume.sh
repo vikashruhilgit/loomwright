@@ -27,8 +27,17 @@ LEG_MSG=""
 if leg_watch_note "$DRIVER"; then ok "P9: a live merge watcher of the in-flight open PR ⇒ ONE merge-watch noted line at the open-PR park (not repeated); a dead one ⇒ none"
 else no "P9: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_stops "$DRIVER"; then ok "P10: run_done (--start pick on a done run) / pick_already_started (a pending /autonomous spawn) / run_not_incomplete (--resume --run naming no incomplete run) ⇒ exit 2, the exact refusal line, nothing printed, .supervisor/ byte-unchanged, no run lock"
+if leg_stops "$DRIVER"; then ok "P10: run_done (--start pick on a done run) / pick_already_started (a pending /autonomous spawn) / run_not_incomplete (--resume --run naming no run) ⇒ exit 2, the exact refusal line, nothing printed, .supervisor/ byte-unchanged, no run lock"
 else no "P10: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_resume_done "$DRIVER"; then ok "P16: --resume --run on a run that reads done (stamped by this call's --finalize, or earlier) ⇒ exit 0 done/done with run_file + closeout_others, no refusal, no PICK, no lock, no sidecar; a result sidecar named as the id ⇒ run_not_incomplete"
+else no "P16: $LEG_MSG"; fi
+LEG_MSG=""
+if m="$(build_mutant rd-done 'if bash "$H" is-run-file "$NS_NAMED" 2>/dev/null' 'if false')" && ! leg_resume_done "$m"; then ok "P16 pin: the done branch removed ⇒ the P16 leg turns red"
+else no "P16 pin: ${LEG_MSG:-mutant survived}"; fi
+LEG_MSG=""
+if m="$(build_mutant rd-title 'if bash "$H" is-run-file "$NS_NAMED" 2>/dev/null' 'if [ -f "$NS_NAMED" ]')" && ! leg_resume_done "$m"; then ok "P16 pin: the run-file shape check removed ⇒ the P16 leg turns red (a sidecar reads as a done run)"
+else no "P16 pin (title): ${LEG_MSG:-mutant survived}"; fi
 LEG_MSG=""
 if leg_meta_push "$DRIVER"; then ok "P11: a non-empty meta-push-failed answer ⇒ ONE meta-push-failed: ## Progress line + the stderr report, the PICK proceeds (next: pending); no marker ⇒ nothing written"
 else no "P11: $LEG_MSG"; fi

@@ -207,7 +207,7 @@
 # byte-unchanged, no backup), `config_backup_stranded`, `session_id_missing` / `session_id_malformed`
 # (`--start run|pick` / `--resume` without this loop's session id), `run_already_started`,
 # `pick_already_started` (a spawn of this pass is pending), `run_done` (`--start pick` on a `## Status:
-# done` run), `run_not_incomplete` (`--resume --run <id>` naming no incomplete run), `drain_already_owned`,
+# done` run), `run_not_incomplete` (`--resume --run <id>` naming no run; a run that reads done is exit 0 `done`), `drain_already_owned`,
 # `reserved_prefix` — nothing written, but for ONE exception: a refused `--result` report appends its ok:false
 # line to the coordinator-model ledger (the coordinator-model block below; usage errors append nothing).
 # A writer's own non-zero code is passed through (progress-append's 3,
@@ -523,7 +523,24 @@ if [ -n "$RESUME_DIR" ]; then
   case "$RUN_SEL" in
     ""|latest) RF="$(printf '%s\n' "$NS_RES_RUNS" | grep . | tail -n 1)" ;;
     *) RF="$(printf '%s\n' "$NS_RES_RUNS" | NS_B="$RUN_SEL.md" awk 'BEGIN { b = ENVIRON["NS_B"] } { n = split($0, p, "/"); if (p[n] == b) { print; exit } }')"
-       [ -n "$RF" ] || ns_die2 "run_not_incomplete — --run $RUN_SEL names no incomplete run in $RESUME_DIR — nothing written" ;;
+       if [ -z "$RF" ]; then
+         # A named run that reads done is an answer, not a refusal: the --finalize above may have stamped it
+         # done in this very call (and pushed its trail). The id naming no run at all is the refusal, and its
+         # "nothing written" means past the start steps, which ran before the lookup (automate-run.md §--resume).
+         NS_NAMED="$RESUME_DIR/$RUN_SEL.md"
+         if bash "$H" is-run-file "$NS_NAMED" 2>/dev/null \
+            && [ "$(sed -n 's/^## Status: //p' "$NS_NAMED" | head -n 1)" = done ]; then
+           NS_NAMED_LEFT="$(bash "$H" remaining "$NS_NAMED" 2>/dev/null | tail -n 1)"
+           case "$NS_NAMED_LEFT" in ''|*[!0-9]*) ns_err "remaining printed '$NS_NAMED_LEFT' for $NS_NAMED, not a count"; exit 1 ;; esac
+           ns_cm_resolve "$(ns_checkout_of "$RESUME_DIR")"
+           "$JQ" -cn --arg id "$RUN_SEL" --arg rf "$NS_NAMED" --argjson n "$NS_NAMED_LEFT" --arg co "$NS_RES_CO" --arg cm "$NS_CM" \
+             '{do: "done", step: "resume", run_id: $id, item: null, pr: null, coordinator_model: $cm, status: "done", remaining: $n, run_file: $rf,
+               message: ("run " + $id + " is done — nothing to resume"), closeout_others: ($co | split("\n") | map(select(length > 0)))}'
+           exit 0
+         fi
+         [ -z "$NS_RES_CO" ] || printf '%s\n' "$NS_RES_CO" >&2
+         ns_die2 "run_not_incomplete — --run $RUN_SEL names no run in $RESUME_DIR — nothing written past the start steps"
+       fi ;;
   esac
   if [ -z "$RF" ]; then
     # nothing to continue: intake (a new run) is the model's — nothing written past the start steps, no sidecar.

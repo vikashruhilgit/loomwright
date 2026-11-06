@@ -131,7 +131,7 @@
 #       whitespace variants `- parallel:2`, `- parallel: 2  # wave` and `-  parallel: 2`. P10: the named
 #       refusals — `--start pick` on a `## Status: done` run (run_done), `--start pick` while this pass's
 #       /autonomous spawn is pending (pick_already_started; the spawn still re-prints), `--resume --run` naming
-#       no incomplete run (run_not_incomplete) ⇒ exit 2, the exact stderr line, nothing printed, .supervisor/
+#       no run (run_not_incomplete) ⇒ exit 2, the exact stderr line, nothing printed, .supervisor/
 #       byte-unchanged, no run-lock acquire. P11: a non-empty `meta-push-failed` answer ⇒ ONE `meta-push-failed:`
 #       ## Progress line + the stderr report and the PICK proceeds (next: pending) — a report, never a block
 #       (branch-mode.md); not repeated on a second pass; no marker ⇒ nothing written. P12 (af/39e): the DEFAULT
@@ -1654,7 +1654,7 @@ mw_mutant() {
 #   run_done             `--start pick` on a `## Status: done` run
 #   pick_already_started `--start pick` while this pass's /autonomous spawn is pending (a no-result call then
 #                        still re-prints that spawn byte-identically)
-#   run_not_incomplete   `--resume <dir> --run <id>` naming no incomplete run
+#   run_not_incomplete   `--resume <dir> --run <id>` naming no run
 leg_stops() {
   local drv="$1" s0 sp want
   # run_done
@@ -1685,10 +1685,42 @@ leg_stops() {
   new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch (run_not_incomplete)"; return 1; }
   s0="$(snapshot)"
   p_call "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run automate-1999-01-01-000000 --session-id "$P_SID"
-  want="next-step: run_not_incomplete — --run automate-1999-01-01-000000 names no incomplete run in $CASE_ROOT/.supervisor/automate — nothing written"
+  want="next-step: run_not_incomplete — --run automate-1999-01-01-000000 names no run in $CASE_ROOT/.supervisor/automate — nothing written past the start steps"
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && { grep -qxF -- "$want" <<<"$NC_ERR" || grep -qxF -- "${want//"$CASE_ROOT"/$CASE_ROOT_P}" <<<"$NC_ERR"; } \
     && [ "$s0" = "$(snapshot)" ] && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
     || { LEG_MSG="run_not_incomplete: exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:240}, .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  return 0
+}
+# leg_resume_done <driver> — `--resume --run <id>` on a run that reads done is the `done` answer, never the
+# run_not_incomplete refusal: (a) a run --finalize stamps done in this very call (the refusal used to say
+# "nothing written" right after that write) ⇒ exit 0, stderr silent, no PICK, no lock, no sidecar; (b) a run
+# already done ⇒ the same answer, .supervisor/ byte-unchanged; (c) a result sidecar named as the id is not a run,
+# even with a done status line ⇒ the refusal.
+leg_resume_done() {
+  local drv="$1" s0 id sc ad
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch (a)"; return 1; }
+  id="$CASE_RUN"; ad="$CASE_ROOT/.supervisor/automate"
+  sed -e 's/^- \[ \] /- [x] /' -e 's/^\(- item: .*\) status: [a-z_]* |/\1 status: done |/' \
+      -e 's/^- pause_reason: .*/- pause_reason: awaiting_go/' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+  p_call "$drv" --resume "$ad" --run "$id" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && ! grep -q 'run_not_incomplete' <<<"$NC_ERR" \
+    && printf '%s' "$NC_OUT" | jq -e --arg id "$id" '.do == "done" and .step == "resume" and .status == "done" and .remaining == 0
+         and .run_id == $id and (.run_file | endswith("/" + $id + ".md")) and (.closeout_others | type == "array") and (has("choice") | not)' >/dev/null 2>&1 \
+    || { LEG_MSG="(a) finalized here: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:240}"; return 1; }
+  grep -qx '## Status: done' "$CASE_RF" && grep -q ' auto-finalized: ' "$CASE_RF" && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+    && [ "$(grep -c ' picked ' "$CASE_RF")" = "$(grep -c ' picked ' "$FIX/resume-glob-finalize/input.md")" ] && [ ! -e "$ad/$id.next-step.json" ] \
+    || { LEG_MSG="(a) finalized here: run file or lock state wrong: $(sed -n 2p "$CASE_RF")"; return 1; }
+  # (b) the second call finds it already done: same answer, no write
+  s0="$(snapshot)"
+  p_call "$drv" --resume "$ad" --run "$id" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && [ "$s0" = "$(snapshot)" ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "done"' >/dev/null 2>&1 \
+    || { LEG_MSG="(b) already done: exit $NC_RC '${NC_OUT:0:160}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  # (c) a sidecar carrying a done status line is not a run
+  sc="$id.supervisor-result"
+  printf '## Status: done\n' >> "$ad/$sc.md"
+  p_call "$drv" --resume "$ad" --run "$sc" --session-id "$P_SID"
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q "^next-step: run_not_incomplete — --run $sc names no run " <<<"$NC_ERR" \
+    || { LEG_MSG="(c) sidecar id: exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:200}"; return 1; }
   return 0
 }
 # leg_meta_push <driver> — branch-mode.md "PICK report": a non-empty `meta-push-failed` answer (the
