@@ -966,7 +966,7 @@ PARK: ledger_unreadable
 
 | Entry point | Parsed at | Checked at | Breach outcome |
 |---|---|---|---|
-| `/automate --max-tokens N` | start; PERSISTED in `## Run Config` (`max_tokens: N`) — unlike `--cheap`/`--notify`, so a bare `--resume` still enforces it | PICK, before RECONCILE picks a new item (`automate-loop/SKILL.md` §6 step 1) | `## Status: paused`, `pause_reason: token_ceiling` |
+| `/automate --max-tokens N` | start; PERSISTED in `## Run Config` (`max_tokens: N`) — like `--cheap`, unlike `--notify`, so a bare `--resume` still enforces it | PICK, before RECONCILE picks a new item (`automate-loop/SKILL.md` §6 step 1) | `## Status: paused`, `pause_reason: token_ceiling` |
 | `/autonomous --max-tokens N` | INIT; persisted into `state.json` | EVALUATE, before each iteration (after the chained review-and-heal step, before Signal 1/2) | `status: aborted`, `status_reason: "token_ceiling_reached"` |
 | `/supervisor --max-tokens N` | Phase 0 INIT; recorded as a Phase Flag | Sequential Path's per-subtask loop, before spawning each subtask's worker (Parallel Path's Execute Manager poll loop is NOT yet wired — honest limit, not yet extended to that path) | `status: aborted`, `status_reason: "token_ceiling_reached"` |
 

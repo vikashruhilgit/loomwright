@@ -135,6 +135,21 @@ hasnt "Z-CHj a lane without cheap resumes without --cheap" "$(grep '^STDIN' "$ST
 # in-lane driver reads lane.json itself (test-automate-next-step.sh)
 LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC" --continue >/dev/null; wait_gone "$LC1"
 has "Z-CHk --continue sends only the fixed continue message" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "continue where you left off"
+# --no-cheap (the coordinator resumed with it) removes cheap from lane.json before the spawn — every lane-launch
+# form — so the command it sends carries no --cheap; a lane without the key keeps lane.json byte-unchanged
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC --no-cheap" --resume-run "$PARENTC-L1" --no-cheap)"; wait_gone "$LC1"
+check "Z-CHl lane-launch --no-cheap removes cheap from lane.json" "$(jq -c 'has("cheap")' "$LC1/.supervisor/lane.json")" false
+has "Z-CHm … says so" "$out" "cheap removed from lane.json (--no-cheap)"
+hasnt "Z-CHn … and the resume command it sends carries no --cheap" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "--cheap"
+has "Z-CHo … the lane's own resume command" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $PARENTC-L1"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC" --resume-run "$PARENTC-L1" >/dev/null; wait_gone "$LC1"
+hasnt "Z-CHp a later lane-launch without --no-cheap stays off (lane.json is the record)" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "--cheap"
+jq '. + {cheap: true}' "$LC1/.supervisor/lane.json" > "$T/lc1.json" && mv "$T/lc1.json" "$LC1/.supervisor/lane.json"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC --no-cheap" --continue --no-cheap >/dev/null; wait_gone "$LC1"
+check "Z-CHq --continue --no-cheap removes it too" "$(jq -c 'has("cheap")' "$LC1/.supervisor/lane.json")" false
+SUMC2="$(cksum < "$LC2/.supervisor/lane.json")"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC2" --owner-command "/automate --resume $PARENTC --no-cheap" --resume-run "$PARENTC-L2" --no-cheap >/dev/null; wait_gone "$LC2"
+check "Z-CHr --no-cheap on a lane without cheap leaves lane.json byte-unchanged" "$(cksum < "$LC2/.supervisor/lane.json")" "$SUMC2"
 
 # Z-F2 a HELD answer is kept coordinator-side (validated answers + note + via, never an owner command),
 # shown as answer_pending, and delivered ONLY by the delivery form under a current-session owner command

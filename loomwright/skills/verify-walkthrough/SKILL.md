@@ -340,8 +340,8 @@ shorter rewrite is REFUSED, never silently applied) and `queue-progress-append` 
 - <ts> <ticket> run_end status=completed PASS:n FAIL:n BLOCKED:n NOT_VERIFIABLE:n
 ```
 
-`--notify` / `--cheap` are passthrough flags, exactly like `/automate`'s — **not** persisted in
-`## Run Config`, re-pass them on every `--resume`. `limit` / `impact_limit` ARE persisted (set once at
+`--notify` / `--cheap` are passthrough flags — **not** persisted in `## Run Config` (unlike
+`/automate`'s `--cheap`, which is), re-pass them on every `--resume`. `limit` / `impact_limit` ARE persisted (set once at
 queue creation) so they do not need re-passing.
 
 ### The per-item loop
