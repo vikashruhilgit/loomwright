@@ -24,11 +24,12 @@
 #                            [--fix-floor <HIGH|MEDIUM|LOW>] [--severity-floor <BLOCKING|HIGH|MEDIUM|LOW>]
 #                            [--required-checks all-non-neutral] [--check-wait-timeout N]
 #                            [--review-check-pattern <glob>[,<glob>…]] [--no-auto-postmortem]
-#                            [--postmortem-churn-threshold N] [--root <checkout>]
+#                            [--postmortem-churn-threshold N] [--cheap] [--root <checkout>]
 #   review-heal-next-step.sh <pr_url> [--result <json> | --result-file <f>] [--root <checkout>]
 #   review-heal-next-step.sh <pr_url> --start fallback [--root <checkout>]
 #   `--start drain` begins one drain run (the flags are taken here and persist in the sidecar for the
-#   run); while a run's instruction is pending it re-prints it. After a run's `done` it starts a new run
+#   run; `--cheap` adds a `model` key naming the Sonnet alias to the `fix worker` and `fallback review`
+#   spawns, and no spawn carries a `model` key without it); while a run's instruction is pending it re-prints it. After a run's `done` it starts a new run
 #   on a fresh ledger, carrying the PR's totals into its block (`prior_runs`). A call with no `--result` re-prints the
 #   pending instruction byte for byte and writes nothing; with nothing pending it resumes a scoped wait
 #   that answered CONTINUE, or retries a step that failed. `--result` answers the pending `spawn`.
@@ -141,7 +142,7 @@ command -v "$JQ" >/dev/null 2>&1 || { rh_err "jq not on PATH"; exit 1; }
 # ------------------------------------------------------------------------------------------------
 PR=""; START=""; RESULT=""; have_result=0; ROOT="."; run_flags=0
 F_MAXR=5; F_PROBES=5; F_FIXFLOOR=""; F_SEV=HIGH; F_REQ=""; F_CWT=1200; F_PAT='*review*,claude*'
-F_NOPM=0; F_PMT=""
+F_NOPM=0; F_PMT=""; F_CHEAP=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --start)
@@ -174,6 +175,7 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] && [ -n "$2" ] || rh_die2 "--review-check-pattern needs a glob"
       F_PAT="$2"; run_flags=1; shift 2 ;;
     --no-auto-postmortem) F_NOPM=1; run_flags=1; shift ;;
+    --cheap) F_CHEAP=1; run_flags=1; shift ;;
     --postmortem-churn-threshold)
       [ "$#" -ge 2 ] && [[ "$2" =~ ^(0|[1-9][0-9]{0,3})$ ]] || rh_die2 "--postmortem-churn-threshold needs an integer"
       F_PMT="$2"; run_flags=1; shift 2 ;;
@@ -320,6 +322,10 @@ rh_emit() { # <do> <step> <extra json>
   RH_EMIT="$("$JQ" -cn --arg d "$1" --arg s "$2" --arg p "$PR" --arg r "$(st round_number)" --argjson x "$3" \
     '{do: $d, step: $s, pr: $p, round: ($r | tonumber? // 0)} + $x')"
 }
+# the cost profile of a Task spawn: `--cheap` (sidecar `flag_cheap`) ⇒ the one model-alias literal below,
+# else {} — so a run without the flag prints no `model` key at all
+RH_CHEAP_MODEL='{"model":"sonnet"}'
+rh_model() { if [ "$(st flag_cheap)" = 1 ]; then printf '%s' "$RH_CHEAP_MODEL"; else printf '{}'; fi; }
 # escalation — every ESCALATED site sets its reason, cause mode and remaining count here, then the
 # escalate step resolves escalation_cause
 rh_escalate_to() { # <reason slug> <cause mode: check|findings|other> <remaining> <comment detail> [sha]
@@ -705,7 +711,7 @@ rh_fallback() {
       then_f='validate each category new issue on the current branch (§U3.5), then --result {"findings": [{"verdict": "confirmed|dismissed", "finding": "<one-line description>", "severity": "BLOCKING|HIGH|MEDIUM|LOW", "auto_fixable": true, "reason": "<dismissed only>", "evidence": "<dismissed only: one line citing a repo path:line, a commit sha, or a double-quoted span (12+ characters, two or more words) from the PR diff, PR body or brief>"}]} — [] when the review found no new issue.'
       then_f="$then_f"' A dismissed finding without that evidence is refused.'
       then_f="$then_f"' When its proof is outside the repo (an owner decision, a convention), report it confirmed with auto_fixable: false so it reaches the owner'
-      rh_emit spawn fallback "$("$JQ" -cn --arg base "$(st base)" --arg then "$then_f" '{what: "fallback review", agent: "loomwright:code-reviewer", prompt: ("Review the PR-branch diff (git diff " + $base + "...HEAD). Schema: CODE_REVIEW_RESULT v3, review_mode: diff_review."), contract: "skills/review-heal/SKILL.md §\"Earned Fallback Review — `no_review_lens_posted`\"", then: $then}')"
+      rh_emit spawn fallback "$("$JQ" -cn --arg base "$(st base)" --arg then "$then_f" --argjson m "$(rh_model)" '{what: "fallback review", agent: "loomwright:code-reviewer"} + $m + {prompt: ("Review the PR-branch diff (git diff " + $base + "...HEAD). Schema: CODE_REVIEW_RESULT v3, review_mode: diff_review."), contract: "skills/review-heal/SKILL.md §\"Earned Fallback Review — `no_review_lens_posted`\"", then: $then}')"
       NEXT=fallback; return 0
     fi
   fi
@@ -774,8 +780,8 @@ rh_decide() {
     return 0
   fi
   rh_emit spawn decide "$("$JQ" -cn --argjson rf "$(stj required_failing_fixable)" --argjson af "$(stj auto_fixable)" \
-      --arg deep "$(st deep_review_due)" --arg refold "$HERE/release-refold.sh" --arg ref "$(st head_ref)" '{what: "fix worker",
-      agent: "general-purpose", tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+      --arg deep "$(st deep_review_due)" --arg refold "$HERE/release-refold.sh" --arg ref "$(st head_ref)" --argjson m "$(rh_model)" '{what: "fix worker",
+      agent: "general-purpose"} + $m + {tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
       required_failing: [$rf[].name], findings: [$af[] | {finding, source} + (if .severity then {severity} else {} end) + (if .text then {text} else {} end)],
       fix_the_class: ($deep == "true"),
       push: ["bash " + $refold, "git push origin HEAD:" + $ref],
@@ -1130,9 +1136,9 @@ elif [ "$START" = drain ]; then
        prior_rounds: (n("prior_rounds") + $r | tostring)}')" || rh_carry='{}'
   fi
   RS="$("$JQ" -cn --argjson carry "$rh_carry" --arg mr "$F_MAXR" --arg mp "$F_PROBES" --arg ff "$F_FIXFLOOR" --arg sf "$F_SEV" --arg rq "$F_REQ" \
-    --arg cw "$F_CWT" --arg pt "$F_PAT" --arg np "$F_NOPM" --arg pm "$F_PMT" '{flag_max_rounds: $mr, flag_max_probes: $mp,
+    --arg cw "$F_CWT" --arg pt "$F_PAT" --arg np "$F_NOPM" --arg ch "$F_CHEAP" --arg pm "$F_PMT" '{flag_max_rounds: $mr, flag_max_probes: $mp,
     flag_fix_floor: $ff, flag_severity_floor: $sf, flag_required_checks: $rq, flag_check_wait_timeout: $cw,
-    flag_pattern: $pt, flag_no_postmortem: $np, flag_pm_threshold: $pm} + $carry')"
+    flag_pattern: $pt, flag_no_postmortem: $np, flag_cheap: $ch, flag_pm_threshold: $pm} + $carry')"
   NEXT=start
 elif [ "$have_result" = 0 ]; then
   if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi

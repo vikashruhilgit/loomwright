@@ -869,7 +869,7 @@ The `/automate` coordinator's own model is not a cost profile: it is the `.super
 
 ### `--cheap` Profile
 
-Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager apply `model: "sonnet"` at spawn time for the roles marked **sonnet** in the table below. Default behavior (`inherit` for all) is unchanged when the flag is absent.
+Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager apply `model: "sonnet"` at spawn time for the roles marked **sonnet** in the table below. A second entry point, `/review-pr --cheap`, covers the three `review-pr-*` rows: the review-heal loop applies the override itself, and in the `--until-mergeable` drain it reads it from the driver's `model` key (`docs/result-schemas/review-heal-next-step.md`). Default behavior (`inherit` for all) is unchanged when the flag is absent.
 
 | Role | Default | `--cheap` override |
 |---|---|---|
@@ -879,6 +879,9 @@ Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager app
 | orchestrator | inherit | **sonnet** |
 | phase45-fix-task (general-purpose) | inherit | **sonnet** |
 | phase45-multi-voter-verification (code-reviewer + red-team-reviewer voter) | inherit | **sonnet** (both voter spawns follow the code-reviewer override; the refute spawn too; **N/A when `--voter-provider` routes the voter through `lens-run.sh`** — that path is a Bash shell-out, not a Task spawn, so `--cheap` cannot set `model:` and the model comes from the `name:model` suffix) |
+| review-pr-reviewer (code-reviewer, default `/review-pr` loop) | inherit | **sonnet** under `/review-pr --cheap` (**N/A when seat `drain_reviewer` routes the review through `lens-run.sh`** — a Bash shell-out, not a Task spawn, so the model comes from the seat's resolved `MODEL`) |
+| review-pr-fix-worker (general-purpose, default loop and `--until-mergeable` drain) | inherit | **sonnet** under `/review-pr --cheap` (on a `drain_fix` write seat too: the worker stays a Task, only its edit step routes) |
+| review-pr-fallback-review (code-reviewer, the drain's Earned Fallback Review) | inherit | **sonnet** under `/review-pr --cheap` (**N/A when seat `fallback_reviewer` routes it through `lens-run.sh`**, as for the routed reviewer above) |
 | supervisor | inherit | inherit (main thread; uses session model) |
 | context-keeper | haiku | haiku (already minimal) |
 | launch-pad | inherit | inherit (out of v1 scope) |
