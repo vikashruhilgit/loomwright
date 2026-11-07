@@ -1,6 +1,7 @@
 # --trust-unprotected works on private Free repos, and the gate still reads CI there
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/839
 
 **Story: --trust-unprotected works on private Free repos, and the gate still reads CI there** (type: story)
 
@@ -108,3 +109,9 @@ loomwright/scripts/test-automate-helpers.d/06-gate-eval-tail.sh
 loomwright/skills/automate-loop/modes-and-merge-gate.md
 docs/evidence/trust-unprotected-private-free.md
 changelog.d/trust-unprotected-private-free.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-07T09:40:22Z
+- **Brief:** .supervisor/jobs/done/2026-11-06-trust-unprotected-private-free.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/839
