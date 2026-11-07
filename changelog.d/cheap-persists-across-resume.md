@@ -2,8 +2,8 @@
 /automate --cheap stays on across --resume and reaches the /review-pr drain, until --no-cheap
 A sequential `/automate` run started with `--cheap` now records `- cheap: true` in its `## Run Config`, so a bare
 `--resume` keeps the Sonnet cost profile instead of silently reverting the rest of the Queue to full cost.
-`scripts/automate-next-step.sh` writes the line when it is called with `--cheap`, reads it on every spawn, and
-puts `--cheap` on the `/autonomous` and Supervisor spawns and on every drain spawn (the owned drain, inline or as a
+`scripts/automate-next-step.sh` writes the line in the call that receives `--cheap`, whatever that call prints
+(a spawn, a park or a re-print), reads it on every spawn, and puts `--cheap` on the `/autonomous` and Supervisor spawns and on every drain spawn (the owned drain, inline or as a
 fresh phase, and the fix-now re-drain's `/review-pr <pr> --until-mergeable --no-auto-postmortem --cheap`).
 `--no-cheap` is the off switch: it removes the line and writes one `cheap mode off (--no-cheap)` `## Progress`
 line. Both flags on one command are refused as `cheap_flags_conflict` (exit 2, nothing written). A `cheap:` value

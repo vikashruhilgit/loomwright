@@ -325,7 +325,7 @@ See [lanes.md](lanes.md).
 - Single-open-PR invariant holds in BOTH modes, this run's trail PR included (§8).
 - `--auto-merge` executes `gh pr merge --squash` ONLY when EVERY trusted-gate condition (§10) holds; fails CLOSED (park + notify) on any blocker — no override for condition 6 or 7.
 - `READY`/`PASS` from `review-heal`/`review-pr`/Supervisor Phase 4.5 NEVER merge; the ONLY executed `gh pr merge --squash` is the §10 gate implemented in `automate-helpers.sh gate-eval`.
-- All `/autonomous` correctness gates bubble up; `--notify` / `--non-interactive-fallback` / `--cheap` pass through (§11).
+- All `/autonomous` correctness gates bubble up; `--notify` / `--non-interactive-fallback` / `--cheap` pass through (§11; `--no-cheap` turns `--cheap` off).
 - Termination: Queue fully resolved ⇒ `## Status: done` / `remaining: 0`; `limit` reached ⇒ `## Status: paused` / `pause_reason: limit_reached` / `remaining: <unchecked>`.
 - Trail PR only after merge (`closeout`), at a skip/abandon check-off, and at `## Status: done` — never at a park (§6 "Trail PR after merge and at run end").
 - Rate-limit park: a main-scope `agent_lifecycle: failed` row with `reason: rate_limit` (or `unknown` + a `429` hint, kept as `reason_hint`) parks the item before DRAIN/GATE without retrying (§6 "Rate-limit park").

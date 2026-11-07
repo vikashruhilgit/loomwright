@@ -28,6 +28,9 @@ fi
 #   B1  cheap ⇒ the owned drain (inline and fresh) and the fix-now re-drain's drain_invocation end `--cheap`
 #   B3  not cheap ⇒ those invocations are exactly today's `/review-pr <pr> --until-mergeable --no-auto-postmortem`
 #   B5  a lane whose lane.json reads `"cheap": true` ⇒ its owned drain carries --cheap with no --cheap given
+#   A1/A4 on a parking call (pick-time-token-ceiling-park): --no-cheap removes the line with ONE Progress line
+#       though the call parks before any spawn, a second --no-cheap writes nothing; --cheap writes the line; a
+#       call that only re-prints the pending park records its flag too
 echo "-- CP. cheap mode persisted in ## Run Config, --no-cheap, lane.json authoritative in a lane, drain spawns"
 
 CP_DRAIN_BASE="/review-pr https://github.com/vikashruhilgit/loomwright/pull/542 --until-mergeable --no-auto-postmortem"
@@ -167,6 +170,37 @@ leg_cp_lane() {
   return 0
 }
 
+# leg_cp_park <driver> — the flag is written by the call that receives it, a parking call and a re-print included
+leg_cp_park() {
+  local drv="$1" c="$FIX/pick-time-token-ceiling-park" call="call: --start pick --session-id auto-2026-10-15-040641"
+  cp_park_drive() { # <call line> <expect line> — one driven call on the scratch case
+    printf '%s\n%s\n' "$1" "$2" > "$CASE_DIR/cp.results"; drive "$c" "$drv" "$CASE_DIR/cp.results"
+  }
+  cp_off_lines() { grep -cE '^- [0-9TZ:-]+ cheap mode off \(--no-cheap\)$' "$CASE_RF"; }
+  # --no-cheap on a call that parks token_ceiling before any spawn: the line goes, ONE Progress line
+  new_scratch "$c" || { LEG_MSG="scratch"; return 1; }
+  cp_inject "- cheap: true"
+  cp_park_drive "$call --no-cheap" "expect: park"
+  [ -z "$DRIVE_ERR" ] && printf '%s' "$LAST_OUT" | jq -e '.do == "park" and .pause_reason == "token_ceiling"' >/dev/null 2>&1 \
+    || { LEG_MSG="park --no-cheap ⇒ ${DRIVE_ERR:-} '${LAST_OUT:0:200}'"; return 1; }
+  ! grep -q '^- cheap:' < <(cp_cfg) && [ "$(cp_off_lines)" = 1 ] \
+    || { LEG_MSG="park --no-cheap run file: cfg $(cp_cfg | tr '\n' '|') progress $(cp_off_lines)"; return 1; }
+  # a second --no-cheap (the line already gone): nothing more written
+  cp_park_drive "$call --no-cheap" "expect: park"
+  [ -z "$DRIVE_ERR" ] && [ "$(cp_off_lines)" = 1 ] || { LEG_MSG="second --no-cheap ⇒ ${DRIVE_ERR:-} progress $(cp_off_lines)"; return 1; }
+  # --cheap on a parking call writes the line
+  new_scratch "$c" || { LEG_MSG="scratch"; return 1; }
+  cp_park_drive "$call --cheap" "expect: park"
+  [ -z "$DRIVE_ERR" ] && [ "$(cp_cfg | grep -c '^- cheap: true$')" = 1 ] \
+    || { LEG_MSG="park --cheap ⇒ ${DRIVE_ERR:-} cfg $(cp_cfg | tr '\n' '|')"; return 1; }
+  # a call that only re-prints the pending park records --no-cheap too, and the same park re-prints
+  cp_park_drive "call: --no-cheap" "expect: park"
+  [ -z "$DRIVE_ERR" ] && printf '%s' "$LAST_OUT" | jq -e '.pause_reason == "token_ceiling"' >/dev/null 2>&1 \
+    && ! grep -q '^- cheap:' < <(cp_cfg) && [ "$(cp_off_lines)" = 1 ] \
+    || { LEG_MSG="re-print --no-cheap ⇒ ${DRIVE_ERR:-} '${LAST_OUT:0:120}' cfg $(cp_cfg | tr '\n' '|') progress $(cp_off_lines)"; return 1; }
+  return 0
+}
+
 LEG_MSG=""
 if leg_cp_run "$DRIVER"; then ok "CP-A (A1–A4, A6, A7): --cheap writes ONE '- cheap: true' line in ## Run Config and a bare call after a sidecar wipe still puts --cheap on the inline /autonomous and the fresh Supervisor spawn; no --cheap ⇒ none and no line; --no-cheap removes the line with ONE 'cheap mode off (--no-cheap)' Progress line and the RUN spawn, the drain after it and a later bare call are full cost; --cheap --no-cheap ⇒ cheap_flags_conflict exit 2, nothing written; '- cheap: yes' ⇒ off + ONE warning"
 else no "CP-A: $LEG_MSG"; fi
@@ -176,3 +210,6 @@ else no "CP-B: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_cp_lane "$DRIVER"; then ok "CP-L (A5, B5): in a lane a command-line --cheap and a '- cheap: true' Run Config line are ignored when lane.json has no cheap key (Run Config untouched); lane.json \"cheap\": true ⇒ the owned drain carries --cheap"
 else no "CP-L: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_cp_park "$DRIVER"; then ok "CP-P (A1, A4 on a parking call): --start pick --no-cheap that parks token_ceiling removes '- cheap: true' with ONE 'cheap mode off (--no-cheap)' Progress line and a second --no-cheap writes nothing; --cheap on a parking call writes the line; a re-print call records --no-cheap too"
+else no "CP-P: $LEG_MSG"; fi
