@@ -88,6 +88,7 @@ mp_new() {
     MP_L="$rl" awk 'BEGIN { l = ENVIRON["MP_L"] } { print } /^- pending_decisions: / && !d { print l; d = 1 }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF" || return 1
   fi
   { printf '#!/usr/bin/env bash\nprintf "gh %%s\\n" "$*" >> "$NS_REC_LOG"\n'; printf '%s' "$GH_STUB_BODY" | sed 1d; } > "$CASE_BIN/gh"; chmod +x "$CASE_BIN/gh"
+  f_claude 1   # a --resume leg runs phase-check, which reads `claude --help`: never the machine's own claude (CI has none)
   mp_gh "$MP_HEAD" OPEN '[{"created_at":"2026-10-15T09:53:20Z"}]' '[]' 0
   MP_SEAMS="$CASE_DIR/seams.mp"
   printf 'MP_CTX_COPY=%s\nLOOMWRIGHT_PROC_REGISTRY_DIR=%s\n' "$CASE_DIR/ctx.json" "$CASE_ROOT/.procs" > "$MP_SEAMS"
@@ -213,7 +214,7 @@ mp_ac12() {
   mp_new && mp_gh "$MP_HEAD" OPEN '[]' '[]' 4 || { LEG_MSG="scratch"; return 1; }
   mkdir -p "$CASE_DIR/w"; printf 'while :; do sleep 1; done\n' > "$CASE_DIR/w/automate-merge-watch.sh"
   bash "$CASE_DIR/w/automate-merge-watch.sh" "$CASE_RF" item "$MP_PR" </dev/null >/dev/null 2>&1 & wp=$!
-  WAIT_LIB_WHAT="the stand-in watcher" wait_for_cmd 5 sh -c "ps -ww -p $wp -o command= | grep -q automate-merge-watch.sh"
+  WAIT_LIB_WHAT="the stand-in watcher" wait_for_cmd 5 bash -c "grep -q automate-merge-watch.sh < <(ps -ww -p $wp -o command=)"
   printf 'pid\t%s\npr_url\t%s\n' "$wp" "$MP_PR" > "$CASE_ROOT/.supervisor/automate/$CASE_RUN.merge-watch"
   mp_call "$drv"; kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null
   [ "$MP_RC" = 0 ] && mp_park base_moved_since_ready && [ "$(mp_n '^watch ')" = 0 ] || { mp_fail "a live watcher: a second one was armed"; return 1; }

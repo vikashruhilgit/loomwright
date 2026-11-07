@@ -5,3 +5,4 @@ shapes with the real READY head 953c2d1bbf14.
 The summary draft is kept automatically (dismissed-drafts at the park), so one decision was pending, not two.
 gap: 39a had no fix-now. The fix-now flow is from automate-2026-10-01-142337 (legacy wording, before the pinned
 lines); the re-drain sidecar is not rewritten here, so --after-fix-now finds the fixed finding re-dismissed.
+gap: the - ready_sha: line is written by the driver's drain-result (no helper), so this replay writes it as a loop: step.

@@ -20,6 +20,8 @@ $ loop: awk -v n='- owned_drain_started: 2026-10-15T10:21:00Z | owned_drain_resu
 = 0
 $ loop: awk -v n='- pending_decisions: 0 | fix_now_reentered: true' 'index($0, "- pending_decisions:")==1 && !d {print n; d=1; next} {print}' "$RF" | bash "$H" runfile-write "$RF"
 = 0
+$ loop: awk -v n='- ready_sha: 953c2d1bbf14 | ready_at: 2026-10-15T10:40:00Z | termination_reason: converged' '{print} index($0, "- pending_decisions:")==1 && !d {print n; d=1}' "$RF" | bash "$H" runfile-write "$RF"
+= 0
 $ dismissed-drafts "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555 --after-fix-now
 draft	1	-	<ROOT>/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md
 draft	summary	-	<ROOT>/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md
