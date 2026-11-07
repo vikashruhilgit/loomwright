@@ -273,7 +273,10 @@ make_stub_bin() {
 #   api graphql -f query=...                       -> cat graphql.json (or exit 1 if graphql-fail marker)
 #   api repos/.../branches/main/protection          -> cat protection.json; protection-404 marker exits 1
 #                                                      with "Not Found (HTTP 404)"; protection-fail
-#                                                      marker exits 1 with an unrelated (non-404) error
+#                                                      marker exits 1 with an unrelated (non-404) error;
+#                                                      a protection-error file holds verbatim error text:
+#                                                      its `gh: ` lines go to stderr, the rest to stdout
+#                                                      with no trailing newline (as gh prints a body), exit 1
 set -u
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   shift 2
@@ -315,6 +318,9 @@ fi
 if [ "${1:-}" = "api" ]; then
   if [ -f "$GH_STUB_DIR/protection-404" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
   if [ -f "$GH_STUB_DIR/protection-fail" ]; then echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; fi
+  if [ -f "$GH_STUB_DIR/protection-error" ]; then
+    grep -v '^gh: ' "$GH_STUB_DIR/protection-error" | tr -d '\n'; grep '^gh: ' "$GH_STUB_DIR/protection-error" >&2; exit 1
+  fi
   cat "$GH_STUB_DIR/protection.json"
   exit 0
 fi

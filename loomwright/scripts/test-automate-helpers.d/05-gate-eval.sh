@@ -224,6 +224,80 @@ else
 fi
 reset_live
 
+# --- Condition 4 — how a FAILED protection read is classified. GitHub's paid-plan 403 (a private
+# repo on GitHub Free cannot have branch protection) reads as not enforceable, so only
+# --trust-unprotected lets it merge; a 404 is matched by gh's `(HTTP 404)` status token, never a
+# bare `404`; any other error, any other 403 included, parks protection_unreadable even with the
+# flag. The stub replays GitHub's verbatim text (body to stdout, `gh:` line to stderr). ---
+printf '%s\n' "$E_PAID_403" > "$GH_STUB_DIR/protection-error"
+if grep -qF '(HTTP 403)' "$GH_STUB_DIR/protection-error" && grep -qF 'Upgrade to GitHub Pro' "$GH_STUB_DIR/protection-error"; then
+  ok "gate cond 4 fixture: the stub replays a 403 carrying GitHub's paid-plan refusal message"
+else
+  no "gate cond 4 fixture: the paid-plan 403 text lost its status or message — every paid-plan case below is meaningless"
+fi
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: paid-plan 403 (private repo on GitHub Free) + --trust-unprotected ⇒ not enforceable, overridden ⇒ MERGE"
+else
+  no "gate paid-plan-403+trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: paid-plan 403, no trust ⇒ PARK: unprotected_branch, no merge"
+else
+  no "gate paid-plan-403 no-trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+printf '{"high_risk": true, "reasons": ["path: billing/x.ts matched billing/**"], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: billing/x.ts matched billing/**)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: paid-plan 403 + --trust-unprotected + high-risk diff ⇒ PARK: high_risk_diff (cond 6 has no override), no merge"
+else
+  no "gate paid-plan-403+trust+high-risk wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_STUB_DIR/protection-error"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: protection_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: a 403 WITHOUT the paid-plan message + --trust-unprotected ⇒ PARK: protection_unreadable, no merge"
+else
+  no "gate non-paid-plan-403 wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+# The paid-plan text only in the JSON body (which gh prints on the SAME line as its `gh:` line)
+# does not count: the message is read from gh's own line.
+printf '{"message":"%s","status":"403"}\ngh: Resource not accessible by integration (HTTP 403)\n' "$E_PAID_MSG" > "$GH_STUB_DIR/protection-error"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: protection_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: paid-plan text in the 403 body only, another message on gh's line + --trust-unprotected ⇒ PARK: protection_unreadable, no merge"
+else
+  no "gate paid-plan-in-body-only 403 wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf 'error connecting to api.github.com\n' > "$GH_STUB_DIR/protection-error"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: protection_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: a protection read error with no (HTTP NNN) status + --trust-unprotected ⇒ PARK: protection_unreadable, no merge"
+else
+  no "gate no-status-token error wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf 'gh: upstream returned 404 to the proxy (HTTP 500)\n' > "$GH_STUB_DIR/protection-error"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: protection_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: a 500 whose text contains '404' + --trust-unprotected ⇒ PARK: protection_unreadable (404 matched by status, not substring), no merge"
+else
+  no "gate 500-containing-404 wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf '%s\n' "$E_BRANCH_404" > "$GH_STUB_DIR/protection-error"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: genuine 'Branch not protected (HTTP 404)' + --trust-unprotected ⇒ MERGE (no regression)"
+else
+  no "gate branch-not-protected-404+trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
 # --- Condition 5 — checks (self-resolved from the SAME protection payload's
 # required-context list, cross-referenced against statusCheckRollup) + rubric
 # (now a FILE READ, never caller-asserted). ---

@@ -1,3 +1,62 @@
+# --- Condition 5 with NO required context (a 404, GitHub's paid-plan 403, or reviews-only
+# protection): never vacuously green — the gate reads the whole statusCheckRollup. A failing,
+# pending or in-progress check parks checks_not_green; all success / neutral / skipped, or an
+# empty rollup, holds. ---
+e6_rollup() { printf '{"headRefOid":"%s","baseRefName":"main","statusCheckRollup":%s}\n' "$E_PR_HEAD" "$1" > "$GH_STUB_DIR/pr-view.json"; }
+E6_RED='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"claude-review","status":"COMPLETED","conclusion":"FAILURE"}]'
+printf '%s\n' "$E_PAID_403" > "$GH_STUB_DIR/protection-error"; e6_rollup "$E6_RED"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: paid-plan 403 (no required list) + --trust-unprotected + one FAILURE in the rollup ⇒ PARK: checks_not_green, no merge"
+else
+  no "gate paid-plan-403 empty-required + failing check FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/protection-404"; e6_rollup "$E6_RED"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: 404 (no required list) + --trust-unprotected + one FAILURE in the rollup ⇒ PARK: checks_not_green, no merge"
+else
+  no "gate 404 empty-required + failing check FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+for E6_PEND in '[{"__typename":"CheckRun","name":"ci","status":"IN_PROGRESS","conclusion":""}]' \
+               '[{"__typename":"StatusContext","context":"ci/legacy","state":"PENDING"}]'; do
+  printf '%s\n' "$E_PAID_403" > "$GH_STUB_DIR/protection-error"; e6_rollup "$E6_PEND"
+  gate "$(pass_ctx | jq '.trust_unprotected=true')"
+  if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+    ok "gate fail-closed: no required list + a check not finished ($E6_PEND) ⇒ PARK: checks_not_green, no merge"
+  else
+    no "gate empty-required + unfinished check FAILED OPEN ($E6_PEND; out='$RUN_OUT' merges=$(merges))"
+  fi
+  reset_live
+done
+printf '%s\n' "$E_PAID_403" > "$GH_STUB_DIR/protection-error"
+e6_rollup '[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"NEUTRAL"},{"__typename":"CheckRun","name":"deploy","status":"COMPLETED","conclusion":"SKIPPED"},{"__typename":"StatusContext","context":"ci/legacy","state":"SUCCESS"}]'
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: no required list + every rollup check SUCCESS / NEUTRAL / SKIPPED ⇒ condition 5 holds ⇒ MERGE"
+else
+  no "gate empty-required all-green rollup wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf '%s\n' "$E_PAID_403" > "$GH_STUB_DIR/protection-error"; e6_rollup '[]'
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: no required list + an empty rollup (statusCheckRollup: []) ⇒ condition 5 holds ⇒ MERGE"
+else
+  no "gate empty-required empty rollup wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf '{"required_pull_request_reviews":{"required_approving_review_count":1}}\n' > "$GH_STUB_DIR/protection.json"; e6_rollup "$E6_RED"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: reviews-only protection (no required status checks) + one FAILURE in the rollup ⇒ PARK: checks_not_green, no merge"
+else
+  no "gate reviews-only + failing check FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
 # --- TOCTOU: a push lands AFTER every condition read the head but BEFORE the
 # merge. The stub, like GitHub, refuses a --match-head-commit that no longer
 # matches and merges a flag-less call regardless — so a gate that drops the SHA

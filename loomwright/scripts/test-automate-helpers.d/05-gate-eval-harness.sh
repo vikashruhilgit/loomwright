@@ -91,6 +91,15 @@ printf '## SUPERVISOR_RESULT\n- rubric_score: 7/7\n' > "$SUP_OK"
 SUP_BAD="$WD/supervisor-result-bad.md"
 printf '## SUPERVISOR_RESULT\n- rubric_score: 6/7\n' > "$SUP_BAD"
 
+# GitHub's verbatim protection-read errors, for the stub's protection-error file (body line
+# to stdout, `gh: ` line to stderr). E_PAID_403 is the paid-plan refusal on a private repo on
+# GitHub Free, byte-compared with the live call in docs/evidence/trust-unprotected-private-free.md;
+# E_BRANCH_404 is the genuine "no protection configured" read.
+E_PROT_DOC='"documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-branch-protection"'
+E_PAID_MSG='Upgrade to GitHub Pro or make this repository public to enable this feature.'
+E_PAID_403="$(printf '{"message":"%s",%s,"status":"403"}\ngh: %s (HTTP 403)' "$E_PAID_MSG" "$E_PROT_DOC" "$E_PAID_MSG")"
+E_BRANCH_404="$(printf '{"message":"Branch not protected",%s,"status":"404"}\ngh: Branch not protected (HTTP 404)' "$E_PROT_DOC")"
+
 # reset_live — re-baseline every LIVE gh/api/classify-risk fixture to a fully
 # passing state (each test then mutates ONE fixture to its failing shape).
 reset_live() {
@@ -101,7 +110,7 @@ reset_live() {
   printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}\n' > "$GH_STUB_DIR/graphql.json"
   rm -f "$GH_STUB_DIR/graphql-fail"
   printf '{"required_pull_request_reviews":{"required_approving_review_count":1},"required_status_checks":{"contexts":["ci"]}}\n' > "$GH_STUB_DIR/protection.json"
-  rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail"
+  rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail" "$GH_STUB_DIR/protection-error"
   printf '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
   rm -f "$GH_STUB_DIR/merge-fail" "$GH_STUB_DIR/merge-time-head" "$GH_STUB_DIR/risk-called.log"
   printf '%s\n' "$RULES_NONE" > "$GH_STUB_DIR/rules.json"
