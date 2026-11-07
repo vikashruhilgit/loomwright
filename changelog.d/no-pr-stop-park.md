@@ -1,0 +1,3 @@
+<!-- bump: minor -->
+A lane or run stopped on purpose with no PR now parks no_pr_stop instead of reading stalled
+Launch Pad's Refine offline, Discard and aborts, and a named gate with nobody to ask, used to end the pass with a run file still reading running, so `lane-status` said `stalled` and `lane-wait` asked the coordinator to resume against the owner's choice. The driver now writes a `no_pr_stop` park. `lane-launch --continue` refuses it, and `lane-scope-decide defer` or `drop` takes the lane out of the wave. On a sequential run a `--resume` no longer re-runs Launch Pad on an unchanged requirement after an owner's stop: edit the requirement or check the row off. A failure such as `phase_died` still reads `stalled`.

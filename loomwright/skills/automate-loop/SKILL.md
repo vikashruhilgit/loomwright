@@ -152,6 +152,10 @@ See [per-item-loop.md](per-item-loop.md).
 
 See [per-item-loop.md](per-item-loop.md).
 
+### No-PR stop park (end of RUN, after the rate-limit read)
+
+See [per-item-loop.md](per-item-loop.md).
+
 ### Rate-limit park (end of RUN, before DRAIN)
 
 See [per-item-loop.md](per-item-loop.md).

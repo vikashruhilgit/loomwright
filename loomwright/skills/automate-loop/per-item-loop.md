@@ -74,6 +74,15 @@ When the owner merges a parked item's PR, ONE script closes it out: `automate-he
 
 ---
 
+### No-PR stop park (end of RUN, after the rate-limit read)
+
+A no-PR outcome ends the pass one of two ways, by its `status_reason` (`ns_no_pr_class` in `automate-next-step.sh`, a closed list; a rate-limit park found first wins):
+
+- **A deliberate stop parks `no_pr_stop`** — `## Status: paused`, `current-set`'s run-level form (the item keeps `status: running`, `pr: null`), the line `<ts> parked no_pr_stop — <reason>`, the run lock released, a `park` instruction. **Someone decided:** `launch_pad_blocked` (Refine offline, or Launch Pad's own blockers), `user_discarded_at_phase_6`, `user_aborted_at_launch_pad`, `user_aborted_at_no_go`, `user_aborted_at_plan_review_fail`; the line also carries `; requirement cksum <n>-<bytes>`. **A gate stopped with nobody to ask, or a saved brief failed a check:** `launch_pad_cant_ask_non_interactive`, `non_interactive_without_fallback`, `preflight_overlap_detected`, `rubric_dropped_from_brief`.
+- **Anything else is a failure, not a decision** — `phase_died`, `launch_pad_result_malformed`, `concurrent_session_detected`, a checkpoint, `supervisor_failed_other`, an unknown token, and the ls-diff fallback's `user_discarded_at_phase_6` (a block nobody could read, no new brief: nobody is known to have discarded anything). The driver prints `{"do":"done","status":"stopped"}` and the run file stays `running`, which is what a lane reads as `stalled`.
+
+**Re-pick.** RECONCILE re-parks an item whose last `picked` segment records a stop that someone decided while its requirement's fingerprint is unchanged: no `picked` line, no Launch Pad. It reads `## Progress`, not `pause_reason`, so a PICK-time park that overwrote the reason does not lift it. The owner moves it on by editing the requirement (a note saying what changed elsewhere counts, and tells Launch Pad too), then `--resume`; or by checking the row off `# skipped:` / `# abandoned:`, then `--resume`. A gate's stop re-picks on `--resume`: the owner's return is the remedy. `--start run` refuses while parked (exit 2, `no_pr_stop`). A lane cannot use the edit: its clone holds its own copy of the requirement (`lanes.md` §"Lane states and what the coordinator does").
+
 ### Rate-limit park (end of RUN, before DRAIN)
 
 Run by `automate-next-step.sh` step `rate-limit` (step 2): after `run-result` restored `.auto_review`, a main-scope `agent_lifecycle` `failed` row in the loop's own session log dated after this item's `picked` line — `reason: rate_limit`, or `reason: unknown` with a `429` hint (recorded as `reason_hint`, never promoted into `reason`) — parks the item `rate_limit` (item and `pause_reason`), releases the run lock and stops before DRAIN, with no `trail-pr`; RUN is never retried in the same tick. Every other classified reason is unchanged. The pinned lines are `docs/result-schemas/automate-run.md`'s.

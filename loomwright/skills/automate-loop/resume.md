@@ -16,6 +16,7 @@
    - **Branch landed?** `git log "origin/<base>" --oneline` / `git branch --contains <sha>`, `<base>` = `resolve-base-branch.sh --repo .`'s one line (the plugin's script; a non-zero exit ⇒ unverified, never `main`) — never assert "merged" from memory.
    - **Requirement stamped?** the requirement file's `## Status: done` stamp.
    - **No PR yet (`pr: null`, `pause_reason: rate_limit`)?** nothing to reconcile: the item stays as parked, and resuming re-picks it and retries RUN.
+   - **No PR, stopped on purpose (`pause_reason: no_pr_stop`)?** The item parks again while its requirement is unchanged, when someone decided the stop; edit the requirement or check the row off. A gate's stop re-picks. `per-item-loop.md` §"No-PR stop park".
    - **A DETACHED drain died for this item's PR (`drain_died`)?** A `.supervisor/review-dispatch/*.died` marker whose `pr_url` equals `## Current`'s `pr:` (only the detached `dispatch-pr-review.sh` writes one — never this engine's owned drain) ⇒ `owned_drain_result: died`, `## Status: paused` / `pause_reason: drain_died` — **explicitly NEVER `awaiting_merge`**: no verdict exists to park on. Checked BEFORE the merged/open/closed reconcile.
    - Reconcile each item, then rewrite `## Queue` checkboxes + `## Current` atomically (§3) so belief matches truth.
 3. **RECONCILE also restores a crash-stranded config backup** (§7) — a `config_backup` sidecar still on disk means the prior tick died with `.auto_review` suppressed: restore it (or delete `config.json` if originally absent) before proceeding.

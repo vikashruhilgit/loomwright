@@ -120,6 +120,7 @@
 #               a call), each answer a `dismissed-decide`. The rule: per-item-loop.md §"Dismissed-findings
 #               decision step (before the park)"
 #   reconcile   the stranded config-backup restore; a skip/abandon check-off of ## Current ⇒ `trail-pr`;
+#               no PR: an owner's `no_pr_stop` on an unchanged requirement parks again, otherwise PICK re-picks;
 #               the `drain_died` marker park; `reconcile-item`: merged ⇒ (superseded drain lines) +
 #               `closeout --session-id` classified (leftover ⇒ the leftover gate); open ⇒ the validation
 #               re-check, then the open-PR park (single-open-PR invariant); gone ⇒ park
@@ -147,7 +148,8 @@
 #               line (or the pinned no-PR line), the verbatim supervisor-result sidecar + `sidecar-check`
 #   rate-limit  the loop's own session log: a main-scope `failed` row (`rate_limit`, or `unknown` + a
 #               `429` hint ⇒ `reason_hint`) after this item's `picked` line ⇒ the rate_limit park;
-#               else the drain (a PR) or `{"do":"done","status":"stopped"}` (no PR)
+#               else the drain (a PR); no PR: a deliberate stop ⇒ the `no_pr_stop` park (ns_no_pr_class), any
+#               other reason ⇒ `{"do":"done","status":"stopped"}`
 #   drain       the owned-drain spawn — ONE per pass (`drain_already_owned`, exit 2, nothing written)
 #   drain-result the DRAIN report: the pinned start line, the report's free-text lines, the terminal
 #               drain line, `owned_drain_*`, `pending_decisions` after a fix-now re-drain, the verbatim
@@ -1822,8 +1824,17 @@ ns_reconcile() {
     ns_after_reconcile; return 0
   fi
   [ "$STATUS" != done ] || { ns_after_reconcile; return 0; }
-  # no PR (a rate_limit park, a RUN that opened none): nothing to reconcile — PICK re-picks the item
-  case "$PR" in http://*/pull/*|https://*/pull/*) ;; *) ns_after_reconcile; return 0 ;; esac
+  # no PR (a rate_limit park, a RUN that opened none): PICK re-picks the item — unless the owner stopped its plan
+  # and its requirement has not changed since (ns_no_pr_stop_unchanged), which would re-run Launch Pad on the same input
+  case "$PR" in http://*/pull/*|https://*/pull/*) ;; *)
+    local held
+    if held="$(ns_no_pr_stop_unchanged)"; then
+      ns_run_park reconcile no_pr_stop "$(ns_ts) parked no_pr_stop — ${held%%"$TAB"*}; requirement cksum ${held#*"$TAB"} (--resume changed nothing)" 1 \
+        "$ITEM stays parked no_pr_stop (${held%%"$TAB"*}): its requirement is unchanged since the owner stopped it, so a re-pick would run Launch Pad on the same input. $(ns_no_pr_stop_next)"
+      return
+    fi
+    ns_after_reconcile; return 0 ;;
+  esac
   # a DETACHED drain died for this PR — checked BEFORE the merged / open / closed reconcile
   if died="$(ns_died_marker "$PR")"; then ns_drain_died "$died"; return; fi
   v="$(bash "$H" reconcile-item "$PR" "$STATUS" 2>/dev/null | tail -n 1)"
@@ -2085,6 +2096,9 @@ ns_plan_result() {
   fi
   why="$(printf '%s' "${why:-the Launch Pad phase saved no brief}" | tr '\n\r' '  ')"
   ns_once once_pl_nopr ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
+  # the ls-diff fallback reports a block it could not read as user_discarded_at_phase_6: nobody is known to have
+  # discarded anything, so it is never classed as an owner's stop
+  if [ -z "$fb" ] || [ "$sr" != user_discarded_at_phase_6 ]; then st_set nopr_reason "$sr"; fi
   NEXT=rate-limit
 }
 
@@ -2113,6 +2127,7 @@ ns_run() {
   # read "clean", so RUN never starts without one (fail CLOSED)
   ns_run_precheck run || return 1
   # a lane held for the scope re-gate starts nothing until the coordinator's lane-scope-decide releases it
+  [ "$(ns_pause_reason)" != no_pr_stop ] || { ns_err "no_pr_stop — $ITEM is parked after a deliberate no-PR stop; RUN starts only from a --resume or --start pick re-pick — nothing written"; NS_RC=2; return 1; }
   [ "$(ns_pause_reason)" != scope_hold ] || { ns_err "scope_hold — this lane is held for the coordinator's scope re-gate (lane-scope-check / lane-scope-decide); RUN starts only after the release — nothing written"; NS_RC=2; return 1; }
   # a checkpointed Supervisor run this item left resumes (`--continue task: <id>`, re-derived from the run file on
   # every entry — the brief its pass saved was that run's, already consumed), fresh phases and --inline-phases alike
@@ -2278,6 +2293,7 @@ ns_run_record() {
       fi ;;
     esac
     ns_once once_rc_ran ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
+    st_set nopr_reason "$sr"
   fi
   NEXT=rate-limit
 }
@@ -2308,6 +2324,45 @@ ns_429_hint() { # <payload session id> <row ts> — the closest-preceding STOP_F
   grep -qx true < <("$JQ" -Rn --arg s "$1" --arg t "$2" '[inputs | (capture("^\\[(?<ts>[0-9TZ:.-]+)\\] STOP_FAILURE (?<p>.*)$")? // empty)
       | .p = (.p | fromjson? // null) | select(.p != null and (.p.session_id // "") == $s and .ts <= $t)]
       | last | ((.p.last_assistant_message // "") | tostring | test("429"))' "$f" 2>/dev/null)
+}
+# ns_no_pr_class <status_reason> — why a RUN or Launch Pad phase opened no PR, as far as the next step goes:
+#   owner  someone decided (Refine offline, Discard, an abort, Launch Pad's own BLOCKERS): the same requirement gets
+#          the same answer, so a re-pick waits for it to change (ns_no_pr_stop_unchanged)
+#   gate   a named gate stopped with nobody to ask, or a saved brief failed a check: the owner's --resume is the remedy
+#   empty  anything else is a failure, not a decision (phase_died, a malformed block, a concurrent session, a
+#          checkpoint, supervisor_failed_other, an unknown token): the lane reads `stalled`, as it always did
+ns_no_pr_class() {
+  case "${1:-}" in
+    launch_pad_blocked|user_discarded_at_phase_6|user_aborted_at_launch_pad|user_aborted_at_no_go|user_aborted_at_plan_review_fail) printf owner ;;
+    launch_pad_cant_ask_non_interactive|non_interactive_without_fallback|preflight_overlap_detected|rubric_dropped_from_brief) printf gate ;;
+  esac
+}
+ns_item_cksum() { # the requirement's content fingerprint, one word; an unreadable file reads `missing`
+  local c; c="$(cksum < "$ITEM" 2>/dev/null | awk '{ print $1 "-" $2 }')"; printf '%s' "${c:-missing}"
+}
+# ns_no_pr_stop_next — what the owner can do about this park, in the words of where it runs
+ns_no_pr_stop_next() {
+  if ns_lane; then
+    printf 'The coordinator never resumes this lane: refine the requirement in the primary, then run lane-scope-decide <lane> defer (a later wave plans it again) or drop (checked off # skipped:).'
+  else
+    printf 'Refine the requirement and --resume (the edit is what lets it re-plan; a resume on the same text parks again), or check the row off # skipped: / # abandoned: in ## Queue and --resume.'
+  fi
+}
+# ns_no_pr_stop_unchanged — exit 0, printing "<reason>\t<cksum>", when the item's last `picked` segment records an
+# owner's no_pr_stop and its requirement still has that fingerprint. Read from ## Progress, never from pause_reason:
+# a PICK-time park (run_lock_held, token_ceiling, live_lane …) overwrites pause_reason before RECONCILE runs, and the
+# guard must outlive that. A gate stop's line carries no fingerprint, so it never holds a re-pick.
+ns_no_pr_stop_unchanged() {
+  local rec
+  rec="$(ns_section '## Progress' | NS_I="${ITEM#./}" awk '
+    BEGIN { i = ENVIRON["NS_I"] }
+    { x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) { p = substr(x, 8); sub(/[ ;,].*/, "", p); sub(/^\.\//, "", p); cur = (p == i); r = ""; next }
+      if (cur && index(x, "parked no_pr_stop — ") == 1) { r = x; sub(/^parked no_pr_stop [^ ]+ /, "", r) } }
+    END { if (r ~ /; requirement cksum /) { s = r; sub(/; requirement cksum .*/, "", s); c = r; sub(/^.*; requirement cksum /, "", c); sub(/ .*/, "", c); print s "\t" c } }')"
+  [ -n "$rec" ] || return 1
+  [ "${rec#*"$TAB"}" = "$(ns_item_cksum)" ] || return 1
+  printf '%s' "$rec"
 }
 ns_rate_limit() {
   local pts log rows cls="" hint="" reason rts csid skip=""
@@ -2343,6 +2398,13 @@ EOF
     return 0
   fi
   if [ -n "$PR" ] && [ "$PR" != null ]; then NEXT=drain; return 0; fi
+  local nsr ncl nl
+  nsr="$(st nopr_reason)"; ncl="$(ns_no_pr_class "$nsr")"
+  if [ -n "$ncl" ]; then
+    nl="parked no_pr_stop — $nsr"; [ "$ncl" = owner ] && nl="$nl; requirement cksum $(ns_item_cksum)"
+    ns_run_park rate-limit no_pr_stop "$(ns_ts) $nl" 1 "$ITEM stopped with no PR ($nsr) — parked no_pr_stop; a continue changes nothing. $(ns_no_pr_stop_next)"
+    return
+  fi
   ns_release
   ns_emit done rate-limit '{"status":"stopped","message":"/autonomous produced no PR — the no-PR line is written and there is nothing to drain; the loop stops here and reports (the /autonomous correctness gate that stopped it is the owner'"'"'s)"}'
 }

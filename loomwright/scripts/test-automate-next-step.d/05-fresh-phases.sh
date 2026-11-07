@@ -14,6 +14,20 @@ if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed 
 else no "F3c: $LEG_MSG"; fi
 if leg_fresh_checkpoint "$DRIVER"; then ok "F4 (wave 7, L23): a re-pick (--start pick) / --start run of an item whose last RUN checkpointed, its brief still in .supervisor/jobs/in-progress/ ⇒ the Supervisor phase spawn /loomwright:supervisor --continue task: <id> (the line's id, else the brief saved before it), no Launch Pad spawn; no in-progress brief ⇒ the Launch Pad spawn; a newer saved brief after the checkpoint ⇒ that brief"
 else no "F4: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_no_pr_stop "$DRIVER"; then ok "F4n (no_pr_stop): an owner's no-PR stop parks with the requirement's fingerprint and a bare call re-prints it; --resume on the unchanged requirement parks again (also after a PICK-time park overwrote pause_reason); an edit or a # skipped: check-off moves it on; a gate's stop re-picks on --resume; phase_died and a malformed block stay done/stopped, unparked"
+else no "F4n (no_pr_stop): $LEG_MSG"; fi
+npm_mutant() { # <name> <anchor> <replacement>
+  local m
+  if m="$(build_mutant "noprstop-$1" "$2" "$3" 2>"$WORK/npm.err")"; then
+    LEG_MSG=""
+    if leg_no_pr_stop "$m"; then no "F4n-M ($1): the mutant still passes F4n — the pin is vacuous"
+    else ok "F4n-M ($1): the mutant turns F4n red (${LEG_MSG:0:120})"; fi
+  else no "F4n-M ($1): mutant not built: $(cat "$WORK/npm.err")"; fi
+}
+npm_mutant no-park 'launch_pad_blocked|user_discarded_at_phase_6|' 'user_discarded_at_phase_6|'
+npm_mutant no-guard 'if held="$(ns_no_pr_stop_unchanged)"; then' 'if false; then'
+npm_mutant fallback-is-owner 'if [ -z "$fb" ] || [ "$sr" != user_discarded_at_phase_6 ]; then' 'if true; then'
 if leg_inline_checkpoint "$DRIVER"; then ok "F4i (--inline-phases): an inline checkpoint RUN report (supervisor_checkpoint, its SUPERVISOR_RESULT's task_id) writes the no-PR line with --continue task: <id>; the re-pick / --start run with the brief in .supervisor/jobs/in-progress/ ⇒ the inline /loomwright:supervisor --continue task: <id> spawn (--non-interactive / --cheap / --max-tokens forwarded, --notify dropped), then asking for the SUPERVISOR_RESULT; no in-progress brief ⇒ the /autonomous spawn"
 else no "F4i: $LEG_MSG"; fi
 if leg_lane_cheap "$DRIVER"; then ok "F4j (lanes): inside a lane, lane.json \"cheap\": true puts --cheap on the RUN spawn with no --cheap given; a lane.json without it, or no lane.json (a sequential run), gets none"
