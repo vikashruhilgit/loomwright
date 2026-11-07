@@ -75,14 +75,14 @@ leg_cp_run() {
   # A3 — never cheap: no --cheap, no line
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
   cp_call "$drv" --start run --session-id coord-1
-  [ "$NC_RC" = 0 ] && [ "$(cp_inv)" = "$base" ] && ! cp_cfg | grep -q 'cheap' \
+  [ "$NC_RC" = 0 ] && [ "$(cp_inv)" = "$base" ] && ! grep -q 'cheap' < <(cp_cfg) \
     || { LEG_MSG="A3 ⇒ exit $NC_RC '$(cp_inv)' cfg $(cp_cfg | tr '\n' '|')"; return 1; }
   # A4 — --no-cheap: the line goes, ONE Progress line, the RUN spawn and the owned drain after it are full cost
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
   cp_inject "- cheap: true"
   cp_call "$drv" --start run --session-id coord-1 --no-cheap
   [ "$NC_RC" = 0 ] && [ "$(cp_inv)" = "$base" ] || { LEG_MSG="A4 spawn ⇒ exit $NC_RC '$(cp_inv)' ${NC_ERR:0:200}"; return 1; }
-  ! cp_cfg | grep -q '^- cheap:' && [ "$(grep -cE '^- [0-9TZ:-]+ cheap mode off \(--no-cheap\)$' "$CASE_RF")" = 1 ] \
+  ! grep -q '^- cheap:' < <(cp_cfg) && [ "$(grep -cE '^- [0-9TZ:-]+ cheap mode off \(--no-cheap\)$' "$CASE_RF")" = 1 ] \
     || { LEG_MSG="A4 run file: cfg $(cp_cfg | tr '\n' '|') progress $(grep -c 'cheap mode off' "$CASE_RF")"; return 1; }
   cp_call "$drv" --session-id coord-1 --result "$CP_RUN_REPORT"
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.what == "owned drain"' >/dev/null 2>&1 \
@@ -100,7 +100,7 @@ leg_cp_run() {
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
   cp_inject "- cheap: true"; printf '{"x":1}\n' > "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json"; s0="$(snapshot)"
   cp_call "$drv" --start run --session-id coord-1 --cheap --no-cheap
-  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && printf '%s' "$NC_ERR" | grep -q 'cheap_flags_conflict' && [ "$(snapshot)" = "$s0" ] \
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'cheap_flags_conflict' <<<"$NC_ERR" && [ "$(snapshot)" = "$s0" ] \
     || { LEG_MSG="A6 run file ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:200}"; return 1; }
   NC_OUT="$(NS_REAL_LOCK=1 in_case "$drv" "$R_SEAMS" bash "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --no-cheap --session-id coord-1 --cheap 2>"$CASE_DIR/nc.err")"; NC_RC=$?
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'cheap_flags_conflict' "$CASE_DIR/nc.err" && [ "$(snapshot)" = "$s0" ] \

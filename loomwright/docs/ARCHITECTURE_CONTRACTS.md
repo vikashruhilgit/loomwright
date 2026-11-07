@@ -757,7 +757,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | Command doc (`loomwright/commands/<stem>.md`) | Budget (proxy tokens) | Measured (proxy tokens) |
 |---|---|---|
 | `agent-help` | 26402 | 24001 |
-| `automate` | 5465 | 4968 |
+| `automate` | 6054 | 5504 |
 | `autonomous` | 4361 | 3964 |
 | `backlog` | 2704 | 2458 |
 | `capability-check` | 6680 | 6072 |

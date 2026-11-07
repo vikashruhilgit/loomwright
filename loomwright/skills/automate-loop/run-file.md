@@ -15,7 +15,7 @@
 - max_tokens: <N|absent>          # ONLY present when --max-tokens was passed; opt-in, PERSISTED (unlike --notify) so a bare --resume still enforces it
 - parallel: <N|absent>            # present on any --parallel parent run, 1 included (N = 1 = single-lane mode, §14); absent on every sequential run and inside every lane
 - auto_gates: off                 # ONLY present when --no-auto-gates or config.json {"auto_gates": false} turned the `auto` gate tier off; PERSISTED so a bare --resume keeps it; lane-create carries it into lane.json as auto_gates: false
-- cheap: true                     # ONLY present while --cheap is on (written with --cheap, removed by --no-cheap); PERSISTED so a bare --resume keeps the Sonnet profile; any other value reads as off; never inside a lane (lane.json is its record)
+- cheap: true                     # ONLY present while --cheap is on (written with --cheap, removed by --no-cheap); PERSISTED so a bare --resume keeps the Sonnet profile; any other value reads as off; never inside a lane (lane.json is its record) nor on a --parallel coordinator's run (re-pass --cheap on its --resume)
 ## Queue                    # `- [ ]` queued · `- [x]` done (merged) · `- [x] … # skipped|abandoned:` excluded; order = processing order
 - [ ] <requirement path or generated file>
 - [x] <... merged ...>
