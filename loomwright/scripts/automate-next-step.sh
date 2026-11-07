@@ -179,8 +179,9 @@
 #               + the dry sweep line) or the limit_reached park; otherwise `{"do":"done","status":"running"}`
 #               (next PICK)
 #   merge-parked  `--merge-parked`: the refusals (a lane, a `--parallel` parent, `## Current` not
-#               `awaiting_merge` with `owned_drain_result: READY` — exit 2, nothing written), the run-lock
-#               acquire (refused ⇒ `run_lock_held`, exit 2), `reconcile-item`: merged ⇒ merge-closeout; open ⇒
+#               `awaiting_merge` with `owned_drain_result: READY`, no PR — exit 2, nothing written), the run-lock
+#               acquire (refused ⇒ `run_lock_held`, exit 2), the same reads again under the lock (changed ⇒
+#               release, `merge_parked_state_changed`, exit 2), `reconcile-item`: merged ⇒ merge-closeout; open ⇒
 #               merge-guard; closed / gone ⇒ RECONCILE's park report (never checked off)
 #   merge-guard the pre-gate guard: no recorded `- ready_sha:` line ⇒ `ready_sha_missing`; live head ≠
 #               ready_sha ⇒ `head_sha_moved` (a person must decide); checkout HEAD ≠ live head ⇒
@@ -3341,15 +3342,20 @@ ns_mp_ready_line() { ns_section '## Current' | grep -m1 '^- ready_sha: ' || true
 # ns_mp_due <reason> <detail> <message> — the guard's park (written by merge-park, once)
 ns_mp_due() { st_set mp_reason "$1"; st_set mp_detail "$2"; st_set mp_message "$3"; NEXT=merge-park; }
 ns_merge_parked() {
-  local odr v
+  local odr v pre
   # refusals, before the run lock and any write (exit 2 on the first arm: not even the sidecar is saved)
   ns_lane && { ns_mp_refuse "merge_parked_in_lane — .supervisor/lane.json is present: a lane's READY park waits for its wave (lanes.md), never --merge-parked — nothing written"; return 1; }
   [ -z "$(ns_parallel)" ] || { ns_mp_refuse "merge_parked_parallel_parent — ## Run Config reads parallel: $(ns_parallel), a --parallel coordinator run; its items merge through the wave PR — nothing written"; return 1; }
   odr="$(ns_kv "$(ns_section '## Current' | grep -m1 '^- owned_drain_started: ' || true)" owned_drain_result)"
   [ "$STATUS" = awaiting_merge ] && [ "$odr" = READY ] || { ns_mp_refuse "merge_parked_not_awaiting_merge — ## Current reads status: ${STATUS:-none} (owned_drain_result: ${odr:-none}); --merge-parked takes only an item parked awaiting_merge after a READY drain — nothing written"; return 1; }
   case "$PR" in http://*/pull/*|https://*/pull/*) ;; *) ns_mp_refuse "merge_parked_no_pr — ## Current names no PR (${PR:-none}) — nothing written"; return 1 ;; esac
+  pre="$ITEM|$STATUS|$PR|$odr"
   # the run lock: held from before gate-eval through the closeout (a merge watcher's closeout skips meanwhile)
   ns_lock acquire || { ns_mp_refuse "run_lock_held — another holder has the run lock of $RUN_ID (a merge watcher's closeout, or another session); retry --merge-parked once it is free — nothing written"; return 1; }
+  # the reads above predate the lock: a merge watcher's closeout can finish in that gap, so read them again
+  ns_refresh
+  odr="$(ns_kv "$(ns_section '## Current' | grep -m1 '^- owned_drain_started: ' || true)" owned_drain_result)"
+  [ "$ITEM|$STATUS|$PR|$odr" = "$pre" ] || { ns_release; ns_mp_refuse "merge_parked_state_changed — ## Current changed while the run lock was being taken (now status: ${STATUS:-none}, owned_drain_result: ${odr:-none}), so a merge watcher's closeout may already have run; read the run file, then re-run --merge-parked if the item is still parked — nothing written"; return 1; }
   v="$(bash "$H" reconcile-item "$PR" "$STATUS" 2>/dev/null | tail -n 1)"
   case "$v" in
     merged) st_set mp_how already; NEXT=merge-closeout ;;

@@ -31,6 +31,7 @@ fi
 #   AC16/AC17  refusals: exit 2, .supervisor/ byte-unchanged, no lock      AC18  MERGED / CLOSED at entry
 #   LEFT  a closeout leftover kept ⇒ the entry's tail (awaiting_go)        HOST  LOOMWRIGHT_HOST_STATE_DIR untouched
 #   UNREAD  the fail-CLOSED reads (PR head, feedback, compare) park; a held run lock refuses (exit 2, nothing written)
+#   RACE  a merge watcher's closeout finishing while the lock is taken ⇒ released, refused by name, no gate, no closeout
 echo "-- MP. --merge-parked: one parked item through the existing gate, the durable READY record"
 
 MP_CASE=reconcile-closeout-merged
@@ -258,6 +259,15 @@ mp_ac16() {
     MP_SNAP="$(snapshot)"; mp_call "$drv"; mp_refused "status $s" "merge_parked_not_awaiting_merge — ## Current reads status: $s" || return 1
   done
 }
+mp_race() { # the lock stub moves ## Current as it is acquired: the gap between the entry's first reads and its lock
+  local drv; drv="$(mp_spy "$1")" && mp_new || { LEG_MSG="scratch"; return 1; }
+  { printf '#!/usr/bin/env bash\nprintf "lock %%s\\n" "$1" >> "$NS_REC_LOG"\n'
+    printf '[ "$1" != acquire ] || bash %q current-set "$RF" --item %q --status done --pause-reason awaiting_go >/dev/null 2>&1\nexit 0\n' "$H" "$MP_ITEM"
+  } > "$CASE_BIN/racelock"; chmod +x "$CASE_BIN/racelock"; mp_seam "NEXT_STEP_LOCK_CMD=$CASE_BIN/racelock"
+  mp_call "$drv"
+  [ "$MP_RC" = 2 ] && [ -z "$MP_OUT" ] && grep -qF 'merge_parked_state_changed — ' <<<"$MP_ERR" && [ "$(mp_n '^helper gate-eval')" = 0 ] && [ "$(mp_n '^helper closeout')" = 0 ] && [ "$(mp_n '^lock release')" = 1 ] \
+    || { mp_fail "a closeout in the lock gap: not released and refused with no gate and no closeout"; return 1; }
+}
 mp_ac17() {
   local drv; drv="$(mp_spy "$1")" && mp_new || { LEG_MSG="scratch"; return 1; }
   printf '{"lane":"L1","parallel":2}\n' > "$CASE_ROOT/.supervisor/lane.json"
@@ -342,6 +352,7 @@ for mp_leg in "AC1:mp_ac1:MERGE ⇒ gate-eval once, closeout once WITH its trail
   "LEFT:mp_left:a closeout leftover kept ⇒ the entry's own tail (awaiting_go)" \
   "HOST:mp_host:LOOMWRIGHT_HOST_STATE_DIR set ⇒ nothing written under it; the run file and sidecar under the automate dir" \
   "UNREAD:mp_unread:an unreadable PR head / review-comment / compare read parks (fail CLOSED), a late review comment parks, a held run lock refuses with nothing written" \
+  "RACE:mp_race:## Current moved while the run lock was taken ⇒ the lock released, merge_parked_state_changed, no gate, no second closeout" \
   "USAGE:mp_usage:--merge-parked with --resume / --start / --result ⇒ exit 2, nothing written; the driver names no pr merge"; do
   LEG_MSG=""; mp_id="${mp_leg%%:*}"; mp_rest="${mp_leg#*:}"; mp_fn="${mp_rest%%:*}"; mp_what="${mp_rest#*:}"
   if "$mp_fn" "$DRIVER"; then ok "MP $mp_id: $mp_what"; else no "MP $mp_id: $LEG_MSG"; fi
@@ -390,6 +401,7 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
   mp_pin AC4 mp_ac7 '  [ "$live" = "$rs" ] || { ns_mp_due head_sha_moved' '  [ "$live" = "$rs" ] || { NEXT=drain; return 0; ns_mp_due head_sha_moved' 'the head-moved branch routed to the drain'
   mp_pin AC7 mp_ac7 '  [ "$live" = "$rs" ] || { ns_mp_due head_sha_moved' '  true || { ns_mp_due head_sha_moved' 'the live-head-vs-ready_sha comparison deleted'
   mp_pin AC11 mp_ac11 '  ns_lock acquire || { ns_mp_refuse "run_lock_held' '  true || { ns_mp_refuse "run_lock_held' 'the run-lock acquire before gate-eval deleted'
+  mp_pin RACE mp_race '  [ "$ITEM|$STATUS|$PR|$odr" = "$pre" ] || {' '  true || {' 'the re-read after the lock deleted'
   mp_pin AC13 mp_ac13 '  ns_dismissed || return 1' '  ns_dismissed || return 1; while IFS="$TAB" read -r _k _p; do [ -n "$_p" ] && bash "$H" dismissed-decide "$RF" "$_p" follow-up --auto >/dev/null 2>&1; done < <(ns_undecided)' 'undecided drafts followed up --auto after MERGE'
   mp_pin AC16 mp_ac16 '  [ "$STATUS" = awaiting_merge ] && [ "$odr" = READY ] || {' '  true || {' 'the status refusal deleted'
   mp_pin AC18c mp_ac18 "    *) # closed unmerged or vanished: RECONCILE's report — a human resolves it; never checked off" '    *) NEXT=merge-finish; return 0 ;; zz-never)' 'a CLOSED PR sent to the check-off'
