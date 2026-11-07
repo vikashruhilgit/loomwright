@@ -11,8 +11,9 @@ fi
 # THE CASES: run-config-suppress-restore (an item running, no PR: --start run), drain-owned-drain-started (an item
 # with its PR: --start drain) and dismissed-fix-now-re-drain (the fix-now hand-off), each with a `- cheap:` line
 # put into ## Run Config (cp_inject) or a lane.json written, where the leg needs one.
-# Honest limit: a `/automate --resume` is modelled by deleting the driver's sidecar (what every --resume does to
-# it) before the next call; the resume entry's own start steps (closeout-others, the glob, AUT-RESUME) are 04's.
+# Honest limit: in CP-A a `/automate --resume` is modelled by deleting the driver's sidecar (what every --resume does
+# to it) before the next call; the resume entry's own start steps (closeout-others, the glob) are 04's — CP-R drives
+# the resume entry's flag carry itself (resume-glob-finalize).
 # LEGS (each names the acceptance criterion it pins; the brief's Pin mutations turn each red):
 #   A1  --cheap writes ONE `- cheap: true` line, the last of ## Run Config; the spawn carries --cheap
 #   A2  a `- cheap: true` run, the sidecar wiped, no --cheap given ⇒ the inline /autonomous spawn and the fresh
@@ -30,7 +31,12 @@ fi
 #   B5  a lane whose lane.json reads `"cheap": true` ⇒ its owned drain carries --cheap with no --cheap given
 #   A1/A4 on a parking call (pick-time-token-ceiling-park): --no-cheap removes the line with ONE Progress line
 #       though the call parks before any spawn, a second --no-cheap writes nothing; --cheap writes the line; a
-#       call that only re-prints the pending park records its flag too
+#       call that only re-prints the pending park writes NOTHING (it may hold no run lock) and keeps the flag in the
+#       sidecar, written by the next call that holds the lock (a --start pick, whose fresh tail keeps it)
+#   K   the write happens UNDER the run lock: a lock stub snapshots the run file at release — a --cheap / --no-cheap
+#       parking PICK and a Continue answer that parks awaiting_merge: the snapshot already carries the change
+#   R   the resume entry: --resume --cheap asks AUT-RESUME and writes no run file; the bare Continue answer writes
+#       `- cheap: true` (the flag carried in the sidecar); the same when --cheap rides only the ask's re-print
 echo "-- CP. cheap mode persisted in ## Run Config, --no-cheap, lane.json authoritative in a lane, drain spawns"
 
 CP_DRAIN_BASE="/review-pr https://github.com/vikashruhilgit/loomwright/pull/542 --until-mergeable --no-auto-postmortem"
@@ -193,11 +199,94 @@ leg_cp_park() {
   cp_park_drive "$call --cheap" "expect: park"
   [ -z "$DRIVE_ERR" ] && [ "$(cp_cfg | grep -c '^- cheap: true$')" = 1 ] \
     || { LEG_MSG="park --cheap ⇒ ${DRIVE_ERR:-} cfg $(cp_cfg | tr '\n' '|')"; return 1; }
-  # a call that only re-prints the pending park records --no-cheap too, and the same park re-prints
+  # a call that only re-prints the pending park writes nothing (it may hold no run lock): the same park re-prints,
+  # the run file is byte-unchanged, the flag waits in the sidecar; a repeat re-print does not even touch the sidecar
+  local rf0 sc0; rf0="$(cksum < "$CASE_RF")"
   cp_park_drive "call: --no-cheap" "expect: park"
   [ -z "$DRIVE_ERR" ] && printf '%s' "$LAST_OUT" | jq -e '.pause_reason == "token_ceiling"' >/dev/null 2>&1 \
-    && ! grep -q '^- cheap:' < <(cp_cfg) && [ "$(cp_off_lines)" = 1 ] \
-    || { LEG_MSG="re-print --no-cheap ⇒ ${DRIVE_ERR:-} '${LAST_OUT:0:120}' cfg $(cp_cfg | tr '\n' '|') progress $(cp_off_lines)"; return 1; }
+    && [ "$(cksum < "$CASE_RF")" = "$rf0" ] \
+    && jq -e '.flag_cheap == "off" and .cheap_due == "true"' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" >/dev/null 2>&1 \
+    || { LEG_MSG="re-print --no-cheap ⇒ ${DRIVE_ERR:-} '${LAST_OUT:0:120}' cfg $(cp_cfg | tr '\n' '|') run file $([ "$(cksum < "$CASE_RF")" = "$rf0" ] && echo unchanged || echo WRITTEN)"; return 1; }
+  sc0="$(snapshot)"
+  cp_park_drive "call: --no-cheap" "expect: park"
+  [ -z "$DRIVE_ERR" ] && [ "$(snapshot)" = "$sc0" ] || { LEG_MSG="a repeated re-print --no-cheap wrote .supervisor/ ${DRIVE_ERR:-}"; return 1; }
+  # … the next --start pick (no flag; a fresh tail keeps the unwritten request) writes it under its lock
+  cp_park_drive "$call" "expect: park"
+  [ -z "$DRIVE_ERR" ] && ! grep -q '^- cheap:' < <(cp_cfg) && [ "$(cp_off_lines)" = 1 ] \
+    && ! jq -e 'has("cheap_due")' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" >/dev/null 2>&1 \
+    || { LEG_MSG="pick after re-print ⇒ ${DRIVE_ERR:-} cfg $(cp_cfg | tr '\n' '|') progress $(cp_off_lines)"; return 1; }
+  return 0
+}
+
+# cp_snaplock — a NEXT_STEP_LOCK_CMD stub (every verb succeeds) that copies the run file to $CASE_DIR/at-release.md
+# on release; cp_k_call <driver> <args…> — one driver call under it, in the current case (NC_OUT NC_RC NC_ERR)
+cp_snaplock() {
+  printf '#!/usr/bin/env bash
+printf "lock %%s\\n" "$*" >> "%s"
+[ "$1" = release ] && cp "$RF" "%s"
+exit 0
+' \
+    "$CASE_DIR/rec.log" "$CASE_DIR/at-release.md" > "$CASE_BIN/snaplock" && chmod +x "$CASE_BIN/snaplock"
+  printf 'NEXT_STEP_LOCK_CMD=%s\n' "$CASE_BIN/snaplock" > "$CASE_DIR/seams.snap"; rm -f "$CASE_DIR/at-release.md"
+}
+cp_k_call() {
+  local drv="$1"; shift
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.snap" bash "$drv" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
+}
+cp_snap_cfg() { awk '/^## / { c = ($0 == "## Run Config"); next } c' "$CASE_DIR/at-release.md" 2>/dev/null; }
+
+# leg_cp_lock <driver> — K: every write of the request lands BEFORE the run lock's release
+leg_cp_lock() {
+  local drv="$1" c="$FIX/pick-time-token-ceiling-park" ad
+  # --start pick --cheap parking token_ceiling: the line is in the run file the release saw
+  new_scratch "$c" || { LEG_MSG="scratch"; return 1; }; cp_snaplock
+  cp_k_call "$drv" "$CASE_RF" --start pick --session-id auto-2026-10-15-040641 --cheap
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.pause_reason == "token_ceiling"' >/dev/null 2>&1 \
+    && [ "$(cp_snap_cfg | grep -c '^- cheap: true$')" = 1 ] && [ "$(cp_cfg | grep -c '^- cheap: true$')" = 1 ] \
+    || { LEG_MSG="pick --cheap ⇒ exit $NC_RC '${NC_OUT:0:120}' at release: $(cp_snap_cfg | tr '\n' '|') ${NC_ERR:0:200}"; return 1; }
+  # --start pick --no-cheap on a cheap run: the removal and its ONE Progress line are in the run file the release saw
+  new_scratch "$c" || { LEG_MSG="scratch"; return 1; }; cp_snaplock; cp_inject "- cheap: true"
+  cp_k_call "$drv" "$CASE_RF" --start pick --session-id auto-2026-10-15-040641 --no-cheap
+  [ "$NC_RC" = 0 ] && [ -f "$CASE_DIR/at-release.md" ] && ! grep -q '^- cheap:' < <(cp_snap_cfg) \
+    && [ "$(grep -cE '^- [0-9TZ:-]+ cheap mode off \(--no-cheap\)$' "$CASE_DIR/at-release.md")" = 1 ] \
+    && cmp -s "$CASE_DIR/at-release.md" "$CASE_RF" \
+    || { LEG_MSG="pick --no-cheap ⇒ exit $NC_RC at release: $(cp_snap_cfg | tr '\n' '|') ${NC_ERR:0:200}"; return 1; }
+  # --resume --cheap, answered Continue (no flag), parking awaiting_merge: the line is there at the release
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }; cp_snaplock
+  printf '%s\n' "$P_PR_MERGED" >> "$CASE_GH"; ad="$CASE_ROOT/.supervisor/automate"
+  cp_k_call "$drv" --resume "$ad" --session-id "$P_SID" --cheap
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.gate == "AUT-RESUME"' >/dev/null 2>&1 || { LEG_MSG="resume ask ⇒ exit $NC_RC '${NC_OUT:0:120}'"; return 1; }
+  cp_k_call "$drv" "$CASE_RF" --result '{"answers":["Continue"]}'
+  [ "$NC_RC" = 0 ] && [ "$(cp_cfg | grep -c '^- cheap: true$')" = 1 ] \
+    || { LEG_MSG="Continue ⇒ exit $NC_RC '${NC_OUT:0:160}' cfg $(cp_cfg | tr '\n' '|') ${NC_ERR:0:200}"; return 1; }
+  grep -q '^lock release' "$CASE_DIR/rec.log" && [ "$(cp_snap_cfg | grep -c '^- cheap: true$')" = 1 ] \
+    || { LEG_MSG="Continue: no release, or released before the cheap line was written ($(cp_snap_cfg | tr '\n' '|'))"; return 1; }
+  return 0
+}
+
+# leg_cp_resume <driver> — R: the resume entry carries the flag to the answer call
+leg_cp_resume() {
+  local drv="$1" ad
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "$P_PR_MERGED" >> "$CASE_GH"; ad="$CASE_ROOT/.supervisor/automate"
+  p_call "$drv" --resume "$ad" --session-id "$P_SID" --cheap
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME"' >/dev/null 2>&1 \
+    && cmp -s "$FIX/resume-glob-finalize/input.md" "$CASE_RF" \
+    || { LEG_MSG="--resume --cheap ⇒ exit $NC_RC '${NC_OUT:0:160}' run file $(cmp -s "$FIX/resume-glob-finalize/input.md" "$CASE_RF" && echo unchanged || echo WRITTEN)"; return 1; }
+  ns_call "$drv" --result '{"answers":["Continue"]}'
+  [ "$NC_RC" = 0 ] && [ "$(cp_cfg | grep -c '^- cheap: true$')" = 1 ] \
+    || { LEG_MSG="bare Continue after --resume --cheap ⇒ exit $NC_RC '${NC_OUT:0:160}' cfg $(cp_cfg | tr '\n' '|') ${NC_ERR:0:200}"; return 1; }
+  # the re-print variant: --resume, then --resume --cheap (the pending ask re-printed), then a bare answer
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "$P_PR_MERGED" >> "$CASE_GH"; ad="$CASE_ROOT/.supervisor/automate"
+  p_call "$drv" --resume "$ad" --session-id "$P_SID"; local ask1="$NC_OUT"
+  p_call "$drv" --resume "$ad" --session-id "$P_SID" --cheap
+  [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$ask1" ] && cmp -s "$FIX/resume-glob-finalize/input.md" "$CASE_RF" \
+    || { LEG_MSG="--resume --cheap re-print ⇒ exit $NC_RC '${NC_OUT:0:160}'"; return 1; }
+  ns_call "$drv" --result '{"answers":["Continue"]}'
+  [ "$NC_RC" = 0 ] && [ "$(cp_cfg | grep -c '^- cheap: true$')" = 1 ] \
+    || { LEG_MSG="bare Continue after the --cheap re-print ⇒ exit $NC_RC '${NC_OUT:0:160}' cfg $(cp_cfg | tr '\n' '|') ${NC_ERR:0:200}"; return 1; }
   return 0
 }
 
@@ -211,5 +300,11 @@ LEG_MSG=""
 if leg_cp_lane "$DRIVER"; then ok "CP-L (A5, B5): in a lane a command-line --cheap and a '- cheap: true' Run Config line are ignored when lane.json has no cheap key (Run Config untouched); lane.json \"cheap\": true ⇒ the owned drain carries --cheap"
 else no "CP-L: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_cp_park "$DRIVER"; then ok "CP-P (A1, A4 on a parking call): --start pick --no-cheap that parks token_ceiling removes '- cheap: true' with ONE 'cheap mode off (--no-cheap)' Progress line and a second --no-cheap writes nothing; --cheap on a parking call writes the line; a re-print call records --no-cheap too"
+if leg_cp_park "$DRIVER"; then ok "CP-P (A1, A4 on a parking call): --start pick --no-cheap that parks token_ceiling removes '- cheap: true' with ONE 'cheap mode off (--no-cheap)' Progress line and a second --no-cheap writes nothing; --cheap on a parking call writes the line; a re-print call writes no run file and keeps --no-cheap in the sidecar, written by the next --start pick"
 else no "CP-P: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_cp_lock "$DRIVER"; then ok "CP-K: the request is written under the run lock — at the release of a --cheap / --no-cheap parking PICK and of a Continue answer after --resume --cheap, the run file already carries the change"
+else no "CP-K: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_cp_resume "$DRIVER"; then ok "CP-R: --resume --cheap asks AUT-RESUME and writes no run file; a bare Continue answer writes '- cheap: true'; the same when --cheap rides only the ask's re-print"
+else no "CP-R: $LEG_MSG"; fi

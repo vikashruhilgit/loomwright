@@ -150,6 +150,12 @@ check "Z-CHq --continue --no-cheap removes it too" "$(jq -c 'has("cheap")' "$LC1
 SUMC2="$(cksum < "$LC2/.supervisor/lane.json")"
 LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC2" --owner-command "/automate --resume $PARENTC --no-cheap" --resume-run "$PARENTC-L2" --no-cheap >/dev/null; wait_gone "$LC2"
 check "Z-CHr --no-cheap on a lane without cheap leaves lane.json byte-unchanged" "$(cksum < "$LC2/.supervisor/lane.json")" "$SUMC2"
+# a REFUSED launch (here: --resume-run of another run — the own-run check) never clears it: the clear runs only once
+# the form's refusals have passed
+jq '. + {cheap: true}' "$LC1/.supervisor/lane.json" > "$T/lc1.json" && mv "$T/lc1.json" "$LC1/.supervisor/lane.json"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC --no-cheap" --resume-run "$PARENTC-L9" --no-cheap)"
+has "Z-CHs a refused --no-cheap launch is refused" "$out" "resumes only its own run"
+check "Z-CHt … and leaves cheap in lane.json" "$(jq -c '.cheap' "$LC1/.supervisor/lane.json")" true
 
 # Z-F2 a HELD answer is kept coordinator-side (validated answers + note + via, never an owner command),
 # shown as answer_pending, and delivered ONLY by the delivery form under a current-session owner command
