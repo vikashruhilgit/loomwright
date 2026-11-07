@@ -113,9 +113,17 @@
 #     scoped-settlement fact, it never decides drain readiness itself.
 #     `required=unknown` means the branch-protection read that would name the
 #     required contexts FAILED for a reason other than a verified "genuinely
-#     unprotected" 404 (403/5xx/network/garbage) — per skills/review-heal/
-#     SKILL.md §U2's fail-CLOSED rule, the caller MUST treat `unknown`
-#     exactly like an unresolved/in-flight check, never like `green`.
+#     unprotected" 404 or GitHub's paid-plan refusal (other 403/5xx/network/
+#     garbage) — per skills/review-heal/SKILL.md §U2's fail-CLOSED rule, the
+#     caller MUST treat `unknown` exactly like an unresolved/in-flight check,
+#     never like `green`.
+#     The paid-plan refusal (protection-paid-plan.sh) means the repo cannot have
+#     a required list, so every check in the rollup except NEUTRAL/SKIPPED is
+#     treated as required: `required=` then reads the repo's real CI, under
+#     --required-only too. With no list to compare against, a check not queued
+#     yet is invisible, so nothing settles before a grace (WFC_NO_LIST_GRACE,
+#     default 60 s, at most half of --bound). A check that first appears after
+#     the grace is still missed.
 #
 # GH STUB SEAM (tests)
 #   The `gh` binary is invoked via "${GH:-gh}" throughout — a test exports
@@ -133,6 +141,8 @@ log() { printf 'wait-for-checks: %s\n' "$1" >&2; }
 GH_BIN="${GH:-gh}"
 JQ_BIN="${JQ:-jq}"
 WFC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# A missing library reads the refusal as any other 403: required=unknown, fail CLOSED.
+. "$WFC_DIR/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
 
 # ---- Parse args --------------------------------------------------------------
 PR_URL=""
@@ -323,6 +333,7 @@ review_pattern_match() {
 # line alone, without depending on a later re-scan to catch the gap.
 required_contexts_json="[]"
 protection_unknown=0
+no_required_list=0   # 1 = GitHub's paid-plan refusal: every non-neutral rollup check counts as required
 if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
   _base="$("$GH_BIN" pr view "$PR_URL" --json baseRefName 2>/dev/null || true)"
   BASE_REF="$(printf '%s' "$_base" | "$JQ_BIN" -r '.baseRefName // empty' 2>/dev/null || true)"
@@ -350,6 +361,8 @@ if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
       ((.required_status_checks.contexts // []) + ((.required_status_checks.checks // []) | map(.context))) | unique
     ' 2>/dev/null || echo '[]')"
     [ -n "$required_contexts_json" ] || required_contexts_json="[]"
+  elif [ "$_prot_rc" -ne 0 ] && protection_paid_plan_refusal "$_prot"; then
+    no_required_list=1
   else
     case "$_prot" in
       *"Branch not protected"*|*"HTTP 404"*)
@@ -431,6 +444,20 @@ SECONDS=0   # bash builtin wall-clock counter — reset here so $SECONDS is the
             # elapsed time since THIS script started, never a `date`-diff
             # (bash 3.2 / BSD safe; no `timeout` binary dependency).
 
+# How long nothing settles when there is no required list: the rollup is the only record of which checks
+# exist, and just after a push it can be empty or partial. Kept under the bound, so a repo with no CI settles
+# rather than elapsing, and --bound 0 (a one-shot read) never waits.
+NO_LIST_GRACE="${WFC_NO_LIST_GRACE:-60}"
+case "$NO_LIST_GRACE" in ''|*[!0-9]*) NO_LIST_GRACE=60 ;; esac
+case "$BOUND" in
+  ''|*[!0-9]*) NO_LIST_GRACE=0 ;;
+  *) [ "$NO_LIST_GRACE" -gt $((BOUND / 2)) ] && NO_LIST_GRACE=$((BOUND / 2)) ;;
+esac
+# $SECONDS restarts with each --continue call, so resumable mode takes off what earlier calls already spent.
+if [ -n "$DEADLINE" ]; then
+  NO_LIST_GRACE=$((NO_LIST_GRACE - ($(date +%s) - (DEADLINE - BOUND))))
+fi
+
 while :; do
   _view="$("$GH_BIN" pr view "$PR_URL" --json headRefOid,statusCheckRollup 2>/dev/null || true)"
   live_sha=""
@@ -446,6 +473,14 @@ while :; do
   pending_names=""
 
   if [ "$live_sha" = "$SHA" ]; then
+    # No required list can exist: this poll's rollup IS the required set.
+    if [ "$no_required_list" -eq 1 ]; then
+      required_contexts_json="$(printf '%s' "$rollup" | "$JQ_BIN" -c '
+        [ .[] | select(((.conclusion // "") | ascii_upcase) as $c | $c != "NEUTRAL" and $c != "SKIPPED")
+          | (.name // .context // "") | select(. != "") ] | unique
+      ' 2>/dev/null || echo '[]')"
+      [ -n "$required_contexts_json" ] || required_contexts_json="[]"
+    fi
     # Required-check stats: total/materialized/in-flight/not-green, computed
     # in ONE jq pass. Materialization is checked SEPARATELY from in-flight —
     # a required context absent from the rollup entirely (not yet created for
@@ -474,6 +509,9 @@ EOF_STATS
 
     if [ "$_req_materialized" -ge "$_req_total" ] 2>/dev/null && [ "$_req_inflight" -eq 0 ] 2>/dev/null; then
       required_settled=1
+    fi
+    if [ "$no_required_list" -eq 1 ] && [ "$SECONDS" -lt "$NO_LIST_GRACE" ]; then
+      required_settled=0
     fi
     if [ "$_req_notgreen" -gt 0 ] 2>/dev/null; then
       required_green=0
