@@ -215,6 +215,7 @@ See [../docs/command-parts/agent-help/ops.md](../docs/command-parts/agent-help/o
 /automate --backlog <_BACKLOG.md>                 # backlog-doc source — dependency-ordered Queue
 /automate --limit N                               # cap PROCESSED items this run (default 5; full Queue still stored)
 /automate --resume [<run_id>]                     # reconcile + continue a prior incomplete run
+/automate --merge-parked <run_id>                 # ONE item parked awaiting_merge through the merge gate, then stop
 /automate --sweep [--apply]                       # run ONLY the sweep of leftover plugin worktrees/branches; dry run unless --apply
 /automate ... --auto-merge                        # opt-in, default-OFF, fail-closed merge gate (conditions: skills/automate-loop/SKILL.md §10)
 /automate ... --trust-unprotected                 # with --auto-merge: allow merge onto an unprotected branch (condition 4 ONLY — never overrides condition 6, the high-risk park)

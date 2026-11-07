@@ -355,6 +355,34 @@ _ge_pr_parts() {
   esac
 }
 
+# _ge_protection_class <gh output> — classify a FAILED
+# `gh api repos/<owner>/<repo>/branches/main/protection` read (stdout and stderr
+# merged; gh prints the JSON error body with no trailing newline, so its
+# `gh: <message> (HTTP NNN)` line can share a line with that body). The status is
+# read from the LAST line that ENDS in gh's `(HTTP NNN)` token, never from a bare
+# `404` anywhere in the text. Prints `not_enforceable` for a 404 (no protection
+# configured) or for GitHub's paid-plan refusal (a 403 whose own `gh: ` line
+# carries the refusal message: a private repo on GitHub Free cannot have branch
+# protection, so nothing is enforced); `unreadable` for anything else, any other
+# 403 included. Mirrors wait-for-checks.sh's `HTTP 404` arm for the 404.
+_ge_protection_class() {
+  local status_line status
+  status_line="$(printf '%s\n' "$1" | sed -n -E '/\(HTTP [0-9]{3}\)[[:space:]]*$/p' | tail -n 1)"
+  status="$(printf '%s' "$status_line" | sed -n -E 's/.*\(HTTP ([0-9]{3})\)[[:space:]]*$/\1/p')"
+  case "$status" in
+    404) echo "not_enforceable" ;;
+    403)
+      # The message is read from gh's own `gh: ` line only (the text after its LAST
+      # `gh: `), never from a JSON body that shares the line.
+      case "${status_line##*gh: }" in
+        *"Upgrade to GitHub Pro"*) echo "not_enforceable" ;;
+        *)                         echo "unreadable" ;;
+      esac
+      ;;
+    *)   echo "unreadable" ;;
+  esac
+}
+
 # gate-eval <pr_url> <ctx.json> [--root <checkout>]
 # SELF-RESOLVING decision over the trusted-merge conditions (red-team-hardening item 03;
 # the authoritative enumeration is skills/automate-loop/SKILL.md §10):
@@ -423,11 +451,18 @@ _ge_pr_parts() {
 #           `bot_author_re` fallback here) blocks; `hasNextPage` (truncated >100 threads) blocks;
 #           any GraphQL read error blocks.
 #   cond 4  `gh api repos/<owner>/<repo>/branches/main/protection` — a 404 ⇒ unprotected (false);
-#           ANY OTHER error ⇒ `protection_unreadable` (PARK). `trust_unprotected` stays a ctx input
-#           (an operator flag, not an observable fact).
+#           the 404 is matched by gh's `(HTTP 404)` status token, never a bare `404` substring.
+#           GitHub's paid-plan refusal (a 403 whose own `gh: ` line carries the paid-plan refusal
+#           message — a private repo on GitHub Free cannot have branch protection) likewise reads
+#           as not enforceable (false), so `--trust-unprotected` covers it (`_ge_protection_class`).
+#           ANY OTHER error, any other 403 included ⇒ `protection_unreadable` (PARK).
+#           `trust_unprotected` stays a ctx input (an operator flag, not an observable fact).
 #   cond 5  required-check greenness from the SAME protection payload's required-context list
 #           (review-heal/SKILL.md §U2's discovery recipe) cross-referenced against the combined
-#           call's `statusCheckRollup`. Rubric satisfaction is now a FILE READ: ctx's
+#           call's `statusCheckRollup`. An EMPTY required list (404, paid-plan 403, reviews-only
+#           protection) is never vacuously green: the whole rollup is read, and any failing,
+#           pending or in-progress check ⇒ `checks_not_green` (PARK); every check success,
+#           neutral or skipped, or an empty rollup ⇒ holds. Rubric satisfaction is now a FILE READ: ctx's
 #           `supervisor_result_path` is parsed for a `rubric_score: N/M` line by THIS gate (never
 #           asserted by a caller) — N==M ⇒ satisfied, absent line ⇒ "na" (not a blocker), unreadable
 #           file ⇒ PARK.
@@ -690,14 +725,15 @@ GEPARTS
   fi
 
   # Condition 4 — enforceable branch protection OR --trust-unprotected. A 404
-  # means genuinely unprotected (false); ANY OTHER error is unreadable ⇒ PARK
-  # (never silently treated as either protected or unprotected).
+  # (matched by gh's `(HTTP 404)` status token) or GitHub's paid-plan 403 means
+  # nothing is enforced (false); ANY OTHER error is unreadable ⇒ PARK (never
+  # silently treated as either protected or unprotected).
   local prot_raw prot_rc=0 protection_enforceable="false" required_contexts_json="[]"
   prot_raw="$("$GH" api "repos/$owner/$repo/branches/main/protection" 2>&1)" || prot_rc=$?
   if [ "$prot_rc" -ne 0 ]; then
-    case "$prot_raw" in
-      *"404"*|*"Not Found"*) protection_enforceable="false" ;;
-      *)                     echo "PARK: protection_unreadable"; return 0 ;;
+    case "$(_ge_protection_class "$prot_raw")" in
+      not_enforceable) protection_enforceable="false" ;;
+      *)               echo "PARK: protection_unreadable"; return 0 ;;
     esac
   else
     if printf '%s' "$prot_raw" | "$JQ" -e . >/dev/null 2>&1; then
@@ -722,16 +758,28 @@ GEPARTS
   # Condition 5 — required checks green (discovery recipe: review-heal/SKILL.md §U2,
   # here sourced from the SAME branch-protection payload cond 4 already fetched)
   # AND rubric satisfied (na = not a blocker, now a FILE read — never caller-asserted).
+  # With NO required context (a 404, the paid-plan 403, or reviews-only protection)
+  # the whole rollup is read instead: every check must have concluded success,
+  # neutral or skipped (a StatusContext: state success); a failing, pending or
+  # in-progress check parks; an empty rollup holds.
+  # A NAMED required context keeps the stricter bar: success or neutral only (a
+  # StatusContext: state success), so a skipped required check parks
+  # checks_not_green (fail closed); loosening it is a gate-behaviour change.
   local checks_green
   checks_green="$(printf '%s' "$rollup_json" | "$JQ" -r --argjson req "$required_contexts_json" '
     . as $rollup
-    | ( ($req | length) == 0 ) or
+    | if ($req | length) == 0 then
+        all($rollup[]; ( ((.conclusion // "") | ascii_downcase) as $c
+                         | ((.state // "") | ascii_downcase) as $s
+                         | ($c == "success" or $c == "neutral" or $c == "skipped" or $s == "success") ))
+      else
       ( all($req[]; . as $name
           | ( $rollup | map(select((.name // .context // "") == $name))
               | any( ( ((.conclusion // "") | ascii_downcase) as $c
                        | ((.state // "") | ascii_downcase) as $s
                        | ($c == "success" or $c == "neutral" or $s == "success") ) ) )
         ) )
+      end
   ' 2>/dev/null)"
   if [ "$checks_green" != "true" ]; then
     echo "PARK: checks_not_green"; return 0
