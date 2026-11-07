@@ -4,6 +4,7 @@
 # Re-measure from a later CI run's PASS lines when the balance drifts. Format: <secs><TAB><path>.
 # One 3 s adapter test is deliberately absent (an adapter-boundary scan forbids its name in non-doc files outside adapters/); it takes the default weight.
 # iq02 reconcile (2026-10-09): five tests added after that CI run carry local wall-clock seconds (macOS, idle), not CI times.
+# Group 4 of test-automate-next-step.sh (13-merge-parked alone, 2026-11-06): its ~418 s local time scaled by that same CI/local ratio, not a CI measurement.
 # Pool-group split (2026-11-02): test-automate-trail.sh's 235 s and test-automate-next-step.sh's estimated ~253 s (its local
 # time scaled by trail's CI/local ratio; it had no row and took the default) are divided over their three group entries
 # by each group's measured local share; test-part-groups-lib.sh carries local seconds. Re-measure from CI PASS lines.
@@ -20,6 +21,7 @@
 52	loomwright/scripts/test-automate-lanes.sh
 89	loomwright/scripts/test-automate-next-step.2.sh
 87	loomwright/scripts/test-automate-next-step.3.sh
+146	loomwright/scripts/test-automate-next-step.4.sh
 77	loomwright/scripts/test-automate-next-step.sh
 91	loomwright/scripts/test-automate-trail.2.sh
 69	loomwright/scripts/test-automate-trail.3.sh

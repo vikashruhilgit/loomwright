@@ -30,6 +30,27 @@
 7. **RECONCILE also runs reconcile-status** — after step 4 resolved to continue, **BEFORE PICK**: `automate-helpers.sh reconcile-status .supervisor/requirements` (no `--apply` — promoting a requirement's `## Status:` is a human act), then one `automate-helpers.sh progress-append <runfile> "reconcile-status: would stamp <file> (<status>)"` line per `plan` row and one `reconcile-status: UNVERIFIED <subject>: <reason>` line per `unverified` row (a GitHub read failed, so no `would stamp` line proves nothing this pass); `info` rows are never appended. Never on step 4's can't-ask stops.
 8. **Pending dismissed-finding decisions.** `## Current`'s `pending_decisions: <n>` is BELIEF; the truth is `automate-helpers.sh dismissed-pending <runfile>`. RESUME never parks or blocks on it: an interactive resume asks the undecided set at §6 step 1 PICK; a `--non-interactive-fallback` resume asks nothing. A `fix_now_reentered: true` line means that item's one fix-now re-pass already ran.
 
+### Merging one parked item
+
+> **Run by the driver:** `automate-next-step.sh --merge-parked .supervisor/automate --run <run_id> --session-id <sid>` runs every step below (its `merge-*` arms; contract: `docs/result-schemas/automate-run.md` §"next-step instruction", **Entry points**). This file is read only when that call exits non-zero.
+
+`/automate --merge-parked <run_id>` puts ONE item parked `awaiting_merge` after a READY drain through the existing merge gate, then stops. It is not a `--resume` form. `--resume <run> --auto-merge` on a parked open PR still parks at RECONCILE: `--auto-merge` was not applied, the message names `/automate --merge-parked <run_id>`, and the flag is not kept.
+
+1. **Refusals, exit 2, nothing written:** `merge_parked_in_lane` (`.supervisor/lane.json` is present: a lane's READY park waits for its wave), `merge_parked_parallel_parent` (`## Run Config` reads `parallel: N`), `merge_parked_not_awaiting_merge` (`## Current` is not `awaiting_merge` with `owned_drain_result: READY`; the status is named), `merge_parked_no_pr`, `run_lock_held`, and `merge_parked_state_changed` (these reads are repeated once the lock is held; a merge watcher's closeout in that gap moved `## Current`, so the lock is released).
+2. **The entry takes the run lock** and holds it from before `gate-eval` through the closeout, so a merge watcher's closeout meanwhile reads `closeout: skipped — run lock held` and retries. `reconcile-item` then reads the PR: MERGED ⇒ step 5's closeout with no gate, no merge and no dismissed-drafts step; CLOSED or gone ⇒ RECONCILE's park report, never checked off; OPEN ⇒ step 3.
+3. **The pre-gate guard parks the item, gate-eval not run**, on the first of these `PARK: <reason>` reasons:
+   - `ready_sha_missing` — `## Current` has no `- ready_sha:` line (a run parked before this entry existed, or a READY report with no `ready_sha`); the live head is never substituted.
+   - `head_sha_moved` — the live PR head is not `ready_sha`; a person must decide.
+   - `checkout_not_on_pr_head` — this checkout's HEAD is not the PR head; the message names the branch to check out, and HEAD and the working tree are untouched.
+   - `ready_stale_feedback` — an issue comment, review or review comment is newer than `ready_at`.
+   - `base_moved_since_ready` — the compare API's `behind_by` is above 0 for the base (never `mergeStateStatus`).
+   - `pr_unreadable` / `feedback_unreadable` / `base_unreadable` — a read failed (fail CLOSED).
+4. **The gate inputs come from the run file.** `drain_result`, `termination_reason` and `ready_sha` are read from `## Current` (never from the sidecar, which a `--resume` wipes), and `gate-eval`, the one merge executor, runs unchanged. A gate `PARK: <reason>` goes to step 6, never to the decision step.
+5. **After `MERGE`, closeout runs with its trail.** On a gate `MERGE` the dismissed drafts get their pending record and stay pending for the next interactive PICK. Then `closeout --session-id` runs WITH its trail (a leftover goes through the leftover gate and comes back), then CHECK OFF. Items remain ⇒ `## Status: paused` with `pause_reason: awaiting_go` and no PICK (`/automate --resume` picks the next item); none remain ⇒ the done termination, trail included.
+6. **A park leaves the item awaiting_merge:** one `<ts> merge-parked <pr> — PARK: <reason> (<detail>)` line, a merge watcher armed only when none is live, and the lock released.
+
+The entry never prints a `spawn`, never starts a drain, lane or phase session, and never writes `## Run Config`, so the run keeps `mode: safe`. Because it spawns nothing and reads no host state directory, it runs the same under `--inline-phases` or a host.
+
 ---
 
 ## §5 — Skipped / abandoned items

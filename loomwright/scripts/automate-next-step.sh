@@ -29,6 +29,17 @@
 #                         [--root <checkout>] [--session-id <sid>] [--notify] [--cheap]
 #                         [--max-tokens <N>] [--inline-phases] [--owner-command <cmd>]
 #   automate-next-step.sh --resume <automate_dir> [--run <run_id>|latest] --session-id <sid> [same flags]
+#   automate-next-step.sh --merge-parked <automate_dir> --run <run_id> --session-id <sid> [--root <checkout>]
+#   MERGE ONE PARKED ITEM (`/automate --merge-parked <run_id>`): a one-time entry, exclusive with `--resume`,
+#   `--start` and `--result`, for ONE item parked `awaiting_merge` after a READY drain. It refuses (exit 2,
+#   nothing written) a lane, a `--parallel` parent and any other `## Current`; takes the run lock; reads the PR
+#   (`reconcile-item`): MERGED ⇒ closeout WITH its trail + CHECK OFF, no gate; CLOSED / gone ⇒ RECONCILE's
+#   report, never checked off; OPEN ⇒ the guard (the `- ready_sha:` line READY recorded — never the live head,
+#   never the sidecar — the live head, the checkout's HEAD, PR feedback newer than `ready_at`, `behind_by` on
+#   the base), then `gate-eval` unchanged. `MERGE` ⇒ the decision step's pending record, closeout WITH its
+#   trail, CHECK OFF, then `awaiting_go` (items remain) or the done termination; any park keeps the item
+#   `awaiting_merge` with one `PARK: <reason>` line, one watcher, the lock released. It never spawns, never
+#   drains, never picks, and never writes `## Run Config` (the run stays `mode: safe`).
 #   PHASES (automate-speed/09). By default each phase of an item — Launch Pad (`plan`), Supervisor (`run`)
 #   and the owned drain (`drain`) — is its own FRESH headless session: the spawn carries `"session":
 #   "fresh"`, its `phase`, the runnable `phase-launch` line (`launch`) and the sidecar the phase writes its
@@ -167,6 +178,24 @@
 #   terminate   the two exits: `## Status: done` (trail-pr --reason done + the `process registry:` line
 #               + the dry sweep line) or the limit_reached park; otherwise `{"do":"done","status":"running"}`
 #               (next PICK)
+#   merge-parked  `--merge-parked`: the refusals (a lane, a `--parallel` parent, `## Current` not
+#               `awaiting_merge` with `owned_drain_result: READY`, no PR — exit 2, nothing written), the run-lock
+#               acquire (refused ⇒ `run_lock_held`, exit 2), the same reads again under the lock (changed ⇒
+#               release, `merge_parked_state_changed`, exit 2), `reconcile-item`: merged ⇒ merge-closeout; open ⇒
+#               merge-guard; closed / gone ⇒ RECONCILE's park report (never checked off)
+#   merge-guard the pre-gate guard: no recorded `- ready_sha:` line ⇒ `ready_sha_missing`; live head ≠
+#               ready_sha ⇒ `head_sha_moved` (a person must decide); checkout HEAD ≠ live head ⇒
+#               `checkout_not_on_pr_head` (the branch named, nothing touched); an issue comment / review /
+#               review comment newer than `ready_at` ⇒ `ready_stale_feedback`; compare `behind_by` > 0 ⇒
+#               `base_moved_since_ready` (an unreadable read parks too); then the gate inputs from ## Current
+#   merge-gate  `gate-eval` (ns_gate_eval, unchanged): MERGE ⇒ merge-dismissed; PARK ⇒ merge-park (never the
+#               decision step)
+#   merge-dismissed `dismissed-drafts` + the pending record (as after any MERGE: the drafts stay pending)
+#   merge-closeout `closeout … --session-id` WITH its trail, classified (leftover ⇒ the leftover gate,
+#               then merge-finish)
+#   merge-finish CHECK OFF, then `awaiting_go` (items remain — the entry's own message) or the done termination
+#   merge-park  the entry's park: one `PARK: <reason>` line, `awaiting_merge` kept, a watcher only when none is
+#               live, the run lock released
 #
 # WRITERS. The run file is written ONLY through automate-helpers.sh `runfile-write`, `progress-append`,
 # `current-set`, `current-escalation` and `queue-checkoff` (plus the writes the called helpers make
@@ -266,7 +295,7 @@ H="$HERE/automate-helpers.sh"
 JQ="${JQ:-jq}"
 
 ns_usage() {
-  sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 5
+  sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 6
 }
 ns_die2() { ns_valve_report false "$*"; echo "next-step: $*" >&2; exit 2; }
 ns_err() { echo "next-step: $*" >&2; }
@@ -459,6 +488,9 @@ RF=""; RESULT=""; MODE=""; NONINT=0; TRUST=""; ROOT=""; SID=""; have_result=0
 # AD / RUN_ID are this script's own (set once the run file is known): never inherited from the environment
 AD=""; RUN_ID=""
 START=""; NOTIFY=0; CHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""; INLINE=0; OWNER_CMD=""
+# MP_DIR: `--merge-parked <automate_dir>`. NS_MODE_ARG: the `--mode` THIS command line gave (MODE is refilled
+# from the sidecar below; the parked-open-PR park needs to know whether the owner typed `--auto-merge` now)
+MP_DIR=""; NS_MODE_ARG=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --inline-phases) INLINE=1; shift ;;
@@ -471,6 +503,7 @@ while [ "$#" -gt 0 ]; do
       case "$2" in pick|run|drain) START="$2" ;; *) ns_die2 "--start must be pick|run|drain: '$2'" ;; esac
       shift 2 ;;
     --resume) [ "$#" -ge 2 ] && [ -n "$2" ] || ns_die2 "--resume needs the automate dir"; RESUME_DIR="$2"; shift 2 ;;
+    --merge-parked) [ "$#" -ge 2 ] && [ -n "$2" ] || ns_die2 "--merge-parked needs the automate dir"; MP_DIR="$2"; shift 2 ;;
     --run)
       [ "$#" -ge 2 ] && [[ "$2" =~ ^[A-Za-z0-9._-]{1,128}$ ]] && [ "$2" != . ] && [ "$2" != .. ] || ns_die2 "--run needs a run id (or latest)"
       RUN_SEL="$2"; shift 2 ;;
@@ -486,7 +519,7 @@ while [ "$#" -gt 0 ]; do
       RESULT="$(cat "$2")"; have_result=1; shift 2 ;;
     --mode)
       [ "$#" -ge 2 ] || ns_die2 "--mode needs a value"
-      case "$2" in safe|auto-merge) MODE="$2" ;; *) ns_die2 "--mode must be safe|auto-merge: '$2'" ;; esac
+      case "$2" in safe|auto-merge) MODE="$2"; NS_MODE_ARG="$2" ;; *) ns_die2 "--mode must be safe|auto-merge: '$2'" ;; esac
       shift 2 ;;
     --non-interactive) NONINT=1; shift ;;
     --trust-unprotected) TRUST=true; shift ;;
@@ -503,7 +536,19 @@ done
 # ------------------------------------------------------------------------------------------------
 # NS_RES_* carry what the start printed into the target's sidecar (set after the sidecar is read)
 NS_RES_N=""; NS_RES_RUNS=""; NS_RES_CO=""
-if [ -n "$RESUME_DIR" ]; then
+if [ -n "$MP_DIR" ]; then
+  # the merge-parked entry: ONE named run, no other entry rides with it; nothing is written by these checks
+  [ -z "$RESUME_DIR" ] || ns_die2 "--merge-parked and --resume are exclusive (--merge-parked is not a --resume form)"
+  [ -z "$START" ] || ns_die2 "--merge-parked and --start are exclusive"
+  [ "$have_result" = 0 ] || ns_die2 "--merge-parked takes no --result (an ask it prints is answered on the run file: <run_file> --result …)"
+  [ -z "$RF" ] || ns_die2 "--merge-parked takes the automate dir, not a run file (name the run with --run <run_id>)"
+  [ -n "$RUN_SEL" ] && [ "$RUN_SEL" != latest ] || ns_die2 "--merge-parked needs --run <run_id> (the run whose parked item to merge; never latest)"
+  [ -n "$SID" ] || ns_die2 "session_id_missing — --merge-parked needs --session-id <this session's id> (the run lock is acquired with it; closeout re-enters it) — nothing written"
+  [ -d "$MP_DIR" ] || ns_die2 "--merge-parked: not a directory: $MP_DIR"
+  MP_DIR="$(cd "$MP_DIR" && pwd)"
+  RF="$MP_DIR/$RUN_SEL.md"
+  [ -f "$RF" ] || ns_die2 "run_not_found — --run $RUN_SEL names no run file in $MP_DIR — nothing written"
+elif [ -n "$RESUME_DIR" ]; then
   [ -z "$RF" ] || ns_die2 "--resume takes the automate dir, not a run file (name a run with --run <run_id>)"
   [ -z "$START" ] || ns_die2 "--resume and --start are exclusive (--resume continues into PICK itself)"
   [ "$have_result" = 0 ] || ns_die2 "--resume takes no --result: answer the resume ask on its run file (<run_file> --result …)"
@@ -554,7 +599,7 @@ if [ -n "$RESUME_DIR" ]; then
     exit 0
   fi
 elif [ -n "$RUN_SEL" ]; then
-  ns_die2 "--run needs --resume <automate_dir>"
+  ns_die2 "--run needs --resume <automate_dir> or --merge-parked <automate_dir>"
 fi
 [ -n "$RF" ] || { ns_usage >&2; ns_die2 "usage: automate-next-step.sh <runfile> [options]"; }
 [ -f "$RF" ] && [ -r "$RF" ] || ns_die2 "run file not found or unreadable: $RF"
@@ -1688,12 +1733,20 @@ ns_watch_note() {
   ns_once once_rc_watch ns_progress "$(ns_ts) $l"
 }
 # the single-open-PR invariant (§8): the in-flight item's PR is open ⇒ no new item is picked — today's
-# park (## Status: paused, pause_reason unchanged), the run lock released, NO current-set / picked
+# park (## Status: paused, pause_reason unchanged), the run lock released, NO current-set / picked.
+# An explicit `--mode auto-merge` on THIS command line (`/automate --resume <run> --auto-merge`) is not applied
+# here (RECONCILE runs no gate-eval): the message says so and names --merge-parked, and the flag is not kept in
+# the sidecar (the FLAGS block recorded it before this step was known; --resume had already wiped the rest)
 ns_open_pr_park() {
+  local m="PR $PR of $ITEM is still open ($STATUS) — no new item is picked while it is open (single-open-PR invariant); merge or resolve it, then --resume"
+  if [ "$NS_MODE_ARG" = auto-merge ]; then
+    st_del flag_mode
+    m="$m; --auto-merge was not applied — use /automate --merge-parked $RUN_ID to put this parked item through the merge gate"
+  fi
   ns_watch_note || return 1
   ns_status paused || return 1
   ns_release
-  ns_emit_park reconcile "PR $PR of $ITEM is still open ($STATUS) — no new item is picked while it is open (single-open-PR invariant); merge or resolve it, then --resume"
+  ns_emit_park reconcile "$m"
 }
 ns_drain_died() { # <marker> — a DETACHED drain died for this PR (§4 step 2): NEVER awaiting_merge
   ns_once once_dd_current ns_call_writer current-set "$RF" --item "$ITEM" --status drain_died --pr "$PR" --branch "${BRANCH:-null}" --pause-reason drain_died || return 1
@@ -2458,7 +2511,7 @@ ns_drain_phase_sid() {
   ns_once once_dr_sid ns_progress "$(ns_ts) session_id $sid ($ITEM) phase=drain"
 }
 ns_drain_result() {
-  local r kind pr v t dec tr rounds fc note line
+  local r kind pr v t dec tr rounds fc note line rs
   r="$(st drain_report)"; [ -n "$r" ] || { ns_err "drain-result: no DRAIN report is held"; NS_RC=2; return 1; }
   kind="$(st drain_kind)"; [ -n "$kind" ] || kind=first
   pr="$(ns_drain_pr)"
@@ -2490,6 +2543,13 @@ ns_drain_result() {
   ns_once once_dr_owned ns_owned_drain_line "$dec" || return 1
   # a fix-now re-drain's re-pass is recorded at once (the decision step's re-pass: fix_now_reentered: true)
   if [ "$kind" = fixnow ] && [ -n "$PENDING_LINE" ]; then ns_once once_dr_pending ns_pending_write "$(ns_pending_n)" true || return 1; fi
+  # the durable READY record: a later session's gate pass (--merge-parked) reads its inputs from the run file,
+  # never only from the sidecar (a --resume wipes it). Written for the first drain AND the fix-now re-drain
+  # (replaced in place); a READY report with no ready_sha writes no line (the entry then parks ready_sha_missing)
+  rs="$(rj "$r" ready_sha)"; case "$tr" in ''|*[!a-z_]*) tr=unknown ;; esac
+  if [ "$dec" = READY ] && [ -n "$rs" ]; then
+    ns_once once_dr_ready ns_current_line "- ready_sha:" "- ready_sha: $rs | ready_at: $(ns_ts) | termination_reason: $tr" "- owned_drain_started:|- pending_decisions:" || return 1
+  fi
   ns_once once_dr_sidecar ns_write_text drain_text "$AD/$RUN_ID.review-heal-result.md" || return 1
   ns_once once_dr_check ns_sidecar_check "$AD/$RUN_ID.review-heal-result.md" || return 1
   NEXT=learning-emit
@@ -2519,11 +2579,13 @@ ns_superseded() {
 # ================================================================================================
 # step: awaiting-go — stop the run as a close-out leaves it (SKILL §3 "After a close-out")
 # ================================================================================================
-ns_awaiting_go() {
+ns_awaiting_go() { # [message] — the superseded-drain stop's text unless a caller (merge-finish) gives its own
   ns_status paused || return 1
   ns_call_writer current-set "$RF" --pause-reason awaiting_go || return 1
   ns_release
-  ns_emit_park awaiting-go "PR merged before the drain's terminal REVIEW_HEAL_RESULT — the item is closed out; the next item waits for /automate --resume"
+  local m="PR merged before the drain's terminal REVIEW_HEAL_RESULT — the item is closed out; the next item waits for /automate --resume"
+  [ -z "${1:-}" ] || m="$1"
+  ns_emit_park awaiting-go "$m"
 }
 
 # ================================================================================================
@@ -3270,6 +3332,136 @@ ns_terminate() {
 }
 
 # ================================================================================================
+# --merge-parked — merge ONE parked awaiting_merge item through the existing gate (`/automate --merge-parked`)
+# ================================================================================================
+# The entry never spawns, drains or picks, and never writes ## Run Config: gate-eval stays the one merge
+# executor (this script merges nothing), and every success path ends at merge-finish (CHECK OFF, then
+# awaiting_go or the done termination) — never at ns_after_reconcile / ns_checkoff's `terminate` / `running`.
+ns_mp_refuse() { ns_err "$1"; NS_RC=2; return 1; }
+ns_mp_ready_line() { ns_section '## Current' | grep -m1 '^- ready_sha: ' || true; }
+# ns_mp_due <reason> <detail> <message> — the guard's park (written by merge-park, once)
+ns_mp_due() { st_set mp_reason "$1"; st_set mp_detail "$2"; st_set mp_message "$3"; NEXT=merge-park; }
+ns_merge_parked() {
+  local odr v pre
+  # refusals, before the run lock and any write (exit 2 on the first arm: not even the sidecar is saved)
+  ns_lane && { ns_mp_refuse "merge_parked_in_lane — .supervisor/lane.json is present: a lane's READY park waits for its wave (lanes.md), never --merge-parked — nothing written"; return 1; }
+  [ -z "$(ns_parallel)" ] || { ns_mp_refuse "merge_parked_parallel_parent — ## Run Config reads parallel: $(ns_parallel), a --parallel coordinator run; its items merge through the wave PR — nothing written"; return 1; }
+  odr="$(ns_kv "$(ns_section '## Current' | grep -m1 '^- owned_drain_started: ' || true)" owned_drain_result)"
+  [ "$STATUS" = awaiting_merge ] && [ "$odr" = READY ] || { ns_mp_refuse "merge_parked_not_awaiting_merge — ## Current reads status: ${STATUS:-none} (owned_drain_result: ${odr:-none}); --merge-parked takes only an item parked awaiting_merge after a READY drain — nothing written"; return 1; }
+  case "$PR" in http://*/pull/*|https://*/pull/*) ;; *) ns_mp_refuse "merge_parked_no_pr — ## Current names no PR (${PR:-none}) — nothing written"; return 1 ;; esac
+  pre="$ITEM|$STATUS|$PR|$odr"
+  # the run lock: held from before gate-eval through the closeout (a merge watcher's closeout skips meanwhile)
+  ns_lock acquire || { ns_mp_refuse "run_lock_held — another holder has the run lock of $RUN_ID (a merge watcher's closeout, or another session); retry --merge-parked once it is free — nothing written"; return 1; }
+  # the reads above predate the lock: a merge watcher's closeout can finish in that gap, so read them again
+  ns_refresh
+  odr="$(ns_kv "$(ns_section '## Current' | grep -m1 '^- owned_drain_started: ' || true)" owned_drain_result)"
+  [ "$ITEM|$STATUS|$PR|$odr" = "$pre" ] || { ns_release; ns_mp_refuse "merge_parked_state_changed — ## Current changed while the run lock was being taken (now status: ${STATUS:-none}, owned_drain_result: ${odr:-none}), so a merge watcher's closeout may already have run; read the run file, then re-run --merge-parked if the item is still parked — nothing written"; return 1; }
+  v="$(bash "$H" reconcile-item "$PR" "$STATUS" 2>/dev/null | tail -n 1)"
+  case "$v" in
+    merged) st_set mp_how already; NEXT=merge-closeout ;;
+    awaiting_merge) NEXT=merge-guard ;;
+    *) # closed unmerged or vanished: RECONCILE's report — a human resolves it; never checked off
+      ns_status paused || return 1
+      ns_release
+      ns_emit_park merge-parked "PR $PR of $ITEM reads $v (closed unmerged or vanished) — re-open or redo the work, or check the item off # skipped: / # abandoned: in ## Queue, then --resume" ;;
+  esac
+}
+# ns_mp_newer <api path> <ready_at> — 0 with the first newer timestamp on stdout; 1 none newer; 2 unreadable
+ns_mp_newer() {
+  local out ts
+  out="$(ns_gh api "$1" --paginate)" || return 2
+  printf '%s' "$out" | "$JQ" -se 'length > 0 and all(.[]; type == "array")' >/dev/null 2>&1 || return 2
+  ts="$(printf '%s' "$out" | "$JQ" -r '.[]? | (.submitted_at // .created_at // empty) | strings' 2>/dev/null)" || return 2
+  ts="$(printf '%s\n' "$ts" | NS_RA="$2" awk 'BEGIN { r = ENVIRON["NS_RA"] } $0 > r { print; exit }')"
+  [ -n "$ts" ] || return 1
+  printf '%s' "$ts"
+}
+ns_merge_guard() {
+  local l rs ra tr pv live hb base cur o r n ep nw rc cmp ba
+  l="$(ns_mp_ready_line)"
+  rs="$(ns_kv "$l" ready_sha)"
+  ra="$(ns_kv "$l" ready_at)"
+  tr="$(ns_kv "$l" termination_reason)"
+  ns_sha_ok "$rs" && ns_iso_ok "$ra" && [ -n "$tr" ] || { ns_mp_due ready_sha_missing "## Current carries no recorded - ready_sha: line" "the READY drain's head was never recorded in the run file (a run parked before --merge-parked, or a READY report without ready_sha), and the live head is never substituted — a person must decide: merge by hand, or redo the drain"; return 0; }
+  pv="$(ns_gh pr view "$PR" --json headRefOid,headRefName,baseRefName)"
+  live="$(printf '%s' "$pv" | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
+  hb="$(printf '%s' "$pv" | "$JQ" -r '.headRefName // empty' 2>/dev/null)"
+  base="$(printf '%s' "$pv" | "$JQ" -r '.baseRefName // empty' 2>/dev/null)"
+  ns_sha_ok "$live" && [ -n "$hb" ] && [ -n "$base" ] || { ns_mp_due pr_unreadable "gh pr view $PR --json headRefOid,headRefName,baseRefName unreadable" "the PR's live head could not be read — retry --merge-parked"; return 0; }
+  [ "$live" = "$rs" ] || { ns_mp_due head_sha_moved "ready_sha $rs, live head $live" "the PR head moved since the drain's READY — a person must decide: review the new commits and merge by hand, or redo the drain"; return 0; }
+  cur="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+  [ "$cur" = "$live" ] || { ns_mp_due checkout_not_on_pr_head "checkout HEAD ${cur:-unreadable}, PR head $live" "check out $hb (git checkout $hb, at $live), then re-run --merge-parked — HEAD and the working tree were not touched"; return 0; }
+  if [[ "$PR" =~ ^https?://[^/]+/([^/]+)/([^/]+)/pull/([0-9]+)$ ]]; then o="${BASH_REMATCH[1]}"; r="${BASH_REMATCH[2]}"; n="${BASH_REMATCH[3]}"
+  else ns_mp_due pr_unreadable "$PR is not an owner/repo pull URL" "the PR URL could not be read — a person must decide"; return 0; fi
+  for ep in "issues/$n/comments" "pulls/$n/reviews" "pulls/$n/comments"; do
+    nw="$(ns_mp_newer "repos/$o/$r/$ep" "$ra")"; rc=$?
+    [ "$rc" != 2 ] || { ns_mp_due feedback_unreadable "gh api repos/$o/$r/$ep unreadable" "the PR's feedback since READY could not be read — retry --merge-parked"; return 0; }
+    [ "$rc" != 0 ] || { ns_mp_due ready_stale_feedback "$ep at $nw, after ready_at $ra" "the PR got feedback after the drain's READY — a person must decide: read it, then merge by hand or redo the drain"; return 0; }
+  done
+  # the base moved since READY: GitHub's compare `behind_by` (never mergeStateStatus) — fail CLOSED
+  cmp="$(ns_gh api "repos/$o/$r/compare/$base...$rs")"
+  ba="$(printf '%s' "$cmp" | "$JQ" -r '.behind_by // empty' 2>/dev/null)"
+  ns_count_ok "$ba" || { ns_mp_due base_unreadable "gh api repos/$o/$r/compare/$base...$rs unreadable" "the base comparison could not be read — retry --merge-parked"; return 0; }
+  [ "$ba" -gt 0 ] && { ns_mp_due base_moved_since_ready "$base is $ba commit(s) ahead of ready_sha $rs" "$base moved since the drain's READY — a person must decide: update the branch (a new drain), or merge by hand"; return 0; }
+  # the gate inputs, from the run file only (ns_gate_eval reads them from the sidecar, unchanged)
+  st_set drain_result "$(ns_kv "$(ns_section '## Current' | grep -m1 '^- owned_drain_started: ' || true)" owned_drain_result)"
+  st_set termination_reason "$tr"; st_set ready_sha "$rs"
+  NEXT=merge-gate
+}
+ns_merge_gate() {
+  local gl
+  ns_gate_eval || return 1
+  gl="$(st gate_line)"
+  case "$gl" in
+    MERGE) st_set mp_how gate; NEXT=merge-dismissed ;;
+    *) st_set mp_reason "${gl#PARK: }"; st_set mp_detail "gate-eval $gl"; st_set mp_message "the merge gate parked (${gl#PARK: }); the item stays awaiting_merge"; NEXT=merge-park ;;
+  esac
+}
+# after a MERGE: the decision step's dismissed-drafts + pending record (order merge — the drafts stay pending for
+# the next interactive PICK, never followed up here); then this entry's closeout, never `sync`
+ns_merge_dismissed() {
+  ns_dismissed || return 1
+  NEXT=merge-closeout
+}
+ns_merge_closeout() {
+  local out cls rc
+  if [ "$(st once_mp_closeout)" != true ]; then
+    out="$(bash "$H" closeout "$RF" "$ITEM" "$PR" ${SID:+--session-id "$SID"} 2>/dev/null)"   # WITH its trail (never --no-trail)
+    cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$ITEM" --pr "$PR" --record "$RF" 2>/dev/null)"; rc=$?
+    [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh closeout-classify exited $rc"; NS_RC="$rc"; return 1; }
+    cls="$(ns_classify_or_leftover "$rc" "$cls" "$RUN_ID" "$ITEM" "$PR")"
+    st_set once_mp_closeout true
+    ns_refresh
+    if ! ns_classify_complete "$cls"; then
+      st_set leftovers "$cls"; st_set after_leftover merge-finish; NEXT=leftover; return 0
+    fi
+  fi
+  NEXT=merge-finish
+}
+ns_merge_finish() {
+  local n m
+  if grep -qxF -- "- [ ] $ITEM" < <(ns_section '## Queue'); then
+    ns_call_writer queue-checkoff "$RF" "$ITEM" || return 1
+  fi
+  n="$(bash "$H" remaining "$RF" 2>/dev/null | tail -n 1)"
+  ns_count_ok "$n" || { ns_err "merge-finish: remaining printed '$n', not a count"; NS_RC=1; return 1; }
+  ns_once once_mp_checked ns_progress "$(ns_ts) checked off $ITEM — merged $PR; remaining: $n" || return 1
+  [ "$n" = 0 ] && { ns_terminate; return; }
+  if [ "$(st mp_how)" = gate ]; then m="merged through gate-eval by --merge-parked — the item is closed out; the next item waits for /automate --resume"
+  else m="PR already merged — closed out by --merge-parked (no gate, no merge); the next item waits for /automate --resume"; fi
+  ns_awaiting_go "$m"
+}
+ns_merge_park() {
+  local reason detail
+  reason="$(st mp_reason)"; detail="$(st mp_detail)"
+  ns_once once_mp_park ns_progress "$(ns_ts) merge-parked $PR — PARK: $reason ($detail)" || return 1
+  ns_status paused || return 1
+  ns_watch_live "$PR" >/dev/null || ns_watch   # exactly one live watcher
+  ns_release   # the merge-park releases the run lock
+  ns_emit_park merge-park "PARK: $reason — $(st mp_message)"
+}
+
+# ================================================================================================
 # dispatch
 # ================================================================================================
 ns_dispatch() {
@@ -3310,6 +3502,13 @@ ns_dispatch() {
     leftover) ns_leftover ;;
     checkoff) ns_checkoff ;;
     terminate) ns_terminate ;;
+    merge-parked) ns_merge_parked ;;
+    merge-guard) ns_merge_guard ;;
+    merge-gate) ns_merge_gate ;;
+    merge-dismissed) ns_merge_dismissed ;;
+    merge-closeout) ns_merge_closeout ;;
+    merge-finish) ns_merge_finish ;;
+    merge-park) ns_merge_park ;;
     *) ns_err "unknown step '$1'"; NS_RC=2; return 1 ;;
   esac
 }
@@ -3379,6 +3578,14 @@ if [ -n "${NEXT_STEP_FROM:-}" ]; then
   fi
   # a case seeding the sidecar's item / PR (a drain whose ## Current was never set) keeps them
   [ -n "$(st item)" ] || st_set item "$ITEM"; [ -n "$(st pr)" ] || st_set pr "$PR"
+elif [ -n "$MP_DIR" ]; then
+  # the merge-parked entry: a fresh tail of its own — whatever the sidecar held (a parked tail's instruction, a
+  # resume's wipe) is never read: every gate input comes from the run file (## Current), never the sidecar
+  ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
+  stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
+  NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  st_set item "$ITEM"; st_set pr "$PR"
+  NEXT=merge-parked
 elif [ -n "$RESUME_DIR" ]; then
   # the resume entry: its own AUT-RESUME ask still pending for this run re-prints (idempotent); anything
   # else pending (a parked tail's instruction) belongs to a previous pass — a fresh start

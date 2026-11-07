@@ -35,6 +35,15 @@ resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH
 resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.6	resume-rate-limit-park
 resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.7	resume-reconcile-status
 resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.8	judgment — covered at the step boundary: pick-pending-decisions-ask
+# --merge-parked has no golden case of its own: the driver entry is pinned by test-automate-next-step.d/13-merge-parked.sh;
+# each row below names the existing case that replays the helper or run-file step the unit relies on.
+resume.md|Merging one parked item	judgment — covered at the step boundary: gate-eval-merge
+resume.md|Merging one parked item|L1.1	judgment — covered at the step boundary: gate-eval-drain-not-ready-park
+resume.md|Merging one parked item|L1.2	judgment — covered at the step boundary: gate-eval-merge
+resume.md|Merging one parked item|L1.3	judgment — covered at the step boundary: gate-eval-head-sha-moved-park
+resume.md|Merging one parked item|L1.4	judgment — covered at the step boundary: dismissed-fix-now-re-drain
+resume.md|Merging one parked item|L1.5	judgment — covered at the step boundary: reconcile-closeout-merged
+resume.md|Merging one parked item|L1.6	judgment — covered at the step boundary: gate-eval-checks-not-green-park
 resume.md|§5 — Skipped / abandoned items	skipped-item-check-off
 
 # ---- per-item-loop.md

@@ -16,6 +16,7 @@
 - pause_reason: null
 - owned_drain_started: 2026-10-15T10:21:00Z | owned_drain_result: READY | suppressed_default_dispatch: true
 - pending_decisions: 0 | fix_now_reentered: true
+- ready_sha: 953c2d1bbf14 | ready_at: 2026-10-15T10:40:00Z | termination_reason: converged
 ## Progress
 - 2026-10-15T04:06:20Z resumed (--resume automate-2026-10-13-181331) — meta-entry: pulled loomwright-meta; closeout-others: nothing; resume-glob --finalize: this run only; current-rebuild: skipped; reconcile-status: 0 plan rows; dismissed-pending: 0
 - trail-gate: clear — no open trail PR; sync skipped — already synced (main at origin/main)
