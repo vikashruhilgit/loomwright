@@ -1,6 +1,7 @@
 # Merge one parked awaiting_merge item through the existing gate
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/842
 
 **Story: Merge one parked awaiting_merge item through the existing gate** (type: story)
 
@@ -139,3 +140,9 @@ loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 docs/evidence/merge-one-parked-item.md
 changelog.d/merge-one-parked-item.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-07T07:34:07Z
+- **Brief:** .supervisor/jobs/done/2026-11-06-merge-one-parked-item-through-the-gate.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/842
