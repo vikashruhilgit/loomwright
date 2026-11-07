@@ -23,7 +23,7 @@
     "agent-output": {"budget": 1495, "measured": 1359, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "agent-teams": {"budget": 3231, "measured": 2937, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "async-orchestration": {"budget": 8901, "measured": 8091, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "automate-loop": {"budget": 53519, "measured": 48654, "note": "re-baselined to live measured + ~10% (dismissed-followups/01: follow_up state + followup-bundle docs)"},
+    "automate-loop": {"budget": 59037, "measured": 53670, "note": "re-baselined to live measured + ~10% (--merge-parked and the no_pr_stop park together); earlier: re-baselined to live measured + ~10% (dismissed-followups/01: follow_up state + followup-bundle docs)"},
     "autonomous-loop": {"budget": 20355, "measured": 18504, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "beads-workflow": {"budget": 1658, "measured": 1507, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "brain-context": {"budget": 1809, "measured": 1644, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},

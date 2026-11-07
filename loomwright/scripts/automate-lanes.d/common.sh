@@ -281,3 +281,8 @@ _lanes_merge_hooks() { # <settings_file> <hook_command>
   printf '%s\n' "$out" > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"
 }
 
+# _lanes_no_pr_stop_cause <runfile> — the reason token of the run's last `parked no_pr_stop — <reason>` line.
+_lanes_no_pr_stop_cause() {
+  awk '/^## / { sec = $0; next } sec == "## Progress" && / parked no_pr_stop — / { c = $0; sub(/^.* parked no_pr_stop [^ ]+ /, "", c); sub(/[; ].*/, "", c) }
+    END { printf "%s", (c == "" ? "unknown" : c) }' "$1" 2>/dev/null
+}

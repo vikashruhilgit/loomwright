@@ -43,7 +43,8 @@
 #   round       the PR head (`gh pr view --json headRefOid`), `drain-rounds.sh check` (BOUND_HIT ⇒
 #               `bound_hit`; unreadable ⇒ ESCALATED, termination_reason unset)
 #   required    required-check discovery (`drain-gh-read.sh required-checks`; unavailable ⇒ ESCALATED
-#               unless --required-checks all-non-neutral)
+#               unless --required-checks all-non-neutral; GitHub's paid-plan refusal gates on every
+#               non-neutral check, protection-paid-plan.sh)
 #   wait        `wait-for-checks.sh` on the scoped set (`--call-max 540`; CONTINUE ⇒ exit 3, the next
 #               no-result call resumes with `--continue`); ELAPSED ⇒ ESCALATED (check-driven cause); a
 #               `pending=sha_mismatch` line whose re-read head differs ⇒ exit 3, the same round re-opens
@@ -132,6 +133,8 @@ rh_die2() { rh_err "$*"; exit 2; }
 command -v "$JQ" >/dev/null 2>&1 || { rh_err "jq not on PATH"; exit 1; }
 # the ONE reader of wait-for-checks.sh's line (its `pending=` field, read for a moved PR head)
 . "$HERE/wait-for-checks-line.sh" 2>/dev/null || { rh_err "wait-for-checks-line.sh not readable beside the driver"; exit 1; }
+# A missing library reads the paid-plan refusal as any other 403: required_checks_unavailable, fail CLOSED.
+. "$HERE/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
 
 # ------------------------------------------------------------------------------------------------
 # arguments
@@ -372,13 +375,18 @@ rh_round() {
 }
 
 rh_required() {
-  local out names
-  if out="$(rh_ghread required-checks "$SLUG" "$(st base)")" \
+  local out names rc=0
+  out="$(rh_ghread required-checks "$SLUG" "$(st base)")" || rc=$?
+  if [ "$rc" = 0 ] \
      && names="$(printf '%s' "$out" | "$JQ" -c '((.contexts // []) + [(.checks // [])[] | .context]) | map(select(type == "string")) | unique' 2>/dev/null)" \
      && [ -n "$names" ]; then
     st_setj required_names "$names"; st_set required_mode protected
   elif [ "$(st flag_required_checks)" = all-non-neutral ]; then
     st_setj required_names 'null'; st_set required_mode all-non-neutral
+  elif [ "$rc" != 0 ] && protection_paid_plan_refusal "$out $(cat "$RH_READ_ERR" 2>/dev/null)"; then
+    # GitHub's paid-plan refusal: this repo cannot have a required list, so every non-neutral check blocks
+    # READY (null required_names, as under all-non-neutral) and wait-for-checks.sh waits on all of them.
+    st_setj required_names 'null'; st_set required_mode no_required_list
   else
     rh_escalate_to required_checks_unavailable other 0 "required_checks_unavailable — branch-protection required-check metadata could not be read (pass --required-checks all-non-neutral to proceed without it)"
     return 0

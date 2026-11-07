@@ -237,8 +237,8 @@
 #             refusal left armed (refusal); the stale-lock break dropped / a live holder read as stale (stalelock)
 #
 # LAYOUT: this file is the runner (header, shared setup, the leg functions); the sections themselves run
-# from test-automate-next-step.d/<part>.sh in three pool groups (TNS_GROUPS below, part-groups-lib.sh):
-# group 1 here, groups 2 and 3 from test-automate-next-step.2.sh / .3.sh, so the pool runs them at once.
+# from test-automate-next-step.d/<part>.sh in four pool groups (TNS_GROUPS below, part-groups-lib.sh):
+# group 1 here, groups 2 to 4 from test-automate-next-step.2.sh / .3.sh / .4.sh, so the pool runs them at once.
 # `bash test-automate-next-step.sh --all` runs every part in one process, in base order.
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only: group 1 or --all); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -262,8 +262,8 @@ TAB="$(printf '\t')"
 # usage: test-automate-next-step.sh [--group <g> | --all | --part <part>]
 # --part <part> runs ONE part after the shared setup — what a part file run directly does (it re-enters this
 # runner for itself), so `bash test-automate-next-step.d/<part>.sh` (a pin-mutation run) is a real test run.
-TNS_PARTS="01-golden-idem-gates 02-branches 03-run-drain 04-pick-resume 05-fresh-phases 06-running-system 07-doc-mirror 08-coordinator-model 09-mutants-tail 10-mutants-pick-fresh 11-mutants-cm 12-dismissed-batch"
-TNS_GROUPS="1=01-golden-idem-gates,02-branches,03-run-drain,06-running-system,07-doc-mirror 2=04-pick-resume,05-fresh-phases,08-coordinator-model,11-mutants-cm,12-dismissed-batch 3=09-mutants-tail,10-mutants-pick-fresh"
+TNS_PARTS="01-golden-idem-gates 02-branches 03-run-drain 04-pick-resume 05-fresh-phases 06-running-system 07-doc-mirror 08-coordinator-model 09-mutants-tail 10-mutants-pick-fresh 11-mutants-cm 12-dismissed-batch 13-merge-parked"
+TNS_GROUPS="1=01-golden-idem-gates,02-branches,03-run-drain,06-running-system,07-doc-mirror 2=04-pick-resume,05-fresh-phases,08-coordinator-model,11-mutants-cm,12-dismissed-batch 3=09-mutants-tail,10-mutants-pick-fresh 4=13-merge-parked"
 . "$HERE/part-groups-lib.sh"
 if [ "${1:-}" = --part ]; then
   case " $TNS_PARTS " in *" ${2:-} "*) ;; *) echo "  FAIL: --part names no part of TNS_PARTS: '${2:-}'"; exit 1 ;; esac
@@ -1954,10 +1954,12 @@ f_plan_case() {
   printf '%s' "$t" > "$ad/$CASE_RUN.launch-pad-result.md"
   f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"
 }
-f_nopr_ok() { # <want line after the timestamp> — the plan's no-PR outcome: done/stopped, the pinned line, no RUN
-  local row
+f_nopr_ok() { # <want line after the timestamp> [park] — the plan's no-PR outcome: done/stopped (a failure) or the
+  # no_pr_stop park (`park`, a deliberate stop), the pinned line, no RUN
+  local row inst='.do == "done" and .status == "stopped"'
+  [ "${2:-}" = park ] && inst='.do == "park" and .status == "paused" and .pause_reason == "no_pr_stop"'
   row="$(grep -E -- '^- [0-9TZ:-]+ ran /autonomous — no PR: ' "$CASE_RF" | tail -n 1 | sed -E 's/^- [0-9TZ:-]+ //')"
-  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e "$inst" >/dev/null 2>&1 \
     && [ "$row" = "$1" ] && ! grep -q 'auto_review suppressed' "$CASE_RF" && [ ! -e "$CASE_ROOT/.supervisor/config.json" ] \
     && grep -q 'session_id lp-sess-1 (.*) phase=launch-pad$' "$CASE_RF" && ! grep -q 'launch-pad saved' "$CASE_RF" \
     || { LEG_MSG="exit $NC_RC '${NC_OUT:0:160}' line '$row' (want '$1') ${NC_ERR:0:160}"; return 1; }
@@ -1975,7 +1977,7 @@ leg_fresh_plan_mapping() {
     [ -n "$st" ] || continue
     # shellcheck disable=SC2059
     f_plan_case "$drv" "$(printf "$lp" "$st" null "$sum")"
-    f_nopr_ok "$want" || { LEG_MSG="$st: $LEG_MSG"; return 1; }
+    f_nopr_ok "$want" park || { LEG_MSG="$st: $LEG_MSG"; return 1; }
   done <<EOF
 discarded|User chose Discard at Phase 6|ran /autonomous — no PR: user_discarded_at_phase_6 (LAUNCH_PAD_RESULT discarded: User chose Discard at Phase 6)
 blocked|Plan Review FAIL x3|ran /autonomous — no PR: launch_pad_blocked (LAUNCH_PAD_RESULT blocked: Plan Review FAIL x3)
@@ -1987,7 +1989,7 @@ EOF
     || { LEG_MSG="malformed: $LEG_MSG"; return 1; }
   # shellcheck disable=SC2059
   f_plan_case "$drv" "$(printf "$lp" saved .supervisor/jobs/pending/r.md PASS)" "$rq" .supervisor/jobs/pending/r.md $'# Brief\n\n## Task\nx\n'
-  f_nopr_ok "ran /autonomous — no PR: rubric_dropped_from_brief (the requirement's ## Outcomes Rubric is missing from the saved brief .supervisor/jobs/pending/r.md)" \
+  f_nopr_ok "ran /autonomous — no PR: rubric_dropped_from_brief (the requirement's ## Outcomes Rubric is missing from the saved brief .supervisor/jobs/pending/r.md)" park \
     || { LEG_MSG="rubric dropped: $LEG_MSG"; return 1; }
   # shellcheck disable=SC2059
   f_plan_case "$drv" "$(printf "$lp" saved .supervisor/jobs/pending/r.md PASS)" "$rq" .supervisor/jobs/pending/r.md "$rq"
@@ -2028,7 +2030,7 @@ EOF
   f_call "$drv" --start run --session-id coord-1
   mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n\n## Task\nx\n' > "$CASE_ROOT/.supervisor/jobs/pending/died.md"
   f_call "$drv" --result "$died"
-  f_nopr_ok "ran /autonomous — no PR: rubric_dropped_from_brief (the requirement's ## Outcomes Rubric is missing from the saved brief .supervisor/jobs/pending/died.md)" \
+  f_nopr_ok "ran /autonomous — no PR: rubric_dropped_from_brief (the requirement's ## Outcomes Rubric is missing from the saved brief .supervisor/jobs/pending/died.md)" park \
     || { LEG_MSG="died + one new brief without the rubric: $LEG_MSG"; return 1; }
   return 0
 }
@@ -2146,6 +2148,79 @@ leg_fresh_checkpoint() {
     esac
   done
   return 0
+}
+# np_lp <driver> <status> <summary> — a Launch Pad phase on an item whose requirement exists ends with that block
+np_lp() {
+  # shellcheck disable=SC2059
+  f_plan_case "$1" "$(printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: %s\n  saved_brief_path: null\n  summary: %s\n' "$2" "$3")" $'# Item\n\n## Task\nx\n'
+  printf '0\tpr list --state open *\t[]\n0\tpr list *\t[]\n' >> "$CASE_GH"
+}
+np_item() { sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1; }
+np_parked() { # the run file reads parked no_pr_stop, the item still running, the run lock released
+  grep -qx '## Status: paused' "$CASE_RF" && grep -qx -- '- pause_reason: no_pr_stop' "$CASE_RF" && grep -q '^- item: .* | status: running | pr: null' "$CASE_RF" \
+    && [ ! -d "$CASE_ROOT/.supervisor/run.lock" ]
+}
+# leg_no_pr_stop <driver> — an owner's no-PR stop (Refine offline ⇒ launch_pad_blocked) is a park, and an owner's
+# --resume on the unchanged requirement parks again instead of re-running Launch Pad on it: the edit, or a # skipped:
+# check-off, is what moves it on. A PICK-time park overwriting pause_reason does not lift that. A gate's stop re-picks;
+# a real failure (phase_died) keeps its done/stopped instruction and its run file, so a lane there still reads stalled
+leg_no_pr_stop() {
+  local drv="$1" before it
+  np_lp "$drv" blocked 'Plan Review FAIL x3; owner chose Refine offline'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .step == "rate-limit" and .pause_reason == "no_pr_stop" and (.message | contains("launch_pad_blocked"))' >/dev/null 2>&1 \
+    && np_parked && grep -qE -- '^- [0-9TZ:-]+ parked no_pr_stop — launch_pad_blocked; requirement cksum [0-9]+-[0-9]+$' "$CASE_RF" \
+    || { LEG_MSG="the stop ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # what a --continue'd session gets: the same park, nothing written
+  cp "$CASE_RF" "$CASE_DIR/before.md"
+  f_call "$drv" --session-id coord-1
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "no_pr_stop"' >/dev/null 2>&1 && cmp -s "$CASE_DIR/before.md" "$CASE_RF" \
+    || { LEG_MSG="bare call ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+  f_call "$drv" --start run --session-id coord-1
+  [ "$NC_RC" = 2 ] && case "$NC_ERR" in *no_pr_stop*) true ;; *) false ;; esac && cmp -s "$CASE_DIR/before.md" "$CASE_RF" \
+    || { LEG_MSG="--start run ⇒ exit $NC_RC ${NC_ERR:0:200}"; return 1; }
+  # --resume, requirement unchanged: parked again, no picked line, no Launch Pad spawn
+  p_call_fresh "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --session-id coord-2
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .step == "reconcile" and .pause_reason == "no_pr_stop" and (.message | contains("unchanged"))' >/dev/null 2>&1 \
+    && np_parked && p_no_new_pick "$CASE_DIR/before.md" \
+    || { LEG_MSG="--resume unchanged ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # a PICK-time park overwrites pause_reason before RECONCILE: the guard reads ## Progress, so it still holds
+  ( cd "$CASE_ROOT" && bash "$H" current-set "$CASE_RF" --pause-reason token_ceiling ) >/dev/null 2>&1
+  f_call "$drv" --start pick --session-id coord-3
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "no_pr_stop"' >/dev/null 2>&1 && p_no_new_pick "$CASE_DIR/before.md" \
+    || { LEG_MSG="after an overwriting park ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # the owner refines the requirement: --resume re-picks it and re-plans
+  it="$(np_item)"; printf '\nOwner note: narrowed after Plan Review.\n' >> "$CASE_ROOT/$it"
+  p_call_fresh "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --session-id coord-4
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && grep -qx '## Status: running' "$CASE_RF" && grep -qx -- '- pause_reason: null' "$CASE_RF" \
+    && [ "$(grep -c " picked $it\$" "$CASE_RF")" = 2 ] \
+    || { LEG_MSG="--resume refined ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # the owner gives up on it: the check-off moves the run to the next row
+  np_lp "$drv" aborted 'owner aborted at NO-GO'; it="$(np_item)"; np_parked || { LEG_MSG="aborted ⇒ not parked"; return 1; }
+  ( cd "$CASE_ROOT" && bash "$H" queue-checkoff "$CASE_RF" "$it" "owner gave up" skipped ) >/dev/null 2>&1
+  p_call_fresh "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --session-id coord-5
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && [ "$(np_item)" != "$it" ] \
+    || { LEG_MSG="skipped check-off ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # a gate's stop: parked too, but nobody chose it, so the owner's --resume is the remedy
+  np_lp "$drv" blocked 'plan_review_fail_non_interactive — FAIL x3, nobody to ask'; it="$(np_item)"
+  np_parked && grep -qE -- '^- [0-9TZ:-]+ parked no_pr_stop — launch_pad_cant_ask_non_interactive$' "$CASE_RF" || { LEG_MSG="cant_ask ⇒ $(tail -n 2 "$CASE_RF" | tr '\n' '|')"; return 1; }
+  p_call_fresh "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --session-id coord-6
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad || { LEG_MSG="cant_ask --resume ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # a failure is not a decision: no park, the run file stays as a lane reads `stalled`
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }; f_claude 1
+  f_call "$drv" --start run --session-id coord-1
+  f_call "$drv" --result '{"status_reason":"phase_died","no_pr_why":"phase-wait: died — no result line since the last launch","session_id":"lp-sess-1"}'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+    && grep -qx '## Status: running' "$CASE_RF" && grep -qx -- '- pause_reason: null' "$CASE_RF" && ! grep -q 'parked no_pr_stop' "$CASE_RF" \
+    || { LEG_MSG="phase_died ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+  # a block the validator rejected, no brief: the fallback's user_discarded_at_phase_6 names nobody's decision
+  f_plan_case "$drv" "$(printf 'LAUNCH_PAD_RESULT:\n  status: saved\n')"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 && ! grep -q 'parked no_pr_stop' "$CASE_RF" \
+    || { LEG_MSG="malformed ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+}
+p_call_fresh() { # <driver> <args…> — a fresh-phase call WITHOUT the run file (the resume entry)
+  local drv="$1"; shift
+  NC_OUT="$(NS_FRESH=1 NS_REAL_LOCK=1 in_case "$drv" "$R_SEAMS" bash "$drv" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
 }
 # leg_inline_checkpoint <driver> — F4's --inline-phases twin. `record`: an inline RUN whose SUPERVISOR_RESULT is a
 # checkpoint, reported with /autonomous's `supervisor_checkpoint` token and a why that names no task, writes the
@@ -2678,6 +2753,7 @@ pg_want 09-mutants-tail       && tns_part 09-mutants-tail       && . "$TNS_D/09-
 pg_want 10-mutants-pick-fresh && tns_part 10-mutants-pick-fresh && . "$TNS_D/10-mutants-pick-fresh.sh"
 pg_want 11-mutants-cm         && tns_part 11-mutants-cm         && . "$TNS_D/11-mutants-cm.sh"
 pg_want 12-dismissed-batch    && tns_part 12-dismissed-batch    && . "$TNS_D/12-dismissed-batch.sh"
+pg_want 13-merge-parked       && tns_part 13-merge-parked       && . "$TNS_D/13-merge-parked.sh"
 if [ "$TNS_BEFORE_CM" = 1 ] && [ "$TNS_CM_CHECKED" = 0 ]; then TNS_CM_CHECKED=1; ns_cm_all_check; fi
 [ "$TNS_DONE" = "$PG_SEL" ] || no "parts sourced ($TNS_DONE) differ from the parts selected ($PG_SEL): a TNS_PARTS entry has no source line"
 echo "PASS: $pass FAIL: $fail ($PG_LABEL)"

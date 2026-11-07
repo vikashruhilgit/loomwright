@@ -256,6 +256,7 @@ See `loomwright/skills/autonomous-loop/SKILL.md` for the full state machine and 
 /automate --backlog <_BACKLOG.md>          # backlog-doc source — dependency-ordered Queue
 /automate --limit N                        # cap PROCESSED items this run (default 5; full Queue still stored)
 /automate --resume [<run_id>]              # reconcile + continue a prior incomplete run
+/automate --merge-parked <run_id>          # ONE item parked awaiting_merge through the merge gate, then stop
 /automate ... --auto-merge                 # opt-in, default-OFF, fail-closed merge gate (a high-risk diff always parks — no override)
 /automate ... --parallel N                 # opt-in lanes: up to N independent items at once, one wave PR per wave (refused with --auto-merge)
 ```
