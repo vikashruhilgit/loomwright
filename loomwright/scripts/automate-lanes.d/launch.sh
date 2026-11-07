@@ -291,6 +291,10 @@ _lanes_launch_go() {
     if [ "$(_lanes_runfile_fields "$LN_DIR/.supervisor/automate/$LN_RUN.md" | cut -f2)" = no_pr_stop ]; then
       echo "lane-launch: refused — $LN_LANE is parked no_pr_stop ($(_lanes_no_pr_stop_cause "$LN_DIR/.supervisor/automate/$LN_RUN.md")) — the owner refines the requirement, then lane-scope-decide $LN_LANE defer | drop"; return 1
     fi
+    # a pass its driver stopped: the resumed session would only re-read that stop (_lanes_driver_stopped)
+    if _lanes_driver_stopped "$LN_DIR" "$LN_RUN"; then
+      echo "lane-launch: refused — $LN_LANE — $(_lanes_stopped_reason "$LN_DIR/.supervisor/automate/$LN_RUN.md" "$LN_RUN" "$(_lanes_dash "$(_lanes_runfile_fields "$LN_DIR/.supervisor/automate/$LN_RUN.md" | cut -f3)")")"; return 1
+    fi
     local sid; sid="$(_lanes_session_id)"
     [ -n "$sid" ] || { echo "lane-launch: refused — $LN_LANE has no recorded session to continue"; return 1; }
     _lanes_spawn "$LANE_CONTINUE_MSG" "$sid" "(continue)"

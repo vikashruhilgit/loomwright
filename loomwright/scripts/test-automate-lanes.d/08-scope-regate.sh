@@ -402,6 +402,90 @@ else bad "NP8 drop" "rc=$rc out=[$out] $(grep -E 'reqs/y' "$SGRF" | tr '\n' '|')
 sg_wave; sg_lane 1 reqs/x.md - no_pr_stop; sg_lane 2 reqs/y.md '  - "src/b/two.ts"'
 out="$(sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
 check "NP9 serialize after a no_pr_stop lane ⇒ refused exit 1, it has ended" "$rc|$(printf '%s' "$out" | grep -c 'L1 ended no_pr_stop')" "1|1"
+# ---- NF: a lane whose pass FAILED with no PR (phase_died and the rest): `--continue` only reprints the driver's stop ----
+# The REAL driver writes the lane's run file and sidecar; lane-status, lane-wait and lane-launch read them, and the
+# real driver then runs as the --resume-run session would run it, so "restarts work" is the spawn it prints.
+NF_RUN="$SGPAR-L2"; NF_RF="$SGL/L2/.supervisor/automate/$NF_RUN.md"
+nf_drv() { ( cd "$SGL/L2" && bash "$HERE/automate-next-step.sh" "$NF_RF" "$@" ) 2>&1; }
+mkdir -p "$SGR/nfbin"; printf '#!/usr/bin/env bash\ncase "$*" in "pr list"*) echo "[]" ;; *) exit 1 ;; esac\n' > "$SGR/nfbin/gh"; chmod +x "$SGR/nfbin/gh"   # no trail PR open
+nf_resume() { ( cd "$SGL/L2" && PATH="$SGR/nfbin:$PATH" bash "$HERE/automate-next-step.sh" --resume "$SGL/L2/.supervisor/automate" --run "$NF_RUN" --session-id "$1" --non-interactive ) 2>/dev/null; }
+nf_lane() { LOOMWRIGHT_GH_BIN="$SGR/bin/gh" bash "$S" lane-status "$SGRF" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L2") | .state + "|" + .reason'; }
+nf_base() { # L2 launched once (a recorded session), ended, its Launch Pad spawn pending
+  sg_wave; sg_lane 1 reqs/x.md - null; sg_lane 2 reqs/y.md - null; rm -f "$SGP/.supervisor/automate/$SGPAR.lane-wait-seen" "$SGL/L2.died"
+  awk -F'\t' -v OFS='\t' '$1 == "L2" { $7 = "sess-nf" } { print }' "$SGT" > "$SGT.t" && mv "$SGT.t" "$SGT"
+  nf_drv --start run --session-id nf-s >/dev/null
+}
+nf_fail() { nf_drv --result "$(jq -cn --arg r "$1" --arg w "${2:-phase-wait: died — no result line}" '{status_reason: $r, no_pr_why: $w, session_id: "nf-lp"}')"; }
+NF_RESUME_WANT="stalled|its driver stopped this pass (phase_died), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+nf_base; out="$(nf_fail phase_died)"
+check "NF1 the real driver: phase_died ⇒ done/stopped, the run file still running, no park" \
+  "$(jq -r '.do + "|" + .status' <<<"$out" 2>/dev/null)|$(sed -n 's/^## Status: //p' "$NF_RF")|$(sed -n 's/^- pause_reason: //p' "$NF_RF")" "done|stopped|running|null"
+cp "$NF_RF" "$SGR/nf.before"; o2="$(nf_drv --session-id nf-s)"
+if [ "$o2" = "$out" ] && cmp -s "$SGR/nf.before" "$NF_RF"; then ok "NF2 what a --continue'd session gets: the same stop, nothing written"
+else bad "NF2 bare call" "[$o2]"; fi
+check "NF3 lane-status: stalled, its reason names --resume-run" "$(nf_lane)" "$NF_RESUME_WANT"
+out="$(LOOMWRIGHT_GH_BIN="$SGR/bin/gh" bash "$S" lane-wait "$SGRF" --interval 1 --timeout 2 2>&1)"; rm -f "$SGP/.supervisor/automate/$SGPAR.lane-wait-seen"
+has "NF4 lane-wait prints that reason on the event" "$out" "lane-wait: state L2 stalled — pr - — its driver stopped this pass (phase_died), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+has "NF4b … and its act line sends the coordinator to it" "$out" "resume a stalled lane once, by the command its reason names"
+has "NF4c … the control stall keeps its --continue" "$out" "lane-wait: state L1 stalled — pr - — process gone, run file not parked, no pending question — resume once with lane-launch --continue"
+n_nf="$(claude_calls)"
+out="$(bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; rc=$?
+check "NF5 lane-launch --continue on it ⇒ refused exit 1, no session started" "$rc|$(( $(claude_calls) - n_nf ))" "1|0"
+has "NF5b … naming the resume" "$out" "lane-launch: refused — L2 — its driver stopped this pass (phase_died), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+out="$(bash "$S" lane-launch "$SGL/L2" --resume-run "$NF_RUN" 2>&1)"; rc=$?
+check "NF6 --resume-run with no owner command ⇒ BLOCKED exit 3, no session started" "$rc|$(( $(claude_calls) - n_nf ))" "3|0"
+awk -F'\t' -v OFS='\t' '$1 == "L2" { $8 = "launched"; $10 = "-" } { print }' "$SGT" > "$SGT.t" && mv "$SGT.t" "$SGT"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --resume-run "$NF_RUN" 2>&1)"; rc=$?; wait_gone "$SGL/L2"
+check "NF6b --resume-run under the owner's command launches once" "$rc|$(( $(claude_calls) - n_nf ))" "0|1"
+has "NF6c … with the lane's own resume command" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $NF_RUN"
+out="$(nf_resume nf-2)"
+if [ "$(jq -r '.do + "|" + .step + "|" + .phase' <<<"$out" 2>/dev/null)" = "spawn|plan|launch-pad" ] && [ "$(grep -c ' picked reqs/y.md$' "$NF_RF")" = 2 ]; then
+  ok "NF7 the resume restarts work: the real driver re-picks the item and prints the Launch Pad spawn"
+else bad "NF7 --resume after phase_died" "[${out:0:300}] $(tail -n 3 "$NF_RF" | tr '\n' '|')"; fi
+nf_fail phase_died >/dev/null
+check "NF8 the same failure again ⇒ the owner decides, a resume is not spent automatically" "$(nf_lane)" \
+  "stalled|its driver stopped this pass (phase_died, 2 times) — the owner decides; a resume is lane-launch --resume-run $NF_RUN"
+nf_base; nf_fail phase_died 'phase-wait: died; the phase left PR https://github.com/o/r/pull/9 open on feature/x — not drained (it wrote no SUPERVISOR_RESULT), left for the owner' >/dev/null
+check "NF9 a phase that left a PR open ⇒ the owner decides: a re-pick would plan the item again beside it" "$(nf_lane)" \
+  "stalled|its driver stopped this pass (phase_died; the phase left a PR open for the owner) — the owner decides; a resume is lane-launch --resume-run $NF_RUN"
+for nf_r in launch_pad_result_malformed concurrent_session_detected supervisor_failed_other; do
+  nf_base; nf_fail "$nf_r" 'x' >/dev/null
+  check "NF10 $nf_r reads the same way" "$(nf_lane)" "stalled|its driver stopped this pass ($nf_r), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+done
+# a checkpoint: --resume-run keeps its Supervisor run, never a fresh Launch Pad (N = 1, so a save has no scope hold)
+nf_cp() {
+  local tid=nf-task b r
+  sg_wave; sg_lane 1 reqs/x.md - null; sg_lane 2 reqs/y.md - null
+  jq '.parallel = 1' "$SGL/L2/.supervisor/lane.json" > "$SGR/nf.j" && cp "$SGR/nf.j" "$SGL/L2/.supervisor/lane.json"
+  nf_drv --start run --session-id nf-s >/dev/null
+  b=".supervisor/jobs/pending/$tid.md"; r="$SGR/nf.lp"; printf '# Brief\n\n## Task\nx\n' > "$SGL/L2/$b"
+  printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: Plan Review PASS 1/3\n' "$b" > "$r"
+  nf_drv --result "$(jq -cn --arg f "$r" '{launch_pad_result_file: $f, session_id: "nf-lp"}')" >/dev/null
+  mkdir -p "$SGL/L2/.supervisor/jobs/in-progress"; mv "$SGL/L2/$b" "$SGL/L2/.supervisor/jobs/in-progress/$tid.md"
+  nf_drv --result "$(jq -cn --arg t "$tid" '{status_reason: "checkpoint", no_pr_why: ("Supervisor checkpointed at Phase 3 EXECUTE; resume with /supervisor --continue task: " + $t), session_id: "nf-sup"}')"
+}
+out="$(nf_cp)"
+check "NF11 a checkpoint ends the pass done/stopped" "$(jq -r '.do + "|" + .status' <<<"$out" 2>/dev/null)" "done|stopped"
+check "NF11b … and reads the same way" "$(nf_lane)" "stalled|its driver stopped this pass (checkpoint), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+out="$(nf_resume nf-2)"
+if [ "$(jq -r '.do + "|" + .step + "|" + .phase' <<<"$out" 2>/dev/null)" = "spawn|run|supervisor" ] && jq -e '.invocation | contains("--continue task: nf-task")' <<<"$out" >/dev/null 2>&1; then
+  ok "NF11c the resume continues the checkpointed Supervisor run, no Launch Pad"
+else bad "NF11c checkpoint --resume" "[${out:0:300}]"; fi
+# a stall with a live driver spawn: --continue still continues
+nf_base; n_nf="$(claude_calls)"; want="$(nf_drv --session-id nf-s)"
+check "NF12 a pending spawn reads stalled with --continue" "$(nf_lane)" "stalled|process gone, run file not parked, no pending question — resume once with lane-launch --continue"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; rc=$?; wait_gone "$SGL/L2"
+check "NF12b --continue launches once, in the recorded session" "$rc|$(( $(claude_calls) - n_nf ))|$(grep '^ARGS' "$STUB_LOG" | tail -1 | grep -c '\[--resume\] \[sess-nf\]')" "0|1|1"
+check "NF12c … a bare driver call gives that session the live spawn" "$(jq -r '.do + "|" + .phase' <<<"$want" 2>/dev/null)" "spawn|launch-pad"
+# the driver's other done/stopped exits carry a PR (`reconcile`: its owned drain already ran; `drain-result`: no terminal
+# block): nothing to continue there either. The sidecar is the one those exits write; the readers are real.
+nf_base; nf_pr=https://github.com/o/r/pull/9
+sed -i.bak "s#^- item: reqs/y.md | status: running | pr: null#- item: reqs/y.md | status: running | pr: $nf_pr#" "$NF_RF"; rm -f "$NF_RF.bak"
+jq --arg t "$(jq -cn '{do: "done", step: "reconcile", status: "stopped", message: "x"}')" '.pending_text = $t' "$SGL/L2/.supervisor/automate/$NF_RUN.next-step.json" > "$SGR/nf.j" && cp "$SGR/nf.j" "$SGL/L2/.supervisor/automate/$NF_RUN.next-step.json"
+NF_PR_WANT="its driver stopped this pass (PR $nf_pr open), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+check "NF13 a stop with an open PR reads stalled, naming the PR and --resume-run" "$(nf_lane)" "stalled|$NF_PR_WANT"
+n_nf="$(claude_calls)"; out="$(bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; rc=$?
+check "NF13b --continue refuses it too, no session started" "$rc|$(( $(claude_calls) - n_nf ))|$out" "1|0|lane-launch: refused — L2 — $NF_PR_WANT"
 # SM — the brief's Pin mutations for Part B: each one-line edit turns its pin red (built from $SB like SC9, gated)
 sg_mut() { # <name> <anchor (once in $SB)> <replacement> — the mutant entry's path, or nothing
   local d="$T/sgmut/$1" c
@@ -450,3 +534,16 @@ np_fx >/dev/null
 np_m="$(sg_mut np-defer 'no_pr_stop) case "$dec" in defer|drop) gate=no_pr_stop ;;' 'no_pr_stop_off) case "$dec" in defer|drop) gate=no_pr_stop ;;')"
 if [ -n "$np_m" ]; then sgd "$np_m" defer >/dev/null; fi
 np_red "NP-M2 the park's defer branch dropped turns NP7 red" "$np_m" abandoned "$(awk -F'\t' '$1 == "L2" { s = $8 } END { print s }' "$SGT")"
+# NF's pins
+nf_base; nf_fail phase_died >/dev/null
+nf_m="$(sg_mut nf-continue 'if _lanes_driver_stopped "$LN_DIR" "$LN_RUN"; then' 'if false; then')"
+out=""; if [ -n "$nf_m" ]; then out="$(LOOMWRIGHT_LANE_RECHECK_S=0 bash "$nf_m" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; wait_gone "$SGL/L2" 2>/dev/null; fi
+np_red "NF-M1 the --continue refusal dropped turns NF5b red" "$nf_m" "lane-launch: refused — L2" "$(printf '%s\n' "$out" | grep -o 'lane-launch: refused — L2' | head -1)"
+nf_base; nf_fail phase_died >/dev/null
+nf_m="$(sg_mut nf-reason 'if _lanes_driver_stopped "$1" "$2"; then _lanes_stopped_reason' 'if false; then _lanes_stopped_reason')"
+out=""; if [ -n "$nf_m" ]; then out="$(LOOMWRIGHT_GH_BIN="$SGR/bin/gh" bash "$nf_m" lane-status "$SGRF" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L2") | .state + "|" + .reason')"; fi
+np_red "NF-M2 the reason's check dropped turns NF3 red" "$nf_m" "$NF_RESUME_WANT" "$out"
+nf_base
+nf_m="$(sg_mut nf-any-pending 'select(.do == "done" and .status == "stopped")' 'select(.do != "x")')"
+out=""; if [ -n "$nf_m" ]; then out="$(bash "$nf_m" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; wait_gone "$SGL/L2" 2>/dev/null; fi
+np_red "NF-M3 reading any pending instruction as stopped turns NF12b red" "$nf_m" "" "$(printf '%s\n' "$out" | grep -o 'lane-launch: refused — L2' | head -1)"

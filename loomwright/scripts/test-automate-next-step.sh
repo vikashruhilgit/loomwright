@@ -2212,6 +2212,16 @@ leg_no_pr_stop() {
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
     && grep -qx '## Status: running' "$CASE_RF" && grep -qx -- '- pause_reason: null' "$CASE_RF" && ! grep -q 'parked no_pr_stop' "$CASE_RF" \
     || { LEG_MSG="phase_died ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+  # a bare call (all a `lane-launch --continue`d session has) only re-reads the stop; --resume is what restarts work
+  before="$NC_OUT"; cp "$CASE_RF" "$CASE_DIR/before.md"
+  f_call "$drv" --session-id coord-1
+  [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$before" ] && cmp -s "$CASE_DIR/before.md" "$CASE_RF" || { LEG_MSG="phase_died bare call ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+  printf '0\tpr list --state open *\t[]\n0\tpr list *\t[]\n' >> "$CASE_GH"
+  p_call_fresh "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --session-id coord-2
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && [ "$(grep -c " picked $(np_item)\$" "$CASE_RF")" = 2 ] \
+    || { LEG_MSG="phase_died --resume ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }; f_claude 1
+  f_call "$drv" --start run --session-id coord-1
   # a block the validator rejected, no brief: the fallback's user_discarded_at_phase_6 names nobody's decision
   f_plan_case "$drv" "$(printf 'LAUNCH_PAD_RESULT:\n  status: saved\n')"
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 && ! grep -q 'parked no_pr_stop' "$CASE_RF" \

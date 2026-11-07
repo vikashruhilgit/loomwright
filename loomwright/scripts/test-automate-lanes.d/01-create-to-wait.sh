@@ -706,9 +706,12 @@ hasnt "AH11b … and carries no question relay hint" "$out" "lane-wait: relay"
 out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"; rc=$?
 check "AH8b nothing live, nothing new ⇒ idle at once, exit 0" "$rc:$out" "0:lane-wait: idle — no lane is running; nothing changes until the owner acts"
 # AH9 read-only toward lanes: a full lane-wait pass writes nothing but its own ledger.
-before="$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')"
+# The reference is a fixed copy of the ledger's time: lane-wait rewrites or removes the ledger itself, so comparing
+# against the ledger drops a lane file already younger than it, and the count falls with no write at all.
+AH9_REF="$T/ah9.ref"; touch "$AH9_REF"; [ -e "$LWS" ] && touch -r "$LWS" "$AH9_REF"
+before="$(find "$LR2" -type f -newer "$AH9_REF" 2>/dev/null | wc -l | tr -d ' ')"
 run lane-wait "$RF2" --interval 1 --timeout 1 >/dev/null
-check "AH9 lane-wait writes nothing into any lane" "$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')" "$before"
+check "AH9 lane-wait writes nothing into any lane" "$(find "$LR2" -type f -newer "$AH9_REF" 2>/dev/null | wc -l | tr -d ' ')" "$before"
 # AH13 events are every state that is neither live nor quiet (a deny-list): `_lanes_parked` reports ANY
 # run-file pause_reason as the lane's state, so a park the old allow-list never named (token_ceiling) must
 # wake the coordinator, while a coordinator-driven park (awaiting_merge) must not. L1 (blocked_launch) was
