@@ -117,8 +117,11 @@ rm -rf "$WD"
 # --backlog argument onto that line; a lane once recorded `- backlog /Users/…/L3/.supervisor/lane-backlog.md`
 # and meta-sync's home_path scrub refused the lane's wave-end push. Literal and physical (/private) spellings
 # of the root both rewrite; a path outside the root, a prompt source and lines outside ## Source are untouched.
-B8B="$(mktemp -d)"; mkdir -p "$B8B/repo/.supervisor/automate"
+# The run file is reached through an explicit symlink, so the literal root (the link) and the physical root
+# (its target) differ on every platform, not only where the temp dir itself sits behind one (macOS /var).
+B8B="$(mktemp -d)"; mkdir -p "$B8B/real/.supervisor/automate"; ln -s "$B8B/real" "$B8B/repo"
 B8R="$B8B/repo"; B8P="$(cd "$B8R" && pwd -P)"; RF4="$B8R/.supervisor/automate/run-4.md"
+[ "$B8P" != "$B8R" ] && ok "B8b setup: literal and physical roots differ" || no "B8b setup: symlinked root resolved to itself ($B8P)"
 bash "$H" runfile-write "$RF4" <<B8EOF
 # Automate Run: demo4
 ## Status: running
@@ -151,6 +154,15 @@ if cmp -s "$B8B/want.md" "$B8R/.supervisor/automate/run-5.md"; then
   ok "runfile-write: an already-relative ## Source is installed byte-for-byte"
 else
   no "relative source changed:\n$(cat "$B8R/.supervisor/automate/run-5.md")"
+fi
+# a run file written before the fix (absolute ## Source, installed by hand) is repaired by its next write —
+# every writer installs through _runfile_install, not only runfile-write
+printf '# Automate Run: demo6\n## Status: running\n## Source\n- backlog %s/.supervisor/lane-backlog.md\n## Queue\n- [ ] a.md\n## Progress\n- t0\n' "$B8P" > "$B8R/.supervisor/automate/run-6.md"
+bash "$H" progress-append "$B8R/.supervisor/automate/run-6.md" "t1 next write" >/dev/null 2>&1
+if grep -qxF -- "- backlog .supervisor/lane-backlog.md" "$B8R/.supervisor/automate/run-6.md" && grep -qxF -- "- t1 next write" "$B8R/.supervisor/automate/run-6.md"; then
+  ok "progress-append: an in-flight run file's absolute ## Source is repaired on its next write"
+else
+  no "in-flight repair wrong:\n$(cat "$B8R/.supervisor/automate/run-6.md")"
 fi
 rm -rf "$B8B"
 

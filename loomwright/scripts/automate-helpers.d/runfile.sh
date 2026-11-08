@@ -57,10 +57,13 @@ _runfile_refusal() {
   return 0
 }
 
-# _runfile_install <staged> <out> <full|title> <verb> — validate, then rename.
-# On refusal: remove <staged>, leave <out> byte-unchanged, exit 1 via die.
+# _runfile_install <staged> <out> <full|title> <verb> — normalize ## Source, validate, then rename.
+# On refusal: remove <staged>, leave <out> byte-unchanged, exit 1 via die. Every run-file writer
+# installs here, so a run file created with an absolute ## Source path is repaired on its next write.
 _runfile_install() {
   local staged="$1" out="$2" mode="$3" verb="$4" why
+  _runfile_relativize_source "$staged" "$(dirname "$out")" \
+    || { rm -f "$staged"; die "$verb: could not normalize ## Source; $out left unchanged [runfile_write_refused]"; }
   why="$(_runfile_refusal "$staged" "$out" "$mode")"
   if [ -n "$why" ]; then
     rm -f "$staged"
@@ -81,7 +84,6 @@ runfile_write() {
   mkdir -p "$dir"
   tmp="$(mktemp "${out}.XXXXXX")"
   cat > "$tmp" || { rm -f "$tmp"; die "runfile-write: could not stage stdin; $out left unchanged"; }
-  _runfile_relativize_source "$tmp" "$dir" || { rm -f "$tmp"; die "runfile-write: could not normalize ## Source; $out left unchanged"; }
   _runfile_install "$tmp" "$out" full runfile-write
 }
 
