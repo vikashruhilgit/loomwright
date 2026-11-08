@@ -26,7 +26,7 @@
 # USAGE
 #   automate-next-step.sh <runfile> [--start pick|run|drain] [--result <json> | --result-file <f>]
 #                         [--mode safe|auto-merge] [--non-interactive] [--trust-unprotected]
-#                         [--root <checkout>] [--session-id <sid>] [--notify] [--cheap]
+#                         [--root <checkout>] [--session-id <sid>] [--notify] [--cheap | --no-cheap]
 #                         [--max-tokens <N>] [--inline-phases] [--owner-command <cmd>]
 #   automate-next-step.sh --resume <automate_dir> [--run <run_id>|latest] --session-id <sid> [same flags]
 #   automate-next-step.sh --merge-parked <automate_dir> --run <run_id> --session-id <sid> [--root <checkout>]
@@ -72,10 +72,15 @@
 #   `picked`, then straight on to RUN's `/autonomous` spawn. Both need `--session-id` (the PICK lock is
 #   acquired with it; RECONCILE's `closeout` re-enters it). `--start run` right after PICK (`## Current` `status: running`, `pr: null`, the last
 #   `picked` line naming the item) — the driver suppresses `.auto_review` and prints the `/autonomous`
-#   spawn (`--non-interactive` adds `--non-interactive-fallback`; `--notify`, `--cheap` and
-#   `--max-tokens N` — else `## Run Config`'s `max_tokens:` — pass through; none is written to the run
-#   file; inside a lane, `.supervisor/lane.json` `"cheap": true` also sets `--cheap`); the RUN report answers it, and the driver goes on to print the owned-drain spawn, whose
-#   DRAIN report starts GATE. `--start drain` prints the owned-drain spawn for a running item that
+#   spawn (`--non-interactive` adds `--non-interactive-fallback`; `--notify` and `--max-tokens N` — else
+#   `## Run Config`'s `max_tokens:` — pass through; cheap mode adds `--cheap` there and on every drain spawn); the
+#   RUN report answers it, and the driver goes on to print the owned-drain spawn, whose DRAIN report starts GATE.
+#   CHEAP MODE: outside a lane the record is `## Run Config`'s `- cheap: true` line — `--cheap` writes it, a bare
+#   call reads it (any other value is off, with one `cheap_value_unrecognised` stderr warning), `--no-cheap`
+#   removes it (one `cheap mode off (--no-cheap)` ## Progress line), written under the held run lock by the call
+#   that receives the flag or a later call of its tail (THE DURABLE WRITE, below); both flags on one
+#   command ⇒ `cheap_flags_conflict`, exit 2, nothing written. Inside a lane `.supervisor/lane.json`
+#   `"cheap": true` alone decides (a command-line `--cheap` is ignored; `lane-launch --no-cheap` clears it). `--start drain` prints the owned-drain spawn for a running item that
 #   already has its PR (refused — `drain_already_owned`, exit 2 — once this pass spawned its drain).
 #   "drain result reported" stays an entry too (back-compat): with nothing pending, a bare
 #   `--result '{"drain_result":"READY|ESCALATED",…}'` starts GATE. A call with no
@@ -487,7 +492,7 @@ command -v "$JQ" >/dev/null 2>&1 || { ns_err "jq not on PATH"; exit 1; }
 RF=""; RESULT=""; MODE=""; NONINT=0; TRUST=""; ROOT=""; SID=""; have_result=0
 # AD / RUN_ID are this script's own (set once the run file is known): never inherited from the environment
 AD=""; RUN_ID=""
-START=""; NOTIFY=0; CHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""; INLINE=0; OWNER_CMD=""
+START=""; NOTIFY=0; CHEAP=0; NOCHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""; INLINE=0; OWNER_CMD=""
 # MP_DIR: `--merge-parked <automate_dir>`. NS_MODE_ARG: the `--mode` THIS command line gave (MODE is refilled
 # from the sidecar below; the parked-open-PR park needs to know whether the owner typed `--auto-merge` now)
 MP_DIR=""; NS_MODE_ARG=""
@@ -509,6 +514,7 @@ while [ "$#" -gt 0 ]; do
       RUN_SEL="$2"; shift 2 ;;
     --notify) NOTIFY=1; shift ;;
     --cheap) CHEAP=1; shift ;;
+    --no-cheap) NOCHEAP=1; shift ;;
     --max-tokens)
       [ "$#" -ge 2 ] && [[ "$2" =~ ^[0-9]{1,12}$ ]] || ns_die2 "--max-tokens needs a token count"
       MAXTOK="$2"; shift 2 ;;
@@ -530,6 +536,11 @@ while [ "$#" -gt 0 ]; do
     *) [ -z "$RF" ] || ns_die2 "one run file only (got '$RF' and '$1')"; RF="$1"; shift ;;
   esac
 done
+# before any start step writes (closeout-others, the finalize glob): the on and off switch together are no answer
+[ "$CHEAP" = 1 ] && [ "$NOCHEAP" = 1 ] && ns_die2 "cheap_flags_conflict — --cheap and --no-cheap on one command; pass one of them — nothing written"
+# NS_CHEAP_REQ — the cheap request this call carries outside a lane: on (--cheap), off (--no-cheap), "" (neither —
+# the FLAGS block below takes this tail's, else ## Run Config decides); ns_cheap reads it, THE DURABLE WRITE (ns_cheap_write) records it
+NS_CHEAP_REQ=""; [ "$CHEAP" = 1 ] && NS_CHEAP_REQ=on; [ "$NOCHEAP" = 1 ] && NS_CHEAP_REQ=off
 
 # ------------------------------------------------------------------------------------------------
 # the resume entry (automate-speed/08): the start steps every start runs, then the target run file
@@ -756,15 +767,20 @@ ns_pending_write() { # <n|unknown> <true|false> — the `- pending_decisions:` l
 # ------------------------------------------------------------------------------------------------
 # side effects (overridable)
 # ------------------------------------------------------------------------------------------------
+# NS_LOCK_EV — this call's own last run-lock event: `acquired` / `released` ("" = none this call; ns_cheap_held reads it)
+NS_LOCK_EV=""
 ns_lock() { # acquire|release
-  local verb="$1" a=""
+  local verb="$1" a="" rc
   [ "$verb" = acquire ] && [ -n "$SID" ] && a="--session-id"
   if [ -n "${NEXT_STEP_LOCK_CMD:-}" ]; then
     # shellcheck disable=SC2086
-    $NEXT_STEP_LOCK_CMD "$verb" --owner "automate:$RUN_ID" ${a:+"$a" "$SID"} </dev/null >/dev/null 2>&1
+    $NEXT_STEP_LOCK_CMD "$verb" --owner "automate:$RUN_ID" ${a:+"$a" "$SID"} </dev/null >/dev/null 2>&1; rc=$?
   else
-    bash "$HERE/run-lock.sh" "$verb" --owner "automate:$RUN_ID" ${a:+"$a" "$SID"} </dev/null >/dev/null 2>&1
+    bash "$HERE/run-lock.sh" "$verb" --owner "automate:$RUN_ID" ${a:+"$a" "$SID"} </dev/null >/dev/null 2>&1; rc=$?
   fi
+  [ "$rc" -eq 0 ] && NS_LOCK_EV="${verb}d"
+  [ "$verb" = release ] && NS_LOCK_EV=released   # refused or not, this call no longer counts on holding it
+  return "$rc"
 }
 ns_lock_window() { # acquire, retried 3 times — 0 when held
   local i=0
@@ -774,7 +790,12 @@ ns_lock_window() { # acquire, retried 3 times — 0 when held
     i=$((i + 1)); sleep "${NEXT_STEP_LOCK_RETRY_SECONDS:-5}"
   done
 }
-ns_release() { ns_lock release || ns_err "run-lock.sh release refused (owner automate:$RUN_ID) — reported, the park stands"; return 0; }
+# ns_release — the cheap request's durable write first (ns_cheap_prerelease: every run-file write finishes before
+# the release), then the release
+ns_release() {
+  ns_cheap_prerelease
+  ns_lock release || ns_err "run-lock.sh release refused (owner automate:$RUN_ID) — reported, the park stands"; return 0
+}
 ns_watch() {
   if [ -n "${NEXT_STEP_WATCH_CMD:-}" ]; then
     # shellcheck disable=SC2086
@@ -1531,7 +1552,7 @@ ns_pick() {
       ns_run_park pick run_lock_held "$(ns_ts) $l" 0 "the run lock is held ($l) — parked run_lock_held; --resume once it is free (run-lock.sh --force-unlock is human-only)"
       return
     fi
-    st_set once_pk_lock true
+    st_set once_pk_lock true; NS_LOCK_EV=acquired
     l="$(printf '%s\n' "$out" | grep -m1 '^run_lock_degraded' || true)"
     if [ -n "$l" ]; then ns_once once_pk_degraded ns_progress "$(ns_ts) $l — the run lock is TTL-only; proceeding" || return 1; fi
   fi
@@ -2122,6 +2143,107 @@ ns_record_orig() { # <true|false|absent> — ## Run Config's auto_review_origina
   [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh runfile-write exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
   ns_refresh
 }
+# ns_cheap — sets CHEAP for the spawn this call prints; every spawn emitter (run, drain, fix-now) calls it before it
+# prints. It only READS: the record is written under the run lock (THE DURABLE WRITE, below). Inside a
+# lane `.supervisor/lane.json` is AUTHORITATIVE and the only record: cheap mode is exactly its `"cheap": true`
+# (lane-create --cheap; lane-launch --no-cheap removes it) — a command-line --cheap (the lane session's original
+# command, kept across --continue and answer resumes) is ignored, and ## Run Config is neither read nor written.
+# Outside a lane --cheap / --no-cheap (this call's, else this tail's — NS_CHEAP_REQ) decide; a bare call reads
+# ## Run Config's own `- cheap: true` line — any value but `true` is off, with ONE stderr warning (never a guess
+# toward on). Once per call.
+NS_CHEAP_DONE=0
+ns_cheap() {
+  local l v
+  [ "$NS_CHEAP_DONE" = 0 ] || return 0
+  NS_CHEAP_DONE=1; CHEAP=0
+  if ns_lane; then
+    "$JQ" -e '.cheap == true' "$ROOT/.supervisor/lane.json" >/dev/null 2>&1 && CHEAP=1
+    return 0
+  fi
+  case "$NS_CHEAP_REQ" in on) CHEAP=1; return 0 ;; off) return 0 ;; esac
+  l="$(ns_section '## Run Config' | grep -m1 '^- cheap:' || true)"
+  [ -n "$l" ] || return 0
+  v="$(printf '%s' "${l#- cheap:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if [ "$v" = true ]; then CHEAP=1; else ns_err "cheap_value_unrecognised: '$v' — ## Run Config's cheap line is not 'true'; cheap mode is off"; fi
+  return 0
+}
+# THE DURABLE WRITE of --cheap / --no-cheap (NS_CHEAP_REQ) — the call that received the flag (or the tail's later
+# call that inherits it from the sidecar: `cheap_due`) writes it to ## Run Config, ONLY while the run lock is held:
+#   ns_cheap_prerelease — inside ns_release, BEFORE the release: every lock-releasing exit (a park, a done, a
+#     post-park window) writes it there;
+#   ns_cheap_persist <instruction json> — the final block, for an instruction issued with no release in this call:
+#     written only when the lock is held (ns_cheap_held: acquired by this call, or no lock event this call and
+#     `## Status: running` — the PICK's lock held across the pass); otherwise the request stays in the sidecar.
+# A re-print writes nothing (it may hold no lock): it only keeps the request in the sidecar (ns_cheap_carry).
+# --cheap writes `- cheap: true` when it is not already there; --no-cheap removes the line with ONE
+# `cheap mode off (--no-cheap)` ## Progress line (no line ⇒ nothing written: idempotent); once written or found
+# already so, `cheap_due` goes. At most once a call. Never written (the exit-2 refusals return before any write):
+# inside a lane (lane.json alone decides), on the --merge-parked entry, by the resume entry's own steps (resume /
+# rebuild: the AUT-RESUME ask — whose answer call carries the flag from the sidecar — and its stop, start_new /
+# archive choice and resume_ambiguous park), and on an instruction issued before this run is this session's — a
+# coordinator_run stop and a run_lock_held park (another session holds this run).
+NS_CHEAP_WRITTEN=0
+ns_cheap_skip() { # 0 ⇒ nothing to write in this call's state
+  [ -n "$NS_CHEAP_REQ" ] && [ -z "$MP_DIR" ] && [ "$NS_CHEAP_WRITTEN" = 0 ] || return 0
+  ns_lane && return 0
+  case "${arm:-}" in resume|rebuild|merge-*) return 0 ;; esac
+  return 1
+}
+ns_cheap_held() {
+  case "$NS_LOCK_EV" in acquired) return 0 ;; released) return 1 ;; esac
+  [ "$(ns_run_status)" = running ]
+}
+ns_cheap_prerelease() {
+  local rc0="$NS_RC"
+  ns_cheap_skip && return 0
+  [ "$NS_LOCK_EV" != released ] || return 0
+  ns_cheap_write || ns_err "cheap mode not recorded in ## Run Config — this item's next call retries it; the park stands"
+  NS_RC="$rc0"; return 0
+}
+ns_cheap_persist() {
+  local rc0="$NS_RC"
+  ns_cheap_skip && return 0
+  printf '%s' "$1" | "$JQ" -e '(.step // "" | tostring) as $s | $s == "resume" or $s == "rebuild" or ($s | startswith("merge-"))
+      or .pause_reason == "run_lock_held" or .pause_reason == "resume_ambiguous" or .stop == "coordinator_run"' >/dev/null 2>&1 && return 0
+  ns_cheap_held || return 0
+  ns_cheap_write || { NS_RC="$rc0"; return 1; }
+  return 0
+}
+ns_cheap_write() {
+  local l
+  l="$(ns_section '## Run Config' | grep -m1 '^- cheap:' || true)"
+  if [ "$NS_CHEAP_REQ" = off ]; then
+    if [ -n "$l" ]; then
+      ns_once once_cheap_off ns_progress "$(ns_ts) cheap mode off (--no-cheap)" || return 1
+      ns_cheap_cfg del || return 1
+    fi
+  elif [ "$l" != "- cheap: true" ]; then
+    ns_cheap_cfg set || return 1; st_del once_cheap_off
+  fi
+  NS_CHEAP_WRITTEN=1; st_del cheap_due
+  return 0
+}
+# ns_cheap_due_keep <the sidecar before a reset> — an unwritten request (cheap_due) survives the reset of a fresh
+# tail (--start pick / run, a new drain report, a discarded sidecar), so the next call holding the lock writes it
+ns_cheap_due_keep() {
+  local r; r="$(printf '%s' "$1" | "$JQ" -r 'select(.cheap_due == "true") | .flag_cheap // empty' 2>/dev/null)"
+  case "$r" in on|off) st_set flag_cheap "$r"; st_set cheap_due true ;; esac
+  return 0
+}
+ns_cheap_cfg() { # <set|del> — ## Run Config's `- cheap:` line: set = exactly `- cheap: true` (in place, else the section's last line); del = dropped
+  local new e rc
+  new="$(NS_OP="$1" awk 'BEGIN { op = ENVIRON["NS_OP"] }
+    function out() { if (c && op == "set" && !d) { print "- cheap: true"; d = 1 } printf "%s", held; held = "" }
+    /^## / { out(); c = ($0 == "## Run Config" || index($0, "## Run Config ") == 1); print; next }
+    c && index($0, "- cheap:") == 1 { if (op == "set" && !d) { printf "%s", held; held = ""; print "- cheap: true"; d = 1 } next }
+    c && /^[[:space:]]*$/ { held = held $0 "\n"; next }
+    { printf "%s", held; held = ""; print }
+    END { out() }' "$RF"; printf x)"
+  new="${new%x}"
+  e="$(printf '%s' "$new" | bash "$H" runfile-write "$RF" 2>&1 >/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh runfile-write exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
+  ns_refresh
+}
 ns_run() {
   local e rc orig inv mt x brief="" p cont=""
   # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
@@ -2157,6 +2279,7 @@ ns_run() {
     st_set auto_review_original "$orig"
   fi
   ns_once once_run_cfg ns_record_orig "$(st auto_review_original)" || return 1
+  ns_cheap || return 1
   if [ -n "$cont" ] && [ -n "$brief" ]; then
     ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running the supervisor phase (fresh session, --continue task: $cont — the checkpointed run, no fresh Launch Pad)" || return 1
   elif [ -n "$cont" ]; then
@@ -2448,6 +2571,7 @@ ns_drain() {
     ns_err "session_id_missing — the drain phase needs this loop's --session-id (phase-launch's coordinator session, [A-Za-z0-9_-]+; got '${SID}') — nothing written"; NS_RC=2; return 1
   fi
   ns_driver_sid || return 1
+  ns_cheap || return 1
   h="$(ns_pr_head "$PR")"
   ns_drain_reset
   st_set drain_pass "$(ns_pass_key)"; st_set drain_kind first; st_set drain_started_at "$(ns_ts)"
@@ -2457,6 +2581,7 @@ ns_drain() {
     # the owned drain as its own phase session (still the pass's ONE owned drain): today's invocation, its
     # terminal block written to the run's review-heal sidecar
     local inv="/review-pr $PR --until-mergeable --no-auto-postmortem" p
+    [ "$CHEAP" = 1 ] && inv="$inv --cheap"
     p="$inv — When the drain ends, write its terminal REVIEW_HEAL_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.review-heal-result.md."
     st_set drain_fresh true
     x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg h "$h" --arg l "$(ns_phase_launch drain "$p")" --arg s "$RUN_ID.review-heal-result.md" \
@@ -2466,7 +2591,9 @@ ns_drain() {
     NEXT=drain-result
     return 0
   fi
-  x="$("$JQ" -cn --arg i "/review-pr $PR --until-mergeable --no-auto-postmortem" --arg h "$h" '{what: "owned drain", invocation: $i,
+  local dinv="/review-pr $PR --until-mergeable --no-auto-postmortem"
+  [ "$CHEAP" = 1 ] && dinv="$dinv --cheap"
+  x="$("$JQ" -cn --arg i "$dinv" --arg h "$h" '{what: "owned drain", invocation: $i,
       head_sha: (if $h == "" then null else $h end),
       then: "run the invocation inline (ONE drain; never a second one for this pass); then --result with the DRAIN report: {\"review_heal_result\": <the verbatim terminal REVIEW_HEAL_RESULT text> (or \"review_heal_result_file\": <a path holding it>), \"ready_sha\": <the PR head the drain ended READY on>, \"head_sha\": <the head it started on, when known>, \"progress_notes\": [<one-line drain round notes>], \"drain_note\": <one line, the terminal drain line parenthetical>} — or {\"no_terminal_block\": true} when it ended without a terminal block. The driver writes the pinned drain lines, owned_drain_*, the sidecar and its sidecar-check, learning-emit, then runs GATE"}')"
   ns_emit spawn drain "$x"
@@ -3073,15 +3200,17 @@ ns_decide_complete() { # <pre|post> — all answers are in
     ns_emit_park decide "parked; owner decisions recorded"; return 0
   fi
   ns_decide_record pre || return 1
-  if [ "$nfix" -gt 0 ]; then ns_spawn_fixnow; return 0; fi
+  if [ "$nfix" -gt 0 ]; then ns_spawn_fixnow || return 1; return 0; fi
   NEXT=park
 }
 ns_spawn_fixnow() {
+  ns_cheap || return 1
   st_set fix_now_reentered true; st_del gate_line; st_del ask_gate_line; st_del progress_note; st_del drafts
   # the re-drain is a new drain: its DRAIN report goes through drain-result (the pinned fix-now lines)
   ns_drain_reset; st_set drain_kind fixnow; st_set drain_started_at "$(ns_ts)"
-  local x
-  x="$(printf '%s' "$(st answers)" | "$JQ" -c --arg b "$BRANCH" --arg i "/review-pr $PR --until-mergeable --no-auto-postmortem" '{what: "fix-now re-drain", agent: "general-purpose",
+  local x inv="/review-pr $PR --until-mergeable --no-auto-postmortem"
+  [ "$CHEAP" = 1 ] && inv="$inv --cheap"
+  x="$(printf '%s' "$(st answers)" | "$JQ" -c --arg b "$BRANCH" --arg i "$inv" '{what: "fix-now re-drain", agent: "general-purpose",
        branch: $b, contract: "skills/review-heal/SKILL.md §U3.5 (fix-worker spawn); the findings go inside the EXTERNAL_TEXT envelope",
        findings: [.[] | select(.decision == "fix-now") | {draft: .name, finding_untrusted: .title}],
        drain_invocation: $i,
@@ -3111,7 +3240,7 @@ ns_fix_now() {
             done <<EOF
 $(printf '%s' "$(st answers)" | "$JQ" -r '.[] | select(.decision == "fix-now") | [.draft, .name] | @tsv')
 EOF
-            ns_spawn_fixnow   # the PICK's lock stays held across the re-pass
+            ns_spawn_fixnow || return 1   # the PICK's lock stays held across the re-pass
             return 0 ;;
           *) reason="$g2" ;;
         esac
@@ -3530,7 +3659,8 @@ ns_bound() {
 # names the next item, is refused (exit 2, nothing written) on every path that takes a drain report.
 if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
   ns_err "the sidecar's pending state is for $(st item) ($(st pr)); ## Current names ${ITEM:-no item} (${PR:-no pr}) — discarded, read as a fresh tail"
-  stale="$(st report_key)"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  stale="$(st report_key)"; s_prev="$NS_STATE"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  ns_cheap_due_keep "$s_prev"
 fi
 pending="$(st pending_text)"; PENDING_TEXT="$pending"
 # A pending fresh spawn's `launch` line carries the identity of the session it was printed in: its
@@ -3562,8 +3692,22 @@ ns_reprint() {
   if [ -n "$OWNER_CMD" ] && { [ "$OWNER_CMD" != "$(st flag_owner_command)" ] || [ "$sid" != "$(st flag_owner_command_sid)" ]; }; then
     st_set flag_owner_command "$OWNER_CMD"; st_set flag_owner_command_sid "$sid"; ch=1
   fi
+  # --cheap / --no-cheap given with a re-print is kept in the sidecar (cheap_due) — never written here: a re-print may
+  # hold no run lock — for the next call that holds it; saved only when that changed the sidecar (a repeated
+  # re-print with the same flag writes nothing)
+  local s0="$NS_STATE"
+  if ns_cheap_carry; then [ "$NS_STATE" = "$s0" ] || ch=1; fi
   [ "$ch" = 0 ] || st_save || exit 1
   printf '%s\n' "$out"; exit 0
+}
+# ns_cheap_carry — 0 when this call carries --cheap / --no-cheap outside a lane (the root resolved first — a
+# re-print returns before the FLAGS block does it); the request is then kept in the sidecar for this tail
+ns_cheap_carry() {
+  [ -n "$NS_CHEAP_REQ" ] || return 1
+  [ -n "$ROOT" ] || ROOT="$(st flag_root)"
+  ns_resolve_root
+  ns_lane && return 1
+  st_set flag_cheap "$NS_CHEAP_REQ"; st_set cheap_due true
 }
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
 pending_what="$(printf '%s' "$pending" | "$JQ" -r '.what // empty' 2>/dev/null)"
@@ -3590,7 +3734,11 @@ elif [ -n "$MP_DIR" ]; then
 elif [ -n "$RESUME_DIR" ]; then
   # the resume entry: its own AUT-RESUME ask still pending for this run re-prints (idempotent); anything
   # else pending (a parked tail's instruction) belongs to a previous pass — a fresh start
-  [ "$pending_do" = ask ] && [ "$(st next)" = resume ] && { printf '%s\n' "$pending"; exit 0; }
+  # (a --cheap / --no-cheap given with it is kept for the answer call, as the ask's first call keeps it)
+  if [ "$pending_do" = ask ] && [ "$(st next)" = resume ]; then
+    s0="$NS_STATE"; if ns_cheap_carry && [ "$NS_STATE" != "$s0" ]; then st_save || exit 1; fi
+    printf '%s\n' "$pending"; exit 0
+  fi
   ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
   stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
   NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
@@ -3611,7 +3759,8 @@ elif [ -n "$START" ]; then
       [ "$pending_do" = ask ] && [ "$(st in_pick)" = true ] && ns_reprint
       [ "$pending_do" != spawn ] || ns_die2 "pick_already_started — a pending ${pending_what:-spawn} instruction belongs to ${ITEM:-the run}'s pass (a no-result call re-prints it) — nothing written"
       stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
-      NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+      s_prev="$NS_STATE"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+      ns_cheap_due_keep "$s_prev"
       st_set in_pick true; st_set item "$ITEM"; st_set pr "$PR"
       NEXT=pick ;;
     run)
@@ -3622,7 +3771,8 @@ elif [ -n "$START" ]; then
         ask|spawn) ns_die2 "run_already_started — a pending ${pending_what:-$pending_do} instruction belongs to $ITEM's pass (a no-result call re-prints it) — nothing written" ;;
       esac
       stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
-      NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+      s_prev="$NS_STATE"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+      ns_cheap_due_keep "$s_prev"
       NEXT=run ;;
     drain)
       # an open ask, or a spawn other than this pass's owned drain (whose re-request the drain step
@@ -3705,7 +3855,8 @@ else
   # a new item's tail: nothing pending, or the previous instruction was terminal (park / done); the
   # previous tail's report key is kept as stale (it never starts a tail again)
   stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
-  NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  s_prev="$NS_STATE"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  ns_cheap_due_keep "$s_prev"
   ns_take_report "$RESULT"; NEXT=gate
 fi
 st_del pending_text; st_del failed
@@ -3737,11 +3888,14 @@ if [ "$INLINE" = 1 ] && ns_lane && [ "$("$JQ" -r '.parallel // 0' "$ROOT/.superv
   exit 2
 fi
 if [ "$INLINE" = 1 ]; then st_set flag_inline_phases true; elif [ "$(st flag_inline_phases)" = true ]; then INLINE=1; fi
-# inside a lane, `--cheap` also comes from the lane's own record (lane.json `"cheap": true`, written by
-# `lane-create --cheap` from the coordinator's flag): every session of the lane — launch, --resume-run,
-# continue, answer resume — keeps the cost profile whatever command it received. No off form; absent
-# outside a lane, so a sequential run's --cheap stays passthrough-only
-ns_lane && "$JQ" -e '.cheap == true' "$ROOT/.supervisor/lane.json" >/dev/null 2>&1 && CHEAP=1
+# --cheap / --no-cheap outside a lane: written to ## Run Config — the durable record — under the run lock (see
+# THE DURABLE WRITE above: ns_cheap_prerelease / ns_cheap_persist); the request is kept for this tail too (an
+# AUT-RESUME ask, which writes no run file, is answered by a call that may not repeat it), and while unwritten
+# (cheap_due) across a fresh tail's reset. Inside a lane neither is kept: lane.json alone decides (ns_cheap)
+if ! ns_lane; then
+  if [ -n "$NS_CHEAP_REQ" ]; then st_set flag_cheap "$NS_CHEAP_REQ"; st_set cheap_due true
+  else case "$(st flag_cheap)" in on|off) NS_CHEAP_REQ="$(st flag_cheap)" ;; esac; fi
+fi
 
 STOPPED=0; first_arm=1
 while [ -n "$NEXT" ]; do
@@ -3772,6 +3926,10 @@ done
 if [ -n "$NS_EMIT" ]; then
   # the resume entry's can't-ask stop writes nothing at all (not even the sidecar)
   if [ "${NS_NOSAVE:-0}" = 1 ]; then printf '%s\n' "$NS_EMIT"; exit 0; fi
+  # the flag's durable write for an instruction issued with no release in this call, only under the held run lock
+  # (ns_cheap_persist; a releasing exit wrote it before its release); a failed or deferred write leaves the
+  # instruction standing and the request in the sidecar (cheap_due), so the next call holding the lock writes it
+  ns_cheap_persist "$NS_EMIT" || ns_err "cheap mode not recorded in ## Run Config — this item's next call retries it; the instruction stands"
   st_set pending_text "$NS_EMIT"; st_set next "$NEXT"
   if [ "$(st run_answer_due)" = true ]; then st_set run_answer_text "$NS_EMIT"; st_del run_answer_due; fi
   st_save || exit 1

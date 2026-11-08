@@ -14,7 +14,8 @@
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks.
 #        --cheap (the coordinator's own --cheap) writes `"cheap": true` into lane.json (absent otherwise):
 #        every `/loomwright:automate` command lane-launch sends the lane — launch and --resume-run — then
-#        carries --cheap, and the in-lane automate-next-step.sh reads it too, so a resume keeps the profile.
+#        carries --cheap, and the in-lane automate-next-step.sh reads it too, so a resume keeps the profile;
+#        `lane-launch --no-cheap` (any form) removes it from lane.json before it spawns.
 #        n is the lane's identity across the WHOLE run (every wave, re-run lanes included), not the
 #        parallel count: every caller takes n in 1..99 and a number already in the lane table (live,
 #        removed or abandoned) is refused (`refused — lane L<n> already used in this run`), nothing
@@ -24,7 +25,7 @@
 #        (a removed lane's from its parent `fleet closeout: <lane> tokens TOTAL=<n>` line) ⇒ refused
 #        `token_ceiling total=<SPENT> max=<T>` / `token_ceiling ledger_unreadable`, else max_tokens = T − SPENT
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
-#        [--without-gate-optout]
+#        [--without-gate-optout] [--no-cheap]
 #        detached headless launch (or resume by run id — in the lane's LAST session, a fresh one only
 #        when that cannot be resumed — / fixed decision-free continue message); see "Gate opt-out carry"
 #   lane-launch <lane_dir> --host-denied '<reason>'      record a host-refused spawn as blocked_launch
