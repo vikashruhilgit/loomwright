@@ -25,6 +25,7 @@ Runs the standalone PR review-and-heal loop against an existing PR URL and leave
 | `--no-auto-postmortem` | No | postmortem on (churn-gated) | No `/pr-postmortem` is dispatched regardless of churn (config: `auto_postmortem: false`). Only meaningful with `--until-mergeable`. |
 | `--postmortem-churn-threshold N` | No | `2` | Fix-cycle trigger bar for the churn-gated postmortem tail (config: `.postmortem_churn_threshold`). Only meaningful with `--until-mergeable`. |
 | `--max-probes N` | No | `5` | Red required checks probed per round by `scripts/ci-run-probe.sh`. Only meaningful with `--until-mergeable`. |
+| `--cheap` | No | off | Cost profile for BOTH loops: the reviewer, fix-worker and earned-fallback Task spawns carry `model: "sonnet"`; absent ⇒ none carries a `model`. Rows and the routed-seat N/A: `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". |
 
 ## What This Does
 

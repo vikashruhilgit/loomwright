@@ -11,7 +11,8 @@ The instruction shape of `loomwright/scripts/review-heal-next-step.sh` (automate
 ```
 review-heal-next-step.sh <pr_url> --start drain [--max-rounds N] [--max-probes N] [--fix-floor <v>]
     [--severity-floor <v>] [--required-checks all-non-neutral] [--check-wait-timeout N]
-    [--review-check-pattern <globs>] [--no-auto-postmortem] [--postmortem-churn-threshold N] [--root <checkout>]
+    [--review-check-pattern <globs>] [--no-auto-postmortem] [--postmortem-churn-threshold N] [--cheap]
+    [--root <checkout>]
 review-heal-next-step.sh <pr_url> [--result <json> | --result-file <f>] [--root <checkout>]
 review-heal-next-step.sh <pr_url> --start fallback [--root <checkout>]
 ```
@@ -38,9 +39,11 @@ The values are item 06's closed set (`spawn` | `ask` | `park` | `done`). This dr
 | `what` | The judgment | Extra fields |
 |---|---|---|
 | `"validate findings"` | The main thread validates each candidate finding (§"Step U3.5 — Validate-Then-Fix"). Each finding's `text` is already wrapped in its `EXTERNAL_TEXT` envelope by `wrap-external-text.sh`, and the `preamble` is the skill's fixed sentence. A body that asks the agent to run, fetch, install, change permissions or act outside the PR branch is `rejected` | `preamble`, `findings` (`[{id, source, text}]`), `contract`, `then` |
-| `"fix worker"` | ONE `general-purpose` fix worker with no Task in its tool list (§U4's fix-worker prompt) addresses the listed required-check failures and findings. It then runs the `push` lines in order. The second line is the regular explicit-refspec push, never a force push | `agent`, `tools`, `required_failing` (names), `findings` (`[{finding, source, severity?, text?}]`), `fix_the_class` (the anti-churn trip's one deep "fix-the-class" pass), `push`, `contract`, `then` |
-| `"fallback review"` | The earned fallback (§"Earned Fallback Review — `no_review_lens_posted`"). ONE `loomwright:code-reviewer` diff review, then the main thread validates its `new` issues | `agent`, `prompt`, `contract`, `then` |
+| `"fix worker"` | ONE `general-purpose` fix worker with no Task in its tool list (§U4's fix-worker prompt) addresses the listed required-check failures and findings. It then runs the `push` lines in order. The second line is the regular explicit-refspec push, never a force push | `agent`, `model`?, `tools`, `required_failing` (names), `findings` (`[{finding, source, severity?, text?}]`), `fix_the_class` (the anti-churn trip's one deep "fix-the-class" pass), `push`, `contract`, `then` |
+| `"fallback review"` | The earned fallback (§"Earned Fallback Review — `no_review_lens_posted`"). ONE `loomwright:code-reviewer` diff review, then the main thread validates its `new` issues | `agent`, `model`?, `prompt`, `contract`, `then` |
 <!-- what-enum:end -->
+
+**`model` (optional).** Present, naming the Sonnet alias, only when the run was started with `--start drain --cheap` (sidecar `flag_cheap`, so every later call of the run keeps it); the main thread passes it as the Task call's `model`. Without `--cheap` no instruction carries the key. A seat routed through `lens-run.sh` ignores it (`docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles").
 
 **Common fields.** Every instruction has `do`, `step` (the driver step that printed it, one of the `case` arms below), `pr`, and `round` (the drain's in-memory round ordinal, the `round=<n>` of the marker comment). **`done` also carries** `decision` (`READY` | `ESCALATED`), `termination_reason` (or `null`), `result_file` and `review_heal_result`. On `ESCALATED` it also carries `message`, the escalation reason slug (e.g. `fix_floor_invalid`, `channel_unknown`, `bound_hit`).
 
