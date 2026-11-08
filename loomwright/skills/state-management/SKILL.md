@@ -48,7 +48,7 @@ for p in .supervisor/state.md .supervisor/logs/x.json; do
 done
 [ "$gi" = fallback ] && grep -qxF '.supervisor/' .gitignore 2>/dev/null && gi=ignored
 # in a repo: the local info/exclude, never the tracked tree (a written .gitignore dirties it and
-# parks the merge gate, #829); outside a repo: .gitignore
+# parks the merge gate); outside a repo: .gitignore
 case "$gi" in
   append)   gx="$(git rev-parse --git-path info/exclude)" && mkdir -p "$(dirname "$gx")" && echo '.supervisor/' >> "$gx" ;;
   fallback) echo '.supervisor/' >> .gitignore ;;
