@@ -118,7 +118,7 @@ has "Z-CHb … and says so" "$out" "cheap=on"
 run lane-create "$RFC" reqs/b.md 2 --parallel 2 >/dev/null; LC2="$LRC/L2"
 check "Z-CHc without --cheap lane.json has no cheap key" "$(jq -c 'has("cheap")' "$LC2/.supervisor/lane.json")" false
 STUB_MODE=die LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "$OWN" >/dev/null; wait_gone "$LC1"
-check "Z-CHd the launch command carries --cheap" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "STDIN {\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"/loomwright:automate --backlog $LC1/.supervisor/lane-backlog.md --cheap\"}}"
+check "Z-CHd the launch command carries --cheap" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "STDIN {\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"/loomwright:automate --backlog .supervisor/lane-backlog.md --cheap\"}}"
 STUB_MODE=die LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC2" --owner-command "$OWN" >/dev/null; wait_gone "$LC2"
 hasnt "Z-CHe a lane created without --cheap launches without it" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "--cheap"
 printf '# Automate Run: %s-L1\n\n## Progress\n- picked reqs/a.md\n' "$PARENTC" > "$LC1/.supervisor/automate/$PARENTC-L1.md"

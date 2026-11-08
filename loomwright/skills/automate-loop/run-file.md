@@ -8,7 +8,7 @@
 # Automate Run: <title>
 ## Status: running          # running | paused | done   (paused = stopped, work remains; done only when the Queue is fully resolved)
 ## Source
-- <user prompt text | folder <dir> | backlog <_BACKLOG.md> | ...>
+- <user prompt text | folder <dir> | backlog <_BACKLOG.md> | ...>     # folder/backlog path repo-relative; runfile-write rewrites an absolute one under the checkout root
 ## Run Config
 - mode: safe|auto-merge | limit: 5 | trust_unprotected: false
 - auto_review_original: <true|false|absent> | config_backup: <run_id>.config-backup.json

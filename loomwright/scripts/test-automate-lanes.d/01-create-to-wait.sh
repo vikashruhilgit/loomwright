@@ -168,7 +168,12 @@ hasnt "H4e gh api graphql itself is not blanket-denied" "$first" "Bash(gh api gr
 hasnt "H5 no non-interactive fallback flag" "$first" "non-interactive"
 has "H6 env: ceiling 0, CLAUDECODE and CLAUDE_PID unset" "$(grep '^ENV' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "CEIL=0 CC=unset PID=unset"
 check "H6b env: the coordinator's LOOMWRIGHT_HOLDER_PID (set on the launch) is unset for the lane" "$(grep '^HOLDERENV' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "HOLDERENV unset"
-has "H7 prompt = namespaced backlog command" "$(grep '^STDIN' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "/loomwright:automate --backlog $L1/.supervisor/lane-backlog.md"
+has "H7 prompt = namespaced backlog command" "$(grep '^STDIN' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "/loomwright:automate --backlog .supervisor/lane-backlog.md"
+# H7b: the launch command carries NO absolute path — the lane copies its --backlog argument onto the run file's
+# `## Source` line, and an absolute lane path there (a home path) fails meta-sync's home_path scrub at wave end
+h7p="$(grep '^STDIN' "$STUB_LOG" | sed -n "$((n0 + 1))p" | sed 's/^STDIN //' | jq -r '.message.content')"
+hasnt "H7b launch command names no lane-dir path" "$h7p" "$L1"
+case "${h7p#* }" in /*|*" /"*) bad "H7b launch command carries no absolute path ($h7p)" ;; *) ok "H7b launch command carries no absolute path" ;; esac
 check "H8 runs inside the lane" "$(grep '^CWD' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "CWD $L1"
 check "H9 session id from system/init recorded" "$(tcol L1 7)" sess-123
 case "$(tcol L1 5)" in [0-9]*) ok "H10 pid recorded" ;; *) bad "H10 pid recorded" ;; esac

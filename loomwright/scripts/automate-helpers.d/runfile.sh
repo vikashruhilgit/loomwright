@@ -81,7 +81,35 @@ runfile_write() {
   mkdir -p "$dir"
   tmp="$(mktemp "${out}.XXXXXX")"
   cat > "$tmp" || { rm -f "$tmp"; die "runfile-write: could not stage stdin; $out left unchanged"; }
+  _runfile_relativize_source "$tmp" "$dir" || { rm -f "$tmp"; die "runfile-write: could not normalize ## Source; $out left unchanged"; }
   _runfile_install "$tmp" "$out" full runfile-write
+}
+
+# _runfile_relativize_source <staged> <run_file_dir> — rewrites, in place, a `## Source` bullet
+# `- backlog <abs>` / `- folder <abs>` whose <abs> lies under the run file's checkout root
+# (<root>/.supervisor/automate/) to the root-relative path. The bullet is copied by the model from the
+# command line, so a `--backlog /Users/…/lane-backlog.md` once landed verbatim, and meta-sync's home_path
+# scrub then refused the whole lane push. Only those two bullet kinds, only inside `## Source`, only under
+# the root (literal or physical spelling); anything else — a prompt, a path outside the checkout — is left
+# byte-for-byte (an outside home path still meets the scrub, which is the right place to refuse it).
+_runfile_relativize_source() {
+  local f="$1" d="$2" root phys
+  d="$(cd "$d" 2>/dev/null && pwd)" || return 0
+  case "$d" in */.supervisor/automate) ;; *) return 0 ;; esac
+  root="${d%/.supervisor/automate}"
+  phys="$(cd "$root" 2>/dev/null && pwd -P)" || phys="$root"
+  [ -n "$root" ] || return 0
+  grep -qE '^- (backlog|folder) /' "$f" || return 0
+  local t; t="$(mktemp "${f}.src.XXXXXX")" || return 1
+  awk -v r1="$root/" -v r2="$phys/" '
+    /^## / { s = ($0 ~ /^## Source[[:space:]]*$/) }
+    s && match($0, /^- (backlog|folder) \//) {
+      kind = substr($0, 3, RLENGTH - 4); p = substr($0, RLENGTH)
+      if (index(p, r1) == 1) { print "- " kind " " substr(p, length(r1) + 1); next }
+      if (index(p, r2) == 1) { print "- " kind " " substr(p, length(r2) + 1); next }
+    }
+    { print }' "$f" > "$t" || { rm -f "$t"; return 1; }
+  mv -f "$t" "$f"
 }
 
 # progress-append <runfile_path> <line>

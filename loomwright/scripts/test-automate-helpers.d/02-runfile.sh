@@ -113,6 +113,47 @@ else
 fi
 rm -rf "$WD"
 
+# B8b. runfile-write relativizes a `## Source` backlog/folder path under the checkout root. The model copies the
+# --backlog argument onto that line; a lane once recorded `- backlog /Users/…/L3/.supervisor/lane-backlog.md`
+# and meta-sync's home_path scrub refused the lane's wave-end push. Literal and physical (/private) spellings
+# of the root both rewrite; a path outside the root, a prompt source and lines outside ## Source are untouched.
+B8B="$(mktemp -d)"; mkdir -p "$B8B/repo/.supervisor/automate"
+B8R="$B8B/repo"; B8P="$(cd "$B8R" && pwd -P)"; RF4="$B8R/.supervisor/automate/run-4.md"
+bash "$H" runfile-write "$RF4" <<B8EOF
+# Automate Run: demo4
+## Status: running
+## Source
+- backlog $B8R/.supervisor/lane-backlog.md
+- folder $B8P/.supervisor/requirements/q/
+- backlog /elsewhere/_BACKLOG.md
+## Queue
+- [ ] $B8R/reqs/a.md
+## Progress
+- backlog $B8R/x.md
+B8EOF
+b8b_src="$(awk '/^## Source/{f=1;next} f&&/^## /{exit} f' "$RF4")"
+if [ "$b8b_src" = "- backlog .supervisor/lane-backlog.md
+- folder .supervisor/requirements/q/
+- backlog /elsewhere/_BACKLOG.md" ]; then
+  ok "runfile-write: ## Source backlog/folder paths under the root written repo-relative, outside path untouched"
+else
+  no "source-relativize wrong:\n$b8b_src"
+fi
+if grep -qxF -- "- [ ] $B8R/reqs/a.md" "$RF4" && grep -qxF -- "- backlog $B8R/x.md" "$RF4"; then
+  ok "runfile-write: lines outside ## Source are never rewritten"
+else
+  no "source-relativize leaked outside ## Source:\n$(cat "$RF4")"
+fi
+# an already-relative Source is the target form: byte-identical round trip
+printf '# Automate Run: demo5\n## Status: running\n## Source\n- backlog .supervisor/lane-backlog.md\n## Queue\n- [ ] a.md\n' > "$B8B/want.md"
+bash "$H" runfile-write "$B8R/.supervisor/automate/run-5.md" < "$B8B/want.md"
+if cmp -s "$B8B/want.md" "$B8R/.supervisor/automate/run-5.md"; then
+  ok "runfile-write: an already-relative ## Source is installed byte-for-byte"
+else
+  no "relative source changed:\n$(cat "$B8R/.supervisor/automate/run-5.md")"
+fi
+rm -rf "$B8B"
+
 # =============================================================================
 echo "== B9. fail-CLOSED run-file writes (SKILL §3 \"Validate before rename\") =="
 # 2026-10-01 incident (loomwright-studio automate-2026-09-30-211858): BSD awk

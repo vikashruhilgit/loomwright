@@ -305,7 +305,9 @@ _lanes_launch_go() {
       || { echo "lane-launch: refused — $LN_LANE has no relay hook (a lane never runs without its question channel)"; return 1; }
     _lanes_optout_record \
       || { echo "lane-launch: refused — $LN_LANE — cannot record the gate opt-out fact ($(_lanes_optout_file)); a resume could not detect it"; return 1; }
-    _lanes_spawn "/loomwright:automate --backlog $LN_DIR/.supervisor/lane-backlog.md$ch" "" "(launch)"
+    # repo-relative, never "$LN_DIR/…": the session runs with the lane dir as cwd (_lane-run cd's there), and the
+    # argument is copied onto the run file's `## Source` line, which meta-sync's home_path scrub refuses absolute
+    _lanes_spawn "/loomwright:automate --backlog .supervisor/lane-backlog.md$ch" "" "(launch)"
   fi
 }
 
