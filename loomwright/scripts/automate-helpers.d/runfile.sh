@@ -109,7 +109,7 @@ _runfile_relativize_source() {
       if (index(p, r2) == 1) { print "- " kind " " substr(p, length(r2) + 1); next }
     }
     { print }' "$f" > "$t" || { rm -f "$t"; return 1; }
-  mv -f "$t" "$f"
+  mv -f "$t" "$f" || { rm -f "$t"; return 1; }
 }
 
 # progress-append <runfile_path> <line>
