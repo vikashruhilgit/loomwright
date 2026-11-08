@@ -650,7 +650,12 @@ gate_eval() {
   local pv2 pv2_rc=0 rd="unreadable"
   pv2="$("$GH" pr view "$url" --json reviewDecision 2>/dev/null)" || pv2_rc=$?
   if [ "$pv2_rc" -eq 0 ] && printf '%s' "$pv2" | "$JQ" -e . >/dev/null 2>&1; then
-    rd="$(printf '%s' "$pv2" | "$JQ" -r 'if has("reviewDecision") and (.reviewDecision != null) then .reviewDecision else "none" end')"
+    # A reviews-not-required branch has NO decision: GraphQL returns `null`,
+    # but `gh pr view --json reviewDecision` prints it as the empty string
+    # `""` (gh 2.102.0, verified live — issue #829). Both mean `none`. A
+    # MISSING key is not a decision we read, so it stays unreadable (fail
+    # CLOSED) — `has()` guards it, never a `//` default.
+    rd="$(printf '%s' "$pv2" | "$JQ" -r 'if has("reviewDecision") | not then "unreadable" elif .reviewDecision == null or .reviewDecision == "" then "none" else .reviewDecision end')"
   fi
 
   # Condition 2 — live head SHA matches the drain's `ready_sha` claim, AND base == main.
