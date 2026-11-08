@@ -222,7 +222,11 @@
 #                                                   notification (notify-desktop.sh); ready_for_release
 #                                                   ⇒ `lane-park-notify` + the advisory `lane-readiness`
 #   NEXT_STEP_LOCK_CMD    acquire|release --owner automate:<run_id> [--session-id <sid>]
-#                                                   default: bash run-lock.sh
+#                                                   default: bash run-lock.sh — it does NOT intercept the
+#                                                   --resume entry's read-only `run-lock.sh probe`, which
+#                                                   always runs the real script (a scratch root without a
+#                                                   lock reads run_lock_clear; legs that need a held lock
+#                                                   take a real one)
 #   NEXT_STEP_LOCK_RETRY_SECONDS  pause between the 3 retries of a refused post-release acquire (5)
 #   `gh` (LOOMWRIGHT_GH_BIN overrides it, as in every helper) — the drain spawn's head-sha read and
 #   learning-emit's one `gh pr view <pr> --json files,additions,deletions,changedFiles` fetch (a
@@ -3746,6 +3750,8 @@ elif [ -n "$RESUME_DIR" ]; then
   # in-flight phase result is orphaned). Refused before the reset, like resume-glob --finalize leaves a
   # locked run unfinalized. `run-lock.sh probe` applies acquire's own re-entrancy and holder_alive rules;
   # an answer that is neither of its two lines fails closed (the run's liveness is unknown).
+  # Honest limit: a check, not mutual exclusion — a session that acquires the lock between this probe and
+  # the reset below is not seen (the window is these few lines; the PICK acquire still serialises the runs).
   ns_lk="$(bash "$HERE/run-lock.sh" probe --session-id "$SID" </dev/null 2>/dev/null | head -n 1)"
   case "$ns_lk" in
     run_lock_clear) ;;
