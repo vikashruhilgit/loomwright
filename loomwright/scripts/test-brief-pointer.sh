@@ -219,22 +219,26 @@ plant_symlinks() {   # plant_symlinks <sandbox>
 }
 
 # --- 6a. through reconcile-jobs.sh -------------------------------------------
-guard_names="absolute .. outside-prefix symlink-final symlink-parent"
+guard_names="absolute .. outside-prefix symlink-final symlink-parent outside-folder-story"
 i=0
 for evil in "/etc/passwd" \
             ".supervisor/requirements/../../etc/passwd" \
             "README.md" \
             ".supervisor/requirements/link.md" \
-            ".supervisor/requirements/sub/x.md"; do
+            ".supervisor/requirements/sub/x.md" \
+            "stories/x.md"; do
   i=$((i+1)); name="$(echo "$guard_names" | cut -d' ' -f$i)"
   r="$(new_recon_repo "- **Source requirement:** $evil")"
   plant_symlinks "$r"
   printf 'untouched\n' > "$r/README.md"
+  mkdir -p "$r/stories"; printf '# story\n\nno status heading\n' > "$r/stories/x.md"   # a folder story outside the prefix, NO `## Status` heading
+  before_story="$(cat "$r/stories/x.md")"
   out="$(recon "$r")"
   case "$out" in
     *"did not resolve under"*) ok "AC-6 reconcile-jobs refuses [$name] — '$evil'" ;;
     *) no "AC-6 reconcile-jobs did NOT refuse [$name] '$evil' — $out" ;;
   esac
+  [ "$(cat "$r/stories/x.md")" = "$before_story" ] || no "AC-6 reconcile-jobs changed stories/x.md for [$name]"
   # The symlink cases additionally assert no lifecycle move happened under --repair.
   case "$name" in
     symlink-*)
@@ -256,16 +260,20 @@ for evil in "/etc/passwd" \
             ".supervisor/requirements/../../etc/passwd" \
             "README.md" \
             ".supervisor/requirements/link.md" \
-            ".supervisor/requirements/sub/x.md"; do
+            ".supervisor/requirements/sub/x.md" \
+            "stories/x.md"; do
   i=$((i+1)); name="$(echo "$guard_names" | cut -d' ' -f$i)"
   s="$(new_stamp_repo "- **Source requirement:** $evil")"
   plant_symlinks "$s"
   printf 'untouched\n' > "$s/README.md"
+  mkdir -p "$s/stories"; printf '# story\n\nno status heading\n' > "$s/stories/x.md"   # outside the prefix, NO `## Status` heading (a stamped file is skipped anyway)
+  before_story="$(cat "$s/stories/x.md")"
   before_v="$(cat "$s/outside/victim.md")"
   before_x="$(cat "$s/outside/reqdir/x.md")"
   bash "$STAMP" --project-root "$s" >/dev/null 2>&1
   bad=0
   grep -qE '^## Status' "$s/README.md" 2>/dev/null && bad=1
+  [ "$(cat "$s/stories/x.md")" = "$before_story" ] || bad=1
   [ "$(cat "$s/outside/victim.md")"    = "$before_v" ] || bad=1
   [ "$(cat "$s/outside/reqdir/x.md")"  = "$before_x" ] || bad=1
   [ "$bad" -eq 0 ] \
