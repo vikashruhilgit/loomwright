@@ -223,7 +223,7 @@ lanes_run_wrapper() {
 }
 
 # ==================================================================================================
-# lane-launch <lane_dir> --owner-command '<cmd>' [--resume-run <run_id> | --continue] | --host-denied '<reason>'
+# lane-launch <lane_dir> --owner-command '<cmd>' [--resume-run <run_id> | --continue] [--no-cheap] | --host-denied '<reason>'
 lanes_launch() {
   local dir="" owner="" resume_run="" cont=0 denied="" denied_set=0
   while [ "$#" -gt 0 ]; do
@@ -231,6 +231,7 @@ lanes_launch() {
       --owner-command) _lanes_need "$#" lane-launch "$1"; owner="$2"; shift 2 ;;
       --resume-run) _lanes_need "$#" lane-launch "$1"; resume_run="$2"; [ -n "$resume_run" ] || die "lane-launch: --resume-run needs a run id"; shift 2 ;;
       --continue) cont=1; shift ;;
+      --no-cheap) LN_NO_CHEAP=1; shift ;;
       --without-gate-optout) LN_WITHOUT_OPTOUT=1; shift ;;
       --host-denied) _lanes_need "$#" lane-launch "$1"; denied="${2:-host denied the spawn}"; denied_set=1; shift 2 ;;
       *) [ -z "$dir" ] || die "lane-launch: unexpected argument '$1'"; dir="$1"; shift ;;
@@ -253,19 +254,39 @@ lanes_launch() {
 # nothing: the flag every `/loomwright:automate` command this file sends a lane (launch and both --resume-run
 # forms) carries, read from the lane's own record so a resume never depends on the coordinator re-passing it.
 # The continue and answer-resume spawns send no new command (the session's own carries it) — and the in-lane
-# driver reads the same record (automate-next-step.sh), whatever command its session received.
+# driver reads the same record (automate-next-step.sh), ignoring a --cheap in the command its session received;
+# `lane-launch --no-cheap` removes it (_lanes_cheap_clear).
 _lanes_cheap_flag() {
   jq -e '.cheap == true' "$LN_DIR/.supervisor/lane.json" >/dev/null 2>&1 && printf ' --cheap'
   return 0
+}
+# _lanes_cheap_clear — `lane-launch --no-cheap` (the coordinator resumed with --no-cheap): drops `cheap` from the lane's
+# lane.json (jq to a temp file, then mv -f). Called under the launch lock by each launch form only once its own
+# refusals (the gate, the own-run check, the form's preconditions) have passed and before anything is spawned — a
+# refused launch leaves lane.json as it was — so the command it sends carries no --cheap and the in-lane driver's
+# next call reads full cost. No key ⇒ the file is left untouched. Returns 1 when the rewrite fails (the caller
+# refuses the launch: a lane must never run on a profile it was told to drop).
+LN_NO_CHEAP=0
+_lanes_cheap_clear() {
+  local f="$LN_DIR/.supervisor/lane.json"
+  [ "$LN_NO_CHEAP" = 1 ] || return 0
+  jq -e 'has("cheap")' "$f" >/dev/null 2>&1 || return 0
+  { jq 'del(.cheap)' "$f" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"; } 2>/dev/null || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
+  echo "lane-launch: $LN_LANE — cheap removed from lane.json (--no-cheap)"
+}
+# _lanes_cheap_ready — the --no-cheap clear, then LN_CH = the --cheap suffix the spawned command carries; 1 ⇒ refused
+_lanes_cheap_ready() {
+  _lanes_cheap_clear || { echo "lane-launch: refused — $LN_LANE — cannot remove cheap from lane.json (--no-cheap)"; return 1; }
+  LN_CH="$(_lanes_cheap_flag)"
 }
 
 # _lanes_launch_go <resume_run|''> <continue 0|1> — the launch proper (caller holds the launch lock).
 _lanes_launch_go() {
   local resume_run="$1" cont="$2" ch
-  ch="$(_lanes_cheap_flag)"
   if [ -n "$resume_run" ]; then
     [ "$resume_run" = "$LN_RUN" ] || { echo "lane-launch: refused — $LN_LANE resumes only its own run ($LN_RUN), not '$resume_run'"; return 1; }
     [ -f "$LN_DIR/.supervisor/automate/$LN_RUN.md" ] || { echo "lane-launch: refused — no run file $LN_RUN.md in $LN_LANE"; return 1; }
+    _lanes_cheap_ready || return 1; ch="$LN_CH"
     # F4: resume the lane's LAST session, so its own run.lock (session-id re-entrant) never stalls the
     # resume of a lane that died after its PICK took the lock. A fresh session is the fallback only
     # when no session is recorded, or the resume of it exited at once with no session (`claude
@@ -297,6 +318,7 @@ _lanes_launch_go() {
     fi
     local sid; sid="$(_lanes_session_id)"
     [ -n "$sid" ] || { echo "lane-launch: refused — $LN_LANE has no recorded session to continue"; return 1; }
+    _lanes_cheap_ready || return 1
     _lanes_spawn "$LANE_CONTINUE_MSG" "$sid" "(continue)"
   else
     [ -s "$LN_DIR/.supervisor/lane-backlog.md" ] || { echo "lane-launch: refused — $LN_LANE has no backlog (setup incomplete)"; return 1; }
@@ -305,6 +327,7 @@ _lanes_launch_go() {
       || { echo "lane-launch: refused — $LN_LANE has no relay hook (a lane never runs without its question channel)"; return 1; }
     _lanes_optout_record \
       || { echo "lane-launch: refused — $LN_LANE — cannot record the gate opt-out fact ($(_lanes_optout_file)); a resume could not detect it"; return 1; }
+    _lanes_cheap_ready || return 1; ch="$LN_CH"
     # repo-relative, never "$LN_DIR/…": the session runs with the lane dir as cwd (_lane-run cd's there), and the
     # argument is copied onto the run file's `## Source` line, which meta-sync's home_path scrub refuses absolute
     _lanes_spawn "/loomwright:automate --backlog .supervisor/lane-backlog.md$ch" "" "(launch)"

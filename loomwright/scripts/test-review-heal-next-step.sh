@@ -62,6 +62,13 @@
 #       no comment); a read that keeps failing still ends ESCALATED pr_unreadable and the comment names
 #       gh's error. A new run over a finished one carries fix_cycles / issues_fixed / findings_validated and
 #       the rounds run into its block with prior_runs, on a fresh ledger; a first run has no prior_runs.
+#   C   COST PROFILE (--cheap). Without it no printed instruction carries a `model` key (the goldens above
+#       stay byte-identical); `--start drain --cheap` puts the Sonnet `model` on the `fix worker` and the
+#       `fallback review` spawn and changes nothing else in either; the flag rides the sidecar (`flag_cheap`),
+#       so the no-flag `--result` call that prints the fix spawn keeps it, and a no-result call re-prints it
+#       byte for byte; `--cheaper` exits 2 `unknown option`, nothing written; the executor prose that passes
+#       the key on (review-heal default loop, §U4, fallback seat routing, the flag table, Cost Profiles) is
+#       pinned, with one mutation control on the default loop's reviewer line.
 #   P   PROSE PINS (AC6). The rule text of every review-heal inventory row that stays prose and names this
 #       test, held literally in this file (not read from the inventory); the inventory cross-check (a prose
 #       row naming this test with no pin is red); one mutation control per pin family (never-merge,
@@ -78,6 +85,9 @@
 #         ME  the dismissal evidence check removed                     ⇒ R (an `intentional` dismissal taken)
 #         MT  the PR-read retry dropped                                ⇒ T (one failed read ends the drain)
 #         MC  the restart carry dropped                                ⇒ T (a pushed fix reports as zero)
+#         MK1 the `model` merge on the fix worker spawn dropped           ⇒ C
+#         MK2 the `model` merge on the fallback review spawn dropped      ⇒ C
+#         MK3 `flag_cheap` dropped from the sidecar flag object           ⇒ C
 #         MS  one unguarded merge-command line appended (built here at run time from pieces, so this file
 #             never holds the positive literal on one line)            ⇒ S
 #
@@ -910,6 +920,77 @@ T_BLOCK="$(b_block)"
 grep -qx '  prior_runs: 2' <<<"$T_BLOCK" && grep -qx '  fix_cycles: 1' <<<"$T_BLOCK" && grep -qx '  rounds: 3' <<<"$T_BLOCK" \
   && ok "T: a third run keeps adding up" || no "T: third run: $(printf '%s' "$T_BLOCK" | grep -E 'fix_cycles|rounds:|prior_runs' | tr -s ' ' | tr '\n' ';')"
 
+# --------------------------------------------------------------------------------------
+# C — the cost profile (--cheap)
+# --------------------------------------------------------------------------------------
+echo "C: cost profile (--cheap)"
+# B4: every instruction the no-flag legs above printed carries no model key
+bad="$(jq -c 'select(has("model")) | {step, what}' "$EMITTED" 2>/dev/null | sort -u)"
+[ -z "$bad" ] && ok "C: without --cheap no printed instruction carries a model key" || no "C: a no-flag instruction carries model: $bad"
+leg_c() { # <driver> — 0 when the fix worker and fallback spawns carry model sonnet under --cheap and only then
+  local d="$1" r=0 plain cheap side
+  setup_case "$FIX/converged-ready"; drv "$d" --start drain; drv "$d" --result "$GOOD"; plain="$OUT"
+  setup_case "$FIX/converged-ready"; drv "$d" --start drain --cheap; drv "$d" --result "$GOOD"; cheap="$OUT"
+  if [ "$(printf '%s' "$cheap" | jq -r '.what' 2>/dev/null)" = "fix worker" ] && [ "$(printf '%s' "$cheap" | jq -r '.model // empty')" = sonnet ] \
+     && [ "$(printf '%s' "$plain" | jq -r 'has("model")')" = false ] && [ "$(printf '%s' "$cheap" | jq -c 'del(.model)')" = "$plain" ]; then
+    ok "C: --cheap ⇒ the fix worker spawn (printed by a no-flag --result call) carries model sonnet, nothing else differs"
+  else no "C: --cheap fix worker ⇒ $(printf '%s' "$cheap" | jq -c '{what, model}' 2>/dev/null) vs plain $(printf '%s' "$plain" | jq -c '{what, model}' 2>/dev/null)"; r=1; fi
+  side="$(cat "$C_ROOT"/.supervisor/review-heal/*.next-step.json 2>/dev/null | jq -r '.flag_cheap // empty' 2>/dev/null)"
+  [ "$side" = 1 ] && ok "C: the sidecar carries flag_cheap 1 for the run" || { no "C: sidecar flag_cheap is '$side'"; r=1; }
+  drv "$d"
+  [ "$RCV" = 0 ] && [ "$OUT" = "$cheap" ] && ok "C: a no-result call re-prints the --cheap fix spawn byte for byte" || { no "C: re-print ⇒ rc $RCV"; r=1; }
+  setup_case "$FIX/fallback-no-review-lens"; drv "$d" --start drain; plain="$OUT"
+  setup_case "$FIX/fallback-no-review-lens"; drv "$d" --start drain --cheap; cheap="$OUT"
+  if [ "$(printf '%s' "$cheap" | jq -r '.what' 2>/dev/null)" = "fallback review" ] && [ "$(printf '%s' "$cheap" | jq -r '.model // empty')" = sonnet ] \
+     && [ "$(printf '%s' "$plain" | jq -r 'has("model")')" = false ] && [ "$(printf '%s' "$cheap" | jq -c 'del(.model)')" = "$plain" ]; then
+    ok "C: --cheap ⇒ the fallback review spawn carries model sonnet, nothing else differs"
+  else no "C: --cheap fallback ⇒ $(printf '%s' "$cheap" | jq -c '{what, model}' 2>/dev/null)"; r=1; fi
+  return "$r"
+}
+leg_c "$DRIVER" || true
+# B7: an unknown cost flag is refused by the existing unknown-option error; --cheap is a --start drain flag only
+setup_case "$FIX/converged-ready"
+drv "$DRIVER" --start drain --cheaper
+[ "$RCV" = 2 ] && [ -z "$OUT" ] && grep -qxF "review-heal-next-step: unknown option '--cheaper'" <<<"$ERR" && [ ! -e "$C_ROOT/.supervisor" ] \
+  && ok "C: --cheaper ⇒ exit 2 unknown option, nothing printed or written" || no "C: --cheaper ⇒ rc $RCV stderr '${ERR:0:100}'"
+drv "$DRIVER" --cheap
+[ "$RCV" = 2 ] && [ -z "$OUT" ] && grep -qF 'drain flags are taken by --start drain only' <<<"$ERR" && [ ! -e "$C_ROOT/.supervisor" ] \
+  && ok "C: --cheap without --start drain ⇒ exit 2, nothing written" || no "C: --cheap alone ⇒ rc $RCV stderr '${ERR:0:100}'"
+# the executor prose that passes the key on — one literal per surface (path relative to the plugin root)
+CHEAP_PINS="$(cat <<'CHEAP_PINS_EOF'
+skills/review-heal/SKILL.md	    model: @ALIAS@,                 # only under /review-pr --cheap (the reviewer); omit the key otherwise
+skills/review-heal/SKILL.md	    model: @ALIAS@,                 # only under /review-pr --cheap (the fix worker); omit the key otherwise
+skills/review-heal/SKILL.md	`--cheap` is N/A on the `lens-run.sh` path (a Bash shell-out, not a Task spawn).
+skills/review-heal/SKILL.md	`--no-auto-postmortem`, `--postmortem-churn-threshold`, `--cheap`), then one awaited Bash call
+skills/review-heal/SKILL.md	**Cost profile.** When the `fix worker` instruction carries `model` (`/review-pr --cheap`), pass it as the Task call's `model`
+skills/review-heal/fallback-review.md	passing the instruction's `model` to every Task call this seat makes when the instruction carries one (`/review-pr --cheap`); the `lens-run.sh` path ignores it
+commands/review-pr.md	| `--cheap` | No | off | Cost profile for BOTH loops
+docs/result-schemas/review-heal-next-step.md	[--postmortem-churn-threshold N] [--cheap]
+docs/ARCHITECTURE_CONTRACTS.md	A second entry point, `/review-pr --cheap`, covers the three `review-pr-*` rows
+docs/ARCHITECTURE_CONTRACTS.md	| review-pr-reviewer (code-reviewer, default `/review-pr` loop) | inherit | **sonnet** under `/review-pr --cheap`
+docs/ARCHITECTURE_CONTRACTS.md	| review-pr-fix-worker (general-purpose, default loop and `--until-mergeable` drain) | inherit | **sonnet** under `/review-pr --cheap`
+docs/ARCHITECTURE_CONTRACTS.md	| review-pr-fallback-review (code-reviewer, the drain's Earned Fallback Review) | inherit | **sonnet** under `/review-pr --cheap`
+CHEAP_PINS_EOF
+)"
+CHEAP_ALIAS='"sonnet"'   # the one model-alias literal of the pins (@ALIAS@ above)
+cheap_pins_missing() { # <plugin root>
+  local f lit
+  while IFS='	' read -r f lit; do
+    [ -n "$f" ] || continue
+    lit="${lit//@ALIAS@/$CHEAP_ALIAS}"
+    grep -qF -- "$lit" "$1/$f" 2>/dev/null || printf '%s: %s\n' "$f" "$lit"
+  done <<<"$CHEAP_PINS"
+}
+miss="$(cheap_pins_missing "$REPO/loomwright")"
+[ -z "$miss" ] && ok "C: all $(printf '%s\n' "$CHEAP_PINS" | grep -c .) --cheap prose pins present" || no "C: --cheap prose missing — $(printf '%s' "$miss" | head -n 3 | tr '\n' '|')"
+# mutation control: the default loop's reviewer model line deleted from a scratch copy turns the pin red
+d="$WORK/cheap-mut"; rm -rf "$d"; mkdir -p "$d"; cp -R "$REPO/loomwright/skills" "$REPO/loomwright/commands" "$REPO/loomwright/docs" "$d/"
+grep -vF -- '# only under /review-pr --cheap (the reviewer)' "$REPO/loomwright/skills/review-heal/SKILL.md" > "$d/skills/review-heal/SKILL.md"
+if [ ! -s "$d/skills/review-heal/SKILL.md" ] || cmp -s "$REPO/loomwright/skills/review-heal/SKILL.md" "$d/skills/review-heal/SKILL.md"; then
+  no "C mutation: the reviewer-line mutant is empty or unchanged"
+elif [ -n "$(cheap_pins_missing "$d")" ]; then ok "C mutation: deleting the default loop's reviewer model line turns the pin red"
+else no "C mutation: deleting the default loop's reviewer model line left the pin green"; fi
+
 echo "P: prose pins"
 PLUGIN="$REPO/loomwright"
 PROSE_PINS="$(cat <<'PROSE_PINS_EOF'
@@ -1258,6 +1339,15 @@ if [ "${RH_SKIP_MUTANTS:-0}" != 1 ] && [ -z "${RH_CASES:-}" ]; then
     [ "$RCV" != 2 ] && ok "ME: removing the evidence check lets 'intentional' through (the R evidence pins go red)" \
       || no "ME: removing the evidence check still refused the report"
   else no "ME: mutant not built"; fi
+  # MK1 / MK2 / MK3 — the --cheap model key: dropped from each spawn, and the flag dropped from the sidecar
+  for mk in "1|agent: \"general-purpose\"} + \$m + {tools:|agent: \"general-purpose\"} + {tools:" \
+            "2|agent: \"loomwright:code-reviewer\"} + \$m + {prompt:|agent: \"loomwright:code-reviewer\"} + {prompt:" \
+            "3|flag_cheap: \$ch, |"; do
+    id="${mk%%|*}"; rest="${mk#*|}"; an="${rest%%|*}"; re="${rest#*|}"
+    if m="$(build_mutant "K$id" "$an" "$re")"; then
+      if ( leg_c "$m" ) >/dev/null 2>&1; then no "MK$id: the mutant left C green"; else ok "MK$id: dropping the --cheap model path ($id) turns C red"; fi
+    else no "MK$id: mutant not built"; fi
+  done
   # MS — one unguarded merge-command line appended
   if m="$(build_mutant S - "-append:$(printf '%s %s %s "$PR"' "$MP_A" "$MP_B" "$MP_C")")"; then
     if leg_s "$m" /dev/null; then no "MS: an appended merge line left S green"; else ok "MS: an appended merge line turns S red"; fi

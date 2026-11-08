@@ -65,7 +65,7 @@
   },
   "commands": {
     "agent-help": {"budget": 26402, "measured": 24001, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "automate": {"budget": 5465, "measured": 4968, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
+    "automate": {"budget": 6054, "measured": 5504, "note": "re-baselined to live measured + ~10% (--cheap / --no-cheap persistence and its --parallel coordinator caveat); earlier: automate-speed/18"},
     "autonomous": {"budget": 4361, "measured": 3964, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "backlog": {"budget": 2704, "measured": 2458, "note": "re-baselined to live measured + ~10% (dismissed-followups/01: follow_up state + followup-bundle docs)"},
     "capability-check": {"budget": 6680, "measured": 6072, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
