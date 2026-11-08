@@ -67,7 +67,7 @@ esac
 
 ### Gitignore Check
 
-Before creating `.supervisor/`, make sure git will ignore it. `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block); the snippet above adds the bare line only when git does not already ignore the directory's contents, and creates `.gitignore` when there is none. Never add a bare line below the managed block: it re-ignores `.supervisor/memory/`.
+Before creating `.supervisor/`, make sure git will ignore it. `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block); the snippet above adds the bare line only when git does not already ignore the directory's contents — in a repo to the local `info/exclude` (never the tracked tree: a written `.gitignore` dirties the checkout), and only outside a repo to `.gitignore`, creating it when there is none. Never add a bare line below the managed block: it re-ignores `.supervisor/memory/`.
 
 ---
 
