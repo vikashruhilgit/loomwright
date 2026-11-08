@@ -391,9 +391,19 @@ sn_init() {
     case "$?" in 0) ;; 1) gi=append ;; *) gi=fallback; break ;; esac
   done
   if [ "$gi" = fallback ] && grep -qxF '.supervisor/' .gitignore 2>/dev/null; then gi=ignored; fi
+  # Inside a repo the line goes to the repo's own `info/exclude` (local, never committed), NOT the
+  # tracked tree: an appended `.gitignore` is an untracked or modified file, and the --auto-merge /
+  # --merge-parked gate's cond 7 parks `rules_gate_dirty_tree` on it (#829). git status / git add
+  # honour info/exclude, and the gate never counts `.supervisor/` (pathspec-excluded), so nothing
+  # needs it in `.gitignore`. Outside a repo (fallback) there is no info/exclude: `.gitignore` as before.
   if [ "$gi" != ignored ]; then
-    { [ ! -s .gitignore ] || [ -z "$(tail -c 1 .gitignore)" ] || printf '\n' >> .gitignore; } \
-      && printf '%s\n' '.supervisor/' >> .gitignore || { sn_fail "cannot append .supervisor/ to .gitignore"; return 1; }
+    gx=.gitignore
+    if [ "$gi" = append ]; then
+      gx="$(git rev-parse --git-path info/exclude 2>/dev/null)" && [ -n "$gx" ] && mkdir -p "$(dirname "$gx")" \
+        || { sn_fail "cannot resolve the repo's info/exclude for .supervisor/"; return 1; }
+    fi
+    { [ ! -s "$gx" ] || [ -z "$(tail -c 1 "$gx")" ] || printf '\n' >> "$gx"; } \
+      && printf '%s\n' '.supervisor/' >> "$gx" || { sn_fail "cannot append .supervisor/ to $gx"; return 1; }
   fi
   # step 6: pending/ → in-progress/ (a brief outside pending/ — the old flat layout — stays where it is)
   case "$jp" in
