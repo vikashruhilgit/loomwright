@@ -239,3 +239,8 @@ loomwright/scripts/test-automate-next-step.sh
 loomwright/skills/automate-loop/run-file.md
 loomwright/skills/review-heal/SKILL.md
 loomwright/skills/review-heal/fallback-review.md
+
+## Status: brief-shipped
+
+Job `.supervisor/jobs/done/2026-11-07-cheap-honoured-end-to-end.md` completed (reconciled from the job lifecycle, not self-reported).
+Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
