@@ -103,6 +103,12 @@
 #      outer release clears it. Mutation controls: the env comparison deleted
 #      from acquire -> run_lock_held; the env comparison added to release ->
 #      the phase release frees the lock.
+#  36. `probe --session-id <id>` (read-only, exit 0): run_lock_clear with no
+#      lock; acquire's refusal line `run_lock_held owner=… pid=… age=…` for a
+#      LIVE holder in another session; run_lock_clear for the holder's own
+#      session, for LOOMWRIGHT_RUN_LOCK_SESSION_ID = the holder's, and for a
+#      dead holder; the meta byte-identical throughout (never acquires,
+#      refreshes or reclaims).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1012,6 +1018,26 @@ if [ -s "$MUT35/rel.sh" ] && ! cmp -s "$SUT" "$MUT35/rel.sh" && bash -n "$MUT35/
     *) no "mutation control (release) did not trip: $r35r" ;; esac
 else no "mutation control (release): mutant not built"; fi
 rm -rf "$MUT35"
+
+echo "== 36. probe: would an acquire with this session be refused by a RUNNING holder? =="
+D36="$(fresh_root)"
+p36u="$(bash "$SUT" probe --session-id s36b --root "$D36" 2>/dev/null)"; rc36u=$?
+sleep 600 & L36=$!
+env LOOMWRIGHT_HOLDER_PID="$L36" bash "$SUT" acquire --owner automate:run36 --session-id s36a --root "$D36" >/dev/null 2>&1
+m36="$(cat "$(meta_file "$D36")")"
+p36o="$(bash "$SUT" probe --session-id s36b --root "$D36" 2>/dev/null)"; rc36o=$?
+p36s="$(bash "$SUT" probe --session-id s36a --root "$D36" 2>/dev/null)"
+p36e="$(env LOOMWRIGHT_RUN_LOCK_SESSION_ID=s36a bash "$SUT" probe --session-id s36c --root "$D36" 2>/dev/null)"
+kill "$L36" 2>/dev/null; wait "$L36" 2>/dev/null
+p36d="$(bash "$SUT" probe --session-id s36b --root "$D36" 2>/dev/null)"
+m36d="$(cat "$(meta_file "$D36")")"
+case "$p36o" in "run_lock_held owner=automate:run36 pid=$L36 age="*) o36=1 ;; *) o36=0 ;; esac
+if [ "$p36u" = run_lock_clear ] && [ "$rc36u" = 0 ] && [ "$o36" = 1 ] && [ "$rc36o" = 0 ] && [ "$p36s" = run_lock_clear ] \
+   && [ "$p36e" = run_lock_clear ] && [ "$p36d" = run_lock_clear ] && [ "$m36" = "$m36d" ]; then
+  ok "probe: clear (no lock) / held (live, other session) / clear (own session, coordinator env, dead holder), exit 0, meta unchanged"
+else
+  no "probe: none='$p36u'($rc36u) other='$p36o'($rc36o) own='$p36s' env='$p36e' dead='$p36d' meta $([ "$m36" = "$m36d" ] && echo same || echo CHANGED)"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

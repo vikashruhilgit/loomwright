@@ -8,6 +8,7 @@
 #   run-lock.sh release --owner <label> | --session-id <id> [--root <checkout>] [--force-unlock]
 #   run-lock.sh status  [--root <checkout>]
 #   run-lock.sh liveness [--pid <pid>] [--root <checkout>]
+#   run-lock.sh probe    [--session-id <id>] [--root <checkout>]
 #
 # Lock: <root>/.supervisor/run.lock          (a directory. Holding it means having
 #                                              created its `meta` with O_EXCL, the
@@ -173,6 +174,17 @@
 #   a caller judging a refusal fails toward "not running". A non-numeric
 #   `--pid` is a usage error.
 #
+# probe: read-only — would an `acquire --session-id <id>` be refused by a
+#   holder that is RUNNING? Prints exactly one line, always exit 0:
+#   `run_lock_held owner=<label> pid=<pid> age=<s>` (acquire's own refusal
+#   line) when the lock is held, not re-entrant for this session (neither
+#   its session_id nor $LOOMWRIGHT_RUN_LOCK_SESSION_ID equals the lock's),
+#   and `holder_alive` says the holder runs; otherwise `run_lock_clear`
+#   (unlocked, re-entrant, or a holder that is not running — dead, reused
+#   pid, no recorded pid). Never acquires, refreshes or reclaims. Its reader:
+#   automate-next-step.sh's `--resume` entry, which refuses to reset the
+#   next-step sidecar of a run whose coordinator is live in another session.
+#
 # Honest limit: this lock protects only entry points that actually RUN this
 # script (automate PICK, Supervisor Phase 0 INIT, /autonomous INIT). It does
 # NOT protect against an IDE-hosted agent, or any other process, that edits
@@ -188,6 +200,7 @@ die_usage() {
     echo "       run-lock.sh release --owner <label> | --session-id <id> [--root <dir>] [--force-unlock]"
     echo "       run-lock.sh status  [--root <dir>]"
     echo "       run-lock.sh liveness [--pid <pid>] [--root <dir>]"
+    echo "       run-lock.sh probe    [--session-id <id>] [--root <dir>]"
   } >&2
   exit 1
 }
@@ -492,10 +505,26 @@ cmd_liveness() {
   exit 0
 }
 
+# cmd_probe — acquire's held-branch decisions (re-entrant for this session or the coordinator's, then
+# holder_alive), read-only: the TTL reclaim is not considered, because a holder that is not running is
+# `run_lock_clear` whatever the lock's age (header, `probe`)
+cmd_probe() {
+  local lk_session
+  if [ ! -f "$LOCK_META" ]; then echo "run_lock_clear"; exit 0; fi
+  lk_session="$(meta_get session_id)"
+  if { [ -n "$SESSION_ID" ] && [ "$lk_session" = "$SESSION_ID" ]; } \
+     || { [ -n "${LOOMWRIGHT_RUN_LOCK_SESSION_ID:-}" ] && [ "$lk_session" = "$LOOMWRIGHT_RUN_LOCK_SESSION_ID" ]; }; then
+    echo "run_lock_clear"; exit 0
+  fi
+  if holder_alive "$(meta_get pid)" "$(meta_get pid_start)"; then print_held; else echo "run_lock_clear"; fi
+  exit 0
+}
+
 case "$CMD" in
   acquire)  cmd_acquire ;;
   release)  cmd_release ;;
   status)   cmd_status ;;
   liveness) cmd_liveness ;;
+  probe)    cmd_probe ;;
   *) die_usage ;;
 esac
