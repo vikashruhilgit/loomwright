@@ -1038,12 +1038,60 @@ b18_append() { # <driver> <.gitignore before: printf format, or - for none> <wan
   cmp -s "$CASE_DIR/gitignore.want" "$CASE_ROOT/.gitignore" \
     || { LEG_MSG=".gitignore is '$(tr '\n' '|' < "$CASE_ROOT/.gitignore" 2>/dev/null)', want '$(tr '\n' '|' < "$CASE_DIR/gitignore.want")'"; return 1; }
 }
+b18_repo() { # <driver> <committed .gitignore: printf format, or - for none> <info/exclude before: printf format, or - for none> <want info/exclude: printf format>
+  # In a repo with no ignore rule the line goes to the local info/exclude, never the tracked tree (#829):
+  # .gitignore byte-unchanged (or still absent), the line appended exactly once, and the tree CLEAN —
+  # the state the --merge-parked / --auto-merge gate's cond 7 requires (it parks on any written .gitignore).
+  local gx
+  new_scratch "$FIX/init-flags-max-tokens" || { LEG_MSG="scratch not built"; return 1; }
+  rm -f "$CASE_ROOT/.gitignore"
+  [ "$2" = - ] || printf "$2" > "$CASE_ROOT/.gitignore"
+  ( cd "$CASE_ROOT" && export HOME="$CASE_HOME" && eval "export $GIT_ENV" \
+      && git add -A -- .gitignore README.md && git commit -q -m "ignore under test" ) >"$CASE_DIR/b18-repo.log" 2>&1 \
+    || { LEG_MSG="committing the .gitignore under test failed (see $CASE_DIR/b18-repo.log)"; return 1; }
+  gx="$(in_case /dev/null git rev-parse --git-path info/exclude)"; case "$gx" in /*) ;; *) gx="$CASE_ROOT/$gx" ;; esac
+  rm -f "$gx"; [ "$3" = - ] || { mkdir -p "$(dirname "$gx")" && printf "$3" > "$gx"; }
+  # before the runs nothing ignores .supervisor/ (the case under test), so only the rest must be clean
+  [ -z "$(in_case /dev/null git status --porcelain -- . ':(exclude).supervisor')" ] \
+    || { LEG_MSG="tree not clean before the runs: $(in_case /dev/null git status --porcelain | tr '\n' ' ')"; return 1; }
+  if [ "$2" = - ]; then rm -f "$CASE_DIR/gitignore.before"; else cp "$CASE_ROOT/.gitignore" "$CASE_DIR/gitignore.before"; fi
+  printf "$4" > "$CASE_DIR/exclude.want"
+  b18_init_twice "$1"
+  [ "$B18_RAN" = 2 ] || { LEG_MSG="the bootstrap ran $B18_RAN of 2 times"; return 1; }
+  if [ "$2" = - ]; then [ ! -e "$CASE_ROOT/.gitignore" ] || { LEG_MSG="a .gitignore was written: '$(tr '\n' '|' < "$CASE_ROOT/.gitignore")'"; return 1; }
+  else cmp -s "$CASE_DIR/gitignore.before" "$CASE_ROOT/.gitignore" \
+    || { LEG_MSG=".gitignore changed: '$(tr '\n' '|' < "$CASE_ROOT/.gitignore")'"; return 1; }; fi
+  cmp -s "$CASE_DIR/exclude.want" "$gx" \
+    || { LEG_MSG="info/exclude is '$(tr '\n' '|' < "$gx" 2>/dev/null)', want '$(tr '\n' '|' < "$CASE_DIR/exclude.want")'"; return 1; }
+  [ -z "$(in_case /dev/null git status --porcelain)" ] \
+    || { LEG_MSG="tree dirty after the runs: $(in_case /dev/null git status --porcelain | tr '\n' ' ')"; return 1; }
+}
+b18_exclude_fail() { # <driver> — info/exclude cannot be written (its info/ dir is a regular file) ⇒ init
+  # fails surfaced (exit 1, the named message) and never falls back to writing the tracked .gitignore
+  local gx gd
+  new_scratch "$FIX/init-flags-max-tokens" || { LEG_MSG="scratch not built"; return 1; }
+  ( cd "$CASE_ROOT" && export HOME="$CASE_HOME" && eval "export $GIT_ENV" \
+      && git rm -q .gitignore && git commit -q -m "no ignore" ) >"$CASE_DIR/b18-xf.log" 2>&1 \
+    || { LEG_MSG="removing the committed .gitignore failed (see $CASE_DIR/b18-xf.log)"; return 1; }
+  gx="$(in_case /dev/null git rev-parse --git-path info/exclude)"; case "$gx" in /*) ;; *) gx="$CASE_ROOT/$gx" ;; esac
+  gd="$(dirname "$gx")"; rm -rf "$gd" && : > "$gd" || { LEG_MSG="could not replace $gd with a file"; return 1; }
+  rmdir "$CASE_ROOT/.supervisor/history" 2>/dev/null
+  sn_call "$1" --job "$B18_JOB"
+  rm -f "$gd"
+  [ "$NC_RC" = 1 ] || { LEG_MSG="init exited $NC_RC, want 1"; return 1; }
+  grep -q "cannot resolve the repo's info/exclude" "$CASE_DIR/nc.err" \
+    || { LEG_MSG="stderr lacks the info/exclude failure: $(head -c 200 "$CASE_DIR/nc.err")"; return 1; }
+  [ ! -e "$CASE_ROOT/.gitignore" ] || { LEG_MSG="a .gitignore was written on the failure path"; return 1; }
+}
+LEG_MSG=""
+if b18_exclude_fail "$DRIVER"; then ok "B18: an unwritable info/exclude fails init surfaced (exit 1, named) and never falls back to the tracked .gitignore"
+else no "B18: info/exclude failure: $LEG_MSG"; fi
 LEG_MSG=""
 if b18_managed "$DRIVER"; then ok "B18: under /setup memory's managed block two inits leave .gitignore byte-unchanged, .supervisor/memory/ committable and the tree clean"
 else no "B18: managed block: $LEG_MSG"; fi
 LEG_MSG=""
-if b18_append "$DRIVER" - '.supervisor/\n' && b18_append "$DRIVER" 'node_modules' 'node_modules\n.supervisor/\n'; then
-  ok "B18: with no ignore rule the bare line is appended exactly once across two inits (on its own line)"
+if b18_repo "$DRIVER" - - '.supervisor/\n' && b18_repo "$DRIVER" 'node_modules\n' '# git ls-files --exclude-from' '# git ls-files --exclude-from\n.supervisor/\n'; then
+  ok "B18: in a repo with no ignore rule the line goes to info/exclude exactly once (on its own line); .gitignore untouched and the tree clean (#829)"
 else no "B18: no-rule control: $LEG_MSG"; fi
 LEG_MSG=""
 if b18_append "$DRIVER" 'node_modules\n' 'node_modules\n.supervisor/\n' norepo && b18_append "$DRIVER" '.supervisor/\n' '.supervisor/\n' norepo; then

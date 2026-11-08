@@ -47,7 +47,12 @@ for p in .supervisor/state.md .supervisor/logs/x.json; do
   case $? in 0) ;; 1) gi=append ;; *) gi=fallback; break ;; esac
 done
 [ "$gi" = fallback ] && grep -qxF '.supervisor/' .gitignore 2>/dev/null && gi=ignored
-[ "$gi" = ignored ] || echo '.supervisor/' >> .gitignore
+# in a repo: the local info/exclude, never the tracked tree (a written .gitignore dirties it and
+# parks the merge gate); outside a repo: .gitignore
+case "$gi" in
+  append)   gx="$(git rev-parse --git-path info/exclude)" && mkdir -p "$(dirname "$gx")" && echo '.supervisor/' >> "$gx" ;;
+  fallback) echo '.supervisor/' >> .gitignore ;;
+esac
 ```
 
 ### Directory Structure
@@ -62,7 +67,7 @@ done
 
 ### Gitignore Check
 
-Before creating `.supervisor/`, make sure git will ignore it. `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block); the snippet above adds the bare line only when git does not already ignore the directory's contents, and creates `.gitignore` when there is none. Never add a bare line below the managed block: it re-ignores `.supervisor/memory/`.
+Before creating `.supervisor/`, make sure git will ignore it. `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block); the snippet above adds the bare line only when git does not already ignore the directory's contents — in a repo to the local `info/exclude` (never the tracked tree: a written `.gitignore` dirties the checkout), and only outside a repo to `.gitignore`, creating it when there is none. Never add a bare line below the managed block: it re-ignores `.supervisor/memory/`.
 
 ---
 
