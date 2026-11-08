@@ -141,6 +141,40 @@ else no "P17: $LEG_MSG"; fi
 LEG_MSG=""
 if m="$(build_mutant live-lock 'ns_lk="$(bash "$HERE/run-lock.sh" probe --session-id "$SID" </dev/null 2>/dev/null | head -n 1)"' 'ns_lk=run_lock_clear')" && ! leg_resume_live_lock "$m"; then ok "P17 pin: the live-lock probe removed from the --resume entry ⇒ the P17 leg turns red (B clobbers A's sidecar)"
 else no "P17 pin: ${LEG_MSG:-the mutant was not built or did not discriminate}"; fi
+# leg_resume_probe_arms <driver> — the --resume probe's other two arms: a lock a RUNNING holder keeps for ANOTHER
+# run (owner automate:<other>) ⇒ not refused, the AUT-RESUME ask is printed (exit 0); a probe answer that is
+# neither of run-lock.sh probe's two lines (empty, garbled, `run_lock_held` without owner=) ⇒ exit 2
+# run_lock_unreadable, nothing printed, .supervisor/ byte-unchanged. The garbled answers come from a stub
+# run-lock.sh beside a copy of <driver> (the driver reads "$HERE/run-lock.sh")
+leg_resume_probe_arms() {
+  local drv="$1" ad sf hold s0 d stub ans
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  ad="$CASE_ROOT/.supervisor/automate"; sf="$CASE_DIR/seams.arms"
+  printf 'LOOMWRIGHT_HOLDER_PID=%s\n' "$$" > "$sf"
+  hold="$(NS_REAL_LOCK=1 in_case "$drv" "$sf" bash "$HERE/run-lock.sh" acquire --owner automate:automate-2026-01-01-000000 --session-id sess-other 2>&1)" \
+    || { LEG_MSG="another run's lock not taken: $hold"; return 1; }
+  NC_OUT="$(NS_REAL_LOCK=1 in_case "$drv" "$sf" bash "$drv" --resume "$ad" --session-id sess-arms-b 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME"' >/dev/null 2>&1 \
+    || { LEG_MSG="another run's live lock: not the AUT-RESUME ask: exit $NC_RC '${NC_OUT:0:160}' $(head -c 200 "$CASE_DIR/nc.err")"; return 1; }
+  d="$(dirname "$drv")"; stub="$CASE_DIR/probe-stub"
+  for ans in "" "garbled answer" "run_lock_held" "run_lock_held pid=4242 age=1"; do
+    new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch (unreadable)"; return 1; }
+    ad="$CASE_ROOT/.supervisor/automate"; s0="$(snapshot)"
+    rm -f "$d/run-lock.sh"
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = probe ] && { printf "%%s" %q; [ -n %q ] && echo; exit 0; }\nexec bash %q "$@"\n' "$ans" "$ans" "$HERE/run-lock.sh" > "$d/run-lock.sh"
+    p_call "$drv" --resume "$ad" --session-id sess-arms-b
+    rm -f "$d/run-lock.sh"; ln -s "$HERE/run-lock.sh" "$d/run-lock.sh"
+    [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -qF "next-step: run_lock_unreadable — run-lock.sh probe printed '${ans:-nothing}'" <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+      || { LEG_MSG="probe answer '$ans': exit $NC_RC '${NC_OUT:0:120}' '${NC_ERR:0:200}' (want run_lock_unreadable, nothing written)"; return 1; }
+  done
+  return 0
+}
+LEG_MSG=""
+if m="$(build_mutant arms - '-append:# arms')" && leg_resume_probe_arms "$m"; then ok "P18: --resume's probe arms — another run's live lock ⇒ AUT-RESUME asked (not refused); an empty / garbled / owner-less run_lock_held probe answer ⇒ exit 2 run_lock_unreadable, nothing printed, .supervisor/ byte-unchanged"
+else no "P18: ${LEG_MSG:-driver copy not built}"; fi
+LEG_MSG=""
+if m="$(build_mutant arms-open '*) ns_die2 "run_lock_unreadable' '*) : "run_lock_unreadable')" && ! leg_resume_probe_arms "$m"; then ok "P18 pin: the run_lock_unreadable refusal turned into a pass-through ⇒ the P18 leg turns red"
+else no "P18 pin: ${LEG_MSG:-the mutant was not built or did not discriminate}"; fi
 # reconcile-status UNVERIFIED — a throttled merged-PR read reaches `## Progress`, so a resume with no
 # `would stamp` lines cannot pass for a clean scan; the pass still moves on (it is advisory)
 new_scratch "$FIX/resume-reconcile-status"

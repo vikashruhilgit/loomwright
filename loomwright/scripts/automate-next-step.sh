@@ -3751,7 +3751,7 @@ elif [ -n "$RESUME_DIR" ]; then
     run_lock_clear) ;;
     "run_lock_held owner=automate:$RUN_ID "*)
       ns_die2 "${ns_lk% age=*} — run $RUN_ID is live in another session (its PICK lock is held by a running coordinator); --resume would reset its next-step sidecar — nothing written past the start steps" ;;
-    "run_lock_held "*) ;;   # another run's lock: this run has no live coordinator (PICK refuses while it is held)
+    "run_lock_held owner="*) ;;   # another run's lock: this run has no live coordinator (PICK refuses while it is held)
     *) ns_die2 "run_lock_unreadable — run-lock.sh probe printed '${ns_lk:-nothing}'; whether $RUN_ID is live in another session is unknown — nothing written past the start steps" ;;
   esac
   stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
