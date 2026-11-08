@@ -360,7 +360,7 @@ sn_job_fail() {
 
 # init — Phase 0 (skills/supervisor-config/SKILL.md steps 4–7 and the 5a preamble's flag records)
 sn_init() {
-  local jp b t title ops gc ge gd ni_src mode maxw cost bm bw base gi gp
+  local jp b t title ops gc ge gd ni_src mode maxw cost bm bw base gi gp gx
   jp="$JOB_ARG"
   case "$jp" in
     /*) t="$(cd "$(dirname "$jp")" 2>/dev/null && pwd -P)"; [ -z "$t" ] || jp="$t/${jp##*/}" ;;
