@@ -190,7 +190,7 @@
 #   4. Spawn: `claude -p` with the lane allowlist / disallow list below, `--plugin-dir` pinned to the
 #      coordinator's plugin root (LOOMWRIGHT_ROOT), `--append-system-prompt` = the fixed headless-lane text, env
 #      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 with CLAUDE_PID / CLAUDECODE / LOOMWRIGHT_HOLDER_PID unset. Prompt:
-#      `/loomwright:automate --backlog <lane>/.supervisor/lane-backlog.md` or
+#      `/loomwright:automate --backlog .supervisor/lane-backlog.md` (repo-relative; the session runs in the lane dir) or
 #      `/loomwright:automate --resume <run_id>` (the lane's own run id only — never a bare --resume).
 #
 # Liveness: ONE helper, `lanes_proc_alive <pid> <pid_start> <lane_dir>` — the pid is alive, its
