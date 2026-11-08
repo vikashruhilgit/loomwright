@@ -1,0 +1,3 @@
+<!-- bump: patch -->
+The auto-merge gate reads gh's empty reviewDecision as "no review required"
+On a base branch that requires no reviews, `gh pr view --json reviewDecision` prints `""`, where GraphQL returns `null`. Condition 3 of `gate-eval` mapped only `null` to `none`, so `--auto-merge` and `--merge-parked` parked `review_decision_unreadable` on every such repo, including the solo-developer setup with only `ci` required (issue #829). Both `""` and `null` now read as `none` and defer to condition 4, a read with no `reviewDecision` key still parks unreadable, and the gate tests now feed gh's real output instead of a `null` it never prints.

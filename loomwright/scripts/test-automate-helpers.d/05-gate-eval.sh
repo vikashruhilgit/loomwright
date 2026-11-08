@@ -128,6 +128,35 @@ else
   no "gate review-decision-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 rm -f "$GH_STUB_DIR/pr-view-rd-fail"
+# A read that succeeds but carries no reviewDecision key is not a decision ⇒ unreadable.
+printf '{}\n' > "$GH_STUB_DIR/pr-view-rd.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: review_decision_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: reviewDecision key absent ⇒ PARK: review_decision_unreadable, no merge"
+else
+  no "gate review-decision-key-absent wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+# gh's REAL output for a reviews-not-required branch: `gh pr view --json
+# reviewDecision` prints `""` where GraphQL returns null (gh 2.102.0, issue
+# #829). It must read as "none" and defer to cond 4 — the stub below used to
+# feed only `null`, a shape gh never prints, so the gate parked on every such repo.
+printf '{"reviewDecision":""}\n' > "$GH_STUB_DIR/pr-view-rd.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: empty-string reviewDecision (gh's real reviews-not-required output) + enforceable protection ⇒ MERGE (cond 4 reachable)"
+else
+  no "gate empty-rd+protected wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+printf '{"required_pull_request_reviews":{"required_approving_review_count":0},"required_status_checks":{"contexts":[]}}\n' > "$GH_STUB_DIR/protection.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: empty-string reviewDecision + unprotected + no trust ⇒ PARK at cond 4, not cond 3"
+else
+  no "gate empty-rd+unprotected-no-trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
 
 # "none" reviewDecision (reviews-not-required — a successfully-read null) defers
 # to cond 4 rather than parking here (the checks-only / --trust-unprotected
