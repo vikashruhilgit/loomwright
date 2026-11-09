@@ -42,7 +42,7 @@ jobs:
       - name: Check hook-prompt contract parity (hook-rejection-trap gate)
         run: bash scripts/check-contract-parity.sh
 
-      - name: Check per-agent prompt token budgets (prompt-inventory ratchet)
+      - name: Check prompt token budgets (agents, skills, commands)
         run: |
           bash scripts/test-check-token-budget.sh
           bash scripts/check-token-budget.sh
