@@ -140,7 +140,7 @@ EOF
     for brief in .supervisor/jobs/done/*.md; do
       [ -f "$brief" ] || continue
       ptr="$(brief_requirement_pointer "$brief" 2>/dev/null)" || continue
-      [ -n "$ptr" ] && done_ptrs="$done_ptrs"$'\n'"${ptr#./}"
+      [ -n "$ptr" ] && done_ptrs="${done_ptrs:+$done_ptrs$'\n'}${ptr#./}"
     done
   fi
   while IFS= read -r item; do
