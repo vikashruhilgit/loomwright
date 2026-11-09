@@ -666,6 +666,36 @@ if [ -s "$M8" ] && ! cmp -s "$M8" "$ASM" && bash -n "$M8" 2>/dev/null \
   else ok "MUTATION CONTROL: with the .. guard removed the traversal paths assemble — A2's rejections are the guard's (A2)"; fi
 else no "could not build the guard-removed assemble.sh mutant — A2 control inconclusive"; fi
 
+echo "== N. a NEW run's mkdir -p .supervisor/automate precedes pick-guard on both surfaces that state it =="
+# The fact lives twice — commands/automate.md's Step 0 intake row and resume.md's Start order —
+# so this leg keeps the two copies in step: each carries `mkdir -p .supervisor/automate` and,
+# later in the same paragraph, `pick-guard .supervisor/automate` (without the directory
+# pick-guard refuses). Mutation controls drop the mkdir from, or reverse the order in, a scratch
+# copy of each surface and must go red.
+mk_before_guard() { # <file> — 0 iff one line names the mkdir and, after it, the pick-guard call
+  awk '{ i = index($0, "mkdir -p .supervisor/automate"); j = index($0, "pick-guard .supervisor/automate")
+         if (i && j > i) f = 1 } END { exit !f }' "$1" 2>/dev/null
+}
+N_RES="$REPO/$SKILL_DIR/resume.md"; N_CMD="$REPO/$CMD_IDX"
+for nf in "$N_RES" "$N_CMD"; do
+  mk_before_guard "$nf" && ok "N: ${nf#"$REPO"/} runs mkdir -p .supervisor/automate before pick-guard .supervisor/automate" \
+    || no "N: ${nf#"$REPO"/} lost mkdir -p .supervisor/automate before pick-guard .supervisor/automate"
+done
+M12="$TMP/m12"; mkdir -p "$M12"; cp "$REPO/$SKILL_DIR"/*.md "$M12/"; cp "$N_CMD" "$M12/automate.md"
+n_mut() { # <label> <source> <mutant> — gated: non-empty, differs from its source; the check must reject it
+  if [ -s "$3" ] && ! cmp -s "$2" "$3"; then
+    mk_before_guard "$3" && no "MUTATION CONTROL: $1 was ACCEPTED (N)" || ok "MUTATION CONTROL: $1 is REJECTED (N)"
+  else no "could not build the $1 mutant — N control inconclusive"; fi
+}
+sed 's#`mkdir -p .supervisor/automate` and then ##' "$N_RES" > "$M12/res-drop.md"
+n_mut "resume.md Start order without the mkdir" "$N_RES" "$M12/res-drop.md"
+sed 's#`mkdir -p .supervisor/automate` and then `automate-helpers.sh pick-guard .supervisor/automate`#`automate-helpers.sh pick-guard .supervisor/automate` and then `mkdir -p .supervisor/automate`#' "$N_RES" > "$M12/res-rev.md"
+n_mut "resume.md Start order with pick-guard before the mkdir" "$N_RES" "$M12/res-rev.md"
+sed 's#runs `mkdir -p .supervisor/automate` before `automate-helpers.sh pick-guard#runs `automate-helpers.sh pick-guard#' "$N_CMD" > "$M12/cmd-drop.md"
+n_mut "commands/automate.md Step 0 row without the mkdir" "$N_CMD" "$M12/cmd-drop.md"
+sed 's#runs `mkdir -p .supervisor/automate` before `automate-helpers.sh pick-guard .supervisor/automate`#runs `automate-helpers.sh pick-guard .supervisor/automate` before `mkdir -p .supervisor/automate`#' "$N_CMD" > "$M12/cmd-rev.md"
+n_mut "commands/automate.md Step 0 row with pick-guard before the mkdir" "$N_CMD" "$M12/cmd-rev.md"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
