@@ -78,7 +78,7 @@ _co_current() {
   local cur_line cur_raw cur_item cur_pr cur_status cur_reason run_status want
   cur_line="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
   if [ -z "$cur_line" ]; then echo "$S no ## Current item line"; return 0; fi
-  _co_field() { printf '%s\n' "$cur_line" | awk -v k="$1" 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, k ": ")==1) {print substr($i, length(k)+3); exit}}'; }
+  _co_field() { awk -v k="$1" 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, k ": ")==1) {print substr($i, length(k)+3); exit}}' <<<"$cur_line"; }
   cur_raw="$(_co_field item)"; cur_item="${cur_raw#./}"
   cur_pr="$(_co_field pr)"; cur_status="$(_co_field status)"
   if [ "$cur_item" != "$item" ] || [ "$cur_pr" != "$pr" ]; then

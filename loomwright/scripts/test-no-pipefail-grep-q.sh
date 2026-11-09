@@ -53,8 +53,8 @@
 # past the item, and under pipefail the writer's failure became the helper's verdict, so a correct
 # report read as "phase row exceeds item". An `exit` inside END is safe (input is already read), so
 # the 140-odd writer-into-awk pipes that read to EOF are not flagged. The fix is the same free one:
-# `awk … <<<"$var"`. Pre-existing sites are a per-file RATCHET (AWK_EXIT_BASELINE below), the rule-2
-# OVER / UNDER / STALE contract.
+# `awk … <<<"$var"`. Every site was rewritten when the rule landed, so AWK_EXIT_BASELINE below is empty;
+# it keeps the rule-2 per-file OVER / UNDER / STALE ratchet contract.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -169,6 +169,19 @@ awk_exit_hits() {
       }
       return out p
     }
+    # uncomment <logical line> — the line cut at its first ` #` outside single and double quotes, so a
+    # trailing shell comment that NAMES the shape is never red, while a `#` inside an awk program is kept
+    function uncomment(s,   i, c, q) {
+      q = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") { if (c == q) q = ""; else if (c == "\\" && q == "\"") i++; continue }
+        if (c == sq || c == "\"") q = c
+        else if (c == "\\") i++
+        else if (c == "#" && i > 1 && substr(s, i - 1, 1) ~ /[ \t]/) return substr(s, 1, i - 1)
+      }
+      return s
+    }
     function scan(s, ln, txt,   r) {
       while (match(s, /(^|[^[:alnum:]_-])(printf|echo)([ \t][^|]*)?[|][ \t]*awk([ \t]|$)/)) {
         s = substr(s, RSTART + RLENGTH)
@@ -192,7 +205,7 @@ awk_exit_hits() {
       if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; next }
       l = buf $0; buf = ""
       if (l ~ /^[ \t]*#/) next
-      scan(l, start, l)
+      scan(uncomment(l), start, l)
     }' "$1"
   return 0
 }
@@ -468,11 +481,13 @@ echo "== rule 4 detector controls: a builtin writer piped into an awk that can e
 { printf '%s %s awk -f prog.awk\n' 'printf "%s" "$x"' "$P"; } > "$T/a-good-progfile.sh"
 { printf '  # %s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ exit }'"; } > "$T/a-good-comment.sh"
 { printf '%s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ exitcode = 1 } END { exit exitcode }'"; } > "$T/a-good-exit-substring.sh"
-for c in a-bad-action a-bad-multiline a-bad-echo-F a-bad-begin-continued; do
+{ printf '[ -n "$x" ] || return 0   # e.g. %s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ n++; exit }'"; } > "$T/a-good-trailing-comment.sh"
+{ printf '%s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ print \"a # b\"; exit }'"; } > "$T/a-bad-hash-in-program.sh"
+for c in a-bad-action a-bad-multiline a-bad-echo-F a-bad-begin-continued a-bad-hash-in-program; do
   [ "$(count_awk_exit "$T/$c.sh")" = "1" ] && ok "rule 4 flags $c (once)" \
     || no "rule 4 missed or miscounted $c ($(count_awk_exit "$T/$c.sh")): $(cat "$T/$c.sh")"
 done
-for c in a-good-end-only a-good-noexit a-good-herestring a-good-notbuiltin a-good-progfile a-good-comment a-good-exit-substring; do
+for c in a-good-end-only a-good-noexit a-good-herestring a-good-notbuiltin a-good-progfile a-good-comment a-good-exit-substring a-good-trailing-comment; do
   [ -z "$(awk_exit_hits "$T/$c.sh")" ] && ok "rule 4 does not flag $c" \
     || no "rule 4 false positive on $c: $(cat "$T/$c.sh")"
 done
@@ -579,25 +594,9 @@ else
 fi
 
 echo "== rule 4 over every shell script (ratchet) =="
-# AWK_EXIT_BASELINE — pre-existing rule-4 sites, `count path`. Lower a count when you convert a site to
-# `awk … <<<"$var"`; never raise one or add a path — fix the new site instead.
-AWK_EXIT_BASELINE='1 loomwright/scripts/automate-lanes.d/park-leaks.sh
-1 loomwright/scripts/automate-trail.d/closeout.sh
-4 loomwright/scripts/automate-trail.d/finalize.sh
-1 loomwright/scripts/automate-trail.d/trail-pr.sh
-1 loomwright/scripts/gate-auto.sh
-4 loomwright/scripts/janitor-report.sh
-1 loomwright/scripts/lane-sampler.sh
-1 loomwright/scripts/meta-sync.d/managed.sh
-1 loomwright/scripts/proc-registry.sh
-1 loomwright/scripts/propose-scorecard.sh
-3 loomwright/scripts/session-resume.sh
-1 loomwright/scripts/setup-routing.sh
-1 loomwright/scripts/test-automate-dismissed.sh
-1 loomwright/scripts/test-automate-helpers.d/13-plan-waves.sh
-1 loomwright/scripts/test-insights.sh
-1 loomwright/scripts/test-lane-sampler.sh
-1 scripts/check-token-budget.sh'
+# AWK_EXIT_BASELINE — pre-existing rule-4 sites, `count path`. Empty: all 27 sites were rewritten when the
+# rule landed. Never add a path — rewrite the new site as `awk … <<<"$var"` instead.
+AWK_EXIT_BASELINE=''
 ahits="$(ratchet "$REPO_ROOT" "$AWK_EXIT_BASELINE" count_awk_exit "${all_sh[@]}")"
 if [ -z "$ahits" ]; then
   ok "no builtin writer is piped into an early-exiting awk beyond the baseline"

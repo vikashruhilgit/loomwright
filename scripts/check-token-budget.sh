@@ -470,7 +470,7 @@ check_mirror() {
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     jbudget="$(jq -r --arg t "$table" --arg k "$key" '.[$t][$k].budget' "$BUDGET_JSON")"
-    row="$(printf '%s\n' "$rows" | awk -F'|' -v k="$key" '{s=$2; gsub(/[` ]/,"",s); if (s==k) {print; exit}}')"
+    row="$(awk -F'|' -v k="$key" '{s=$2; gsub(/[` ]/,"",s); if (s==k) {print; exit}}' <<<"$rows")"
     if [ -z "$row" ]; then
       printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "no row in $CONTRACTS_MD $where — add the mirror row in the same edit"
       errors=$((errors + 1))

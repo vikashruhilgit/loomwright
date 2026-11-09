@@ -659,9 +659,9 @@ automate_inflight_lines() {
     grep -qE '^## Status:[[:space:]]*done' "$f" 2>/dev/null && continue
     cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$f" 2>/dev/null)"
     [ -n "$cl" ] || continue
-    item="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, "item: ")==1) {print substr($i, 7); exit}}')"
-    st="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
-    pr="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}')"
+    item="$(awk 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, "item: ")==1) {print substr($i, 7); exit}}' <<<"$cl")"
+    st="$(awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}' <<<"$cl")"
+    pr="$(awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}' <<<"$cl")"
     [ -n "$item" ] && [ "$item" != null ] && [ "$st" != done ] || continue
     case "$pr" in http://*/pull/*|https://*/pull/*) ;; *) continue ;; esac
     if [ "$calls" -ge 5 ] || [ "$left" -le 0 ]; then state=unverified

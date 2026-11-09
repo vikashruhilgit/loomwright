@@ -132,7 +132,7 @@ rh() {
 }
 drafts() { dd_out="$(bash "$H" dismissed-drafts "$RF" "$ITEM" "$PRURL" "$@" 2>&1)"; dd_rc=$?; }
 nfiles() { find "$PROP" -maxdepth 1 -type f -name '*--dismissed-*.md' 2>/dev/null | wc -l | tr -d ' '; }
-path_of() { printf '%s\n' "$dd_out" | awk -F'\t' -v k="$1" '$1 == "draft" && $2 == k { print $4; exit }'; }
+path_of() { awk -F'\t' -v k="$1" '$1 == "draft" && $2 == k { print $4; exit }' <<<"$dd_out"; }
 # find the draft whose quoted body contains <text>
 draft_with() { grep -lF -- "> $1" "$PROP"/*--dismissed-*.md 2>/dev/null | head -n1; }
 # 3b (iq02 T04): every dismissed: Progress line carries a leading UTC ts

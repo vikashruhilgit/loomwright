@@ -45,7 +45,7 @@ _fe_ineligible() {
   n="$(grep -c '^- \[ \] ' "$rf" 2>/dev/null)"; n="${n:-0}"
   if [ "$n" != "0" ]; then echo "$n unchecked item(s) remain"; return 0; fi
   cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
-  cs="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
+  cs="$(awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}' <<<"$cl")"
   if [ "$cs" != "done" ]; then echo "## Current status ${cs:-absent}, not done"; return 0; fi
   return 0
 }
@@ -220,9 +220,9 @@ closeout_others() {
     if [ -n "$rec_abs" ] && [ "$f" = "$rec_abs" ]; then continue; fi
     cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$f" 2>/dev/null)"
     [ -n "$cl" ] || continue
-    item="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, "item: ")==1) {print substr($i, 7); exit}}')"
-    pr="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}')"
-    st="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
+    item="$(awk 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, "item: ")==1) {print substr($i, 7); exit}}' <<<"$cl")"
+    pr="$(awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}' <<<"$cl")"
+    st="$(awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}' <<<"$cl")"
     [ -n "$item" ] && [ "$item" != null ] || continue
     case "$pr" in http://*/pull/*|https://*/pull/*) ;; *) continue ;; esac
     [ "$st" != done ] || continue

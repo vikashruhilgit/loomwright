@@ -46,7 +46,7 @@ pass=0; fail=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 no() { fail=$((fail + 1)); echo "FAIL $1"; }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3', got '$2')"; fi; }
-fld() { printf '%s\n' "$2" | awk -v k="$1=" '{ for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }'; }
+fld() { awk -v k="$1=" '{ for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }' <<<"$2"; }
 
 FX="$tmp/fx"; ST="$tmp/stubs"; mkdir -p "$FX" "$ST"
 # series NAME — prints the next line of $FX/NAME.series (the last line once exhausted).

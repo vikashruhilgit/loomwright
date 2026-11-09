@@ -256,7 +256,7 @@ _gate_keep() {
     [ -n "$u" ] || continue
     case "$u" in
       http://*/pull/*|https://*/pull/*)
-        hit="$(printf '%s' "$GATE_CACHE" | awk -F'\t' -v u="$u" '$1 == u {print $2; exit}')"
+        hit="$(awk -F'\t' -v u="$u" '$1 == u {print $2; exit}' <<<"$GATE_CACHE")"
         if [ -n "$hit" ]; then st="$hit"; else
           st="$(bash "$HERE/automate-helpers.sh" reconcile-item "$u" 2>/dev/null | tail -n1)"
           [ -n "$st" ] || st="unreadable"

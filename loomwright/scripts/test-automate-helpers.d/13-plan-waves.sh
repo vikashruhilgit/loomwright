@@ -530,7 +530,7 @@ x_same() {  # <label> <root> <input> <max>
   local base
   w_run "$2" "$H" "$3" --max "$4"; base="$W_OUT"
   w_run "$2" "$H" "$3" --max "$4" --explain
-  if [ "$W_RC" -eq 0 ] && [ "$(printf '%s\n' "$W_OUT" | awk '/^explain /{exit} {print}')" = "$base" ]; then ok "$1"; else no "$1 (rc=$W_RC) base: $(printf '%s' "$base" | tr '\n' '|') explain: $(printf '%s' "$W_OUT" | tr '\n' '|')"; fi
+  if [ "$W_RC" -eq 0 ] && [ "$(awk '/^explain /{exit} {print}' <<<"$W_OUT")" = "$base" ]; then ok "$1"; else no "$1 (rc=$W_RC) base: $(printf '%s' "$base" | tr '\n' '|') explain: $(printf '%s' "$W_OUT" | tr '\n' '|')"; fi
 }
 rm -rf "$W_T/q"
 w_item q/01-a.md none 'p/'; w_item q/02-b.md none 'r/'; w_item q/03-c.md none 'p/x.sh'; w_item q/04-d.md none 'r/y.sh'; w_item q/05-e.md '01' 's/'

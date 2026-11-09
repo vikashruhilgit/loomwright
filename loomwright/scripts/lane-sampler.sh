@@ -86,7 +86,7 @@ utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 note() { echo "lane-sampler: $*" >&2; }
 usage_die() { echo "lane-sampler: $* (try --help)" >&2; exit 2; }
 # fld KEY LINE — the value of KEY=… in a sample line (empty when absent).
-fld() { printf '%s\n' "$2" | awk -v k="$1=" '{ for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }'; }
+fld() { awk -v k="$1=" '{ for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }' <<<"$2"; }
 
 OS="${LOOMWRIGHT_LANE_SAMPLER_OS:-}"
 if [ -z "$OS" ]; then case "$(uname -s 2>/dev/null)" in Darwin) OS=darwin ;; Linux) OS=linux ;; *) OS=other ;; esac; fi

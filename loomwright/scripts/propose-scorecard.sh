@@ -149,7 +149,7 @@ while IFS= read -r rec; do
   slug="$(pc_slugify "$id")"
   fname="scorecard--${slug}.md"
 
-  prior="$(printf '%s\n' "$USED" | awk -F'\t' -v n="$fname" '$1 == n { print $2; exit }')"
+  prior="$(awk -F'\t' -v n="$fname" '$1 == n { print $2; exit }' <<<"$USED")"
   if [ -n "$prior" ]; then
     say "skipping $id - its draft name $fname is already taken by $prior in this run"
     continue

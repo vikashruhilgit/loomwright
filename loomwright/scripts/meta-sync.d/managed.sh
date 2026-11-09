@@ -88,7 +88,7 @@ remote_probe() {
   out="$(g ls-remote --exit-code origin "refs/heads/$BRANCH" 2>/dev/null)"; rc=$?
   REMOTE_SHA=""
   case "$rc" in
-    0) REMOTE_STATE="present"; REMOTE_SHA="$(printf '%s\n' "$out" | awk -v r="refs/heads/$BRANCH" '$2==r{print $1; exit}')"
+    0) REMOTE_STATE="present"; REMOTE_SHA="$(awk -v r="refs/heads/$BRANCH" '$2==r{print $1; exit}' <<<"$out")"
        [ -n "$REMOTE_SHA" ] || REMOTE_STATE="unreachable" ;;
     2) REMOTE_STATE="absent" ;;
     *) REMOTE_STATE="unreachable" ;;

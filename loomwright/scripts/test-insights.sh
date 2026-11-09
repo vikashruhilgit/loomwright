@@ -1019,7 +1019,7 @@ grep -qF -- "**Sessions sized:** 2  ·  **Median (p50):** 500000 bytes  ·  **p9
 grep -qF -- "**Threshold:** >3000000 bytes (advisory starting value)  ·  **Over threshold:** 1 of 2 session(s)" < <(printf '%s' "$scsec") && ok "default threshold 3000000 flags 1 of 2 sessions" || no "threshold/over count wrong: $(grep -F 'Threshold' < <(printf '%s' "$scsec"))"
 grep -qF "| sess-big | 3 | 3500000 | yes |" < <(printf '%s' "$scsec") && ok "sess-big row = largest snapshot (3500000), not the 6500000 sum, flagged" || no "sess-big row wrong (max-not-sum): $(grep -F 'sess-big' < <(printf '%s' "$scsec"))"
 grep -qF "| sess-small | 1 | 500000 | — |" < <(printf '%s' "$scsec") && ok "sess-small row under threshold, not flagged" || no "sess-small row wrong"
-sc_order="$(printf '%s\n' "$scsec" | awk '/\| sess-big \|/{print "big";exit} /\| sess-small \|/{print "small";exit}')"
+sc_order="$(awk '/\| sess-big \|/{print "big";exit} /\| sess-small \|/{print "small";exit}' <<<"$scsec")"
 [ "$sc_order" = "big" ] && ok "largest session listed first" || no "per-session table order wrong (got: ${sc_order:-none})"
 grep -qF "**Remedy:** split long runs at a natural checkpoint" < <(printf '%s' "$scsec") && grep -qF '`/handoff`' < <(printf '%s' "$scsec") && ok "remedy line (with /handoff) shown when a session is over threshold" || no "remedy line missing despite an over-threshold session"
 grep -qF "**Not sized here:** 1 session(s) have only real-usage" < <(printf '%s' "$scsec") && ok "real-usage-only session reported as not sized" || no "real-only session not reported"
