@@ -104,9 +104,10 @@ _co_current() {
 
 # _co_stamped <requirement> — closeout step 5's "already stamped" check. True
 # only for a REAL close-out block: a line that is exactly the sentinel
-# `<!-- loomwright:requirement-closeout -->` (a trailing CR tolerated), whose
-# NEXT line is a `## Status: done` / `## Status: done_with_escalation` heading —
-# the shape the step-5 printf writes. A sentinel quoted inline in prose, or on a
+# `<!-- loomwright:requirement-closeout -->` (trailing blanks and a trailing CR
+# tolerated), whose NEXT line is exactly a `## Status: done` / `## Status:
+# done_with_escalation` heading (trailing blanks tolerated; `done-ish`, `done.` or
+# any other suffix is not a stamp) — the shape the step-5 printf writes. A sentinel quoted inline in prose, or on a
 # line of its own followed by anything else, does not count (automate-followups/38:
 # af/37's own requirement quotes it in `## Problem`, and a plain substring match
 # read that as stamped, so closeout never stamped it). A block quoted in a code fence does not count
@@ -114,21 +115,26 @@ _co_current() {
 _co_stamped() {
   awk 'BEGIN { s = "<!-- loomwright:requirement-closeout -->" }
     { sub(/\r$/, "") }
-    prev && /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ { f = 1; exit }
-    { prev = ($0 == s) }
+    prev && /^## Status:[[:space:]]*done(_with_escalation)?[[:space:]]*$/ { f = 1; exit }
+    { t = $0; sub(/[[:space:]]+$/, "", t); prev = (t == s) }
     END { exit !f }' 2>/dev/null <<<"$(_unfenced_text "$1")"
 }
 
 closeout() {
-  local runfile="" item="" pr_url="" sid="" no_trail=0
+  local runfile="" item="" pr_url="" sid="" no_trail=0 sid_bad=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --session-id) sid="${2:-}"; shift 2 || shift ;;
+      # --session-id takes a value: a missing one, an empty one, or the next flag
+      # (`--session-id --no-trail`) is refused below — never read as the session id.
+      --session-id)
+        if [ "$#" -lt 2 ]; then sid_bad=1; shift
+        else case "$2" in '') sid_bad=1; shift 2 ;; --*) sid_bad=1; shift ;; *) sid="$2"; shift 2 ;; esac; fi ;;
       --no-trail) no_trail=1; shift ;;
       *) if [ -z "$runfile" ]; then runfile="$1"; elif [ -z "$item" ]; then item="$1"; elif [ -z "$pr_url" ]; then pr_url="$1"; fi; shift ;;
     esac
   done
   local S="closeout: skipped —"
+  if [ "$sid_bad" = 1 ]; then echo "$S --session-id needs a value"; return 0; fi
   if [ -z "$runfile" ] || [ -z "$item" ] || [ -z "$pr_url" ]; then echo "$S missing argument"; return 0; fi
   if [ ! -f "$runfile" ]; then echo "$S run file not found"; return 0; fi
   if ! command -v git >/dev/null 2>&1; then echo "$S git unavailable"; return 0; fi
