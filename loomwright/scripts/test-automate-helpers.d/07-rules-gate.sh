@@ -865,11 +865,17 @@ else no "R11o HOME-unset clean checkout parked or failed (out='$R11O_OUT' merges
 r11_restored "R11o HOME unset"
 # (b) the repo's own config points core.worktree at ANOTHER, clean copy of the tree while --root
 #     is dirty: --root is not the toplevel git reports nor beneath it ⇒ rules_gate_dirty_tree.
+#     The copy carries a `.git` FILE naming --root's git dir (the `--separate-git-dir` layout),
+#     so every read run AT that toplevel succeeds and reports clean: only the identity check
+#     parks this (without the gitfile the reads fail and park on their own).
 R11O_WT="$WD/r11o-clean-tree"; rm -rf "$R11O_WT"; mkdir -p "$R11O_WT"
 ( cd "$E_ROOT" && tar cf - --exclude ./.git . ) | ( cd "$R11O_WT" && tar xf - )
+printf 'gitdir: %s\n' "$E_ROOT/.git" > "$R11O_WT/.git"
 git -C "$E_ROOT" config core.worktree "$R11O_WT"; echo dirt > "$E_ROOT/r11o-untracked.txt"
 if [ "$(git -C "$E_ROOT" rev-parse --show-toplevel 2>/dev/null)" -ef "$R11O_WT" ] \
-   && [ -z "$(git -C "$E_ROOT" status --porcelain -uall 2>/dev/null)" ]; then
+   && [ -z "$(git -C "$E_ROOT" status --porcelain -uall 2>/dev/null)" ] \
+   && [ -z "$(git -C "$R11O_WT" status --porcelain -uall 2>/dev/null)" ] \
+   && [ -n "$(git -C "$R11O_WT" rev-parse --verify -q HEAD 2>/dev/null)" ]; then
   r11_dirty "core.worktree redirects the toplevel to another clean tree while --root itself is dirty"
 else no "R11o precondition: core.worktree did not redirect the toplevel to a clean tree ($(git -C "$E_ROOT" rev-parse --show-toplevel 2>&1))"; fi
 git -C "$E_ROOT" config --unset core.worktree; rm -f "$E_ROOT/r11o-untracked.txt"; rm -rf "$R11O_WT"; r11_restored "R11o core.worktree"
