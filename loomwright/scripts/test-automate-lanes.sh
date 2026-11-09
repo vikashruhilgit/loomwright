@@ -124,6 +124,7 @@ tal_pgrep() {
 }
 cleanup() {
   local p
+  rm -f "$T/stub-hold"   # every STUB_MODE=sleep session exits on its own within a second of this
   for p in $BG_PIDS $(tal_pgrep "$T" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done
   for p in $(tal_pgrep "$T" ""); do kill -TERM "$p" 2>/dev/null; done   # safety net only — the AA-F12z leg is the assertion
   rm -rf "$T"
@@ -156,6 +157,7 @@ unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS LOOM
 
 BIN="$T/bin"; mkdir -p "$BIN"
 export STUB_LOG="$T/claude.log"; : > "$STUB_LOG"
+export STUB_HOLD="$T/stub-hold"; : > "$STUB_HOLD"   # the sleep stub's liveness marker (removed first in cleanup)
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--help" ]; then
@@ -180,7 +182,11 @@ if [ -n "${STUB_RESUME_FAIL:-}" ]; then
 fi
 echo '{"type":"system","subtype":"init","session_id":"sess-123"}'
 case "${STUB_MODE:-ok}" in
-  sleep) trap 'kill $! 2>/dev/null; exit 143' TERM; sleep 60 & wait $! ;;
+  # sleep: a session that stays live until the SUITE ends — while the hold marker exists (cleanup removes it
+  # first), with a 30-min backstop for a suite that was SIGKILLed before its cleanup. Never a fixed lifetime: a
+  # `sleep 60` here outlived nothing under load (L2 read `died` by the AH legs, 60+ s after its launch).
+  sleep) trap 'kill $! 2>/dev/null; exit 143' TERM
+         while [ -e "${STUB_HOLD:-/nonexistent}" ] && [ "$SECONDS" -lt 1800 ]; do sleep 1 & wait $!; done ;;
   defer) printf '%s\n' "$STUB_DEFER_LINE" ;;
   die) exit 1 ;;
   # flood (AN21): a result line EARLY, then far more output than a pipe holds — the stream shape that made the
