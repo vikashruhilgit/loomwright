@@ -110,6 +110,10 @@
 #   (LK12) --affected with leg (ii) leaking → the --affected leak verdict, no stamp
 #   (LK13) --affected, every leak-gate snapshot fails → FAIL closed before the suite, nothing ran
 #   (LK14) --affected, only the after-suite snapshot fails → the --affected snapshot-failed verdict
+#   (LK15-LK17) an lsof stub that hangs (`exec sleep 30`) on every call / only the after-suite listener
+#        read / only the `-t` fd-holder probe → the run returns within CI_LOCAL_LSOF_BOUND per call,
+#        names the unchecked half, no survivor, no leak verdict, PASS
+#   (LK18) CI_LOCAL_LSOF_BOUND=0 → exit 2
 #   Every leaked pid is recorded and stopped by kill_leaks (also on EXIT).
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it). The machine
@@ -1120,6 +1124,56 @@ if [ "$rc" -eq 1 ] && ran one && [ -z "$(ls "$state/pass")" ] \
 else no "(LK14) rc=$rc out=$out"; fi
 rm -f "$LK/ps.fail"
 ( cd "$R" && git checkout -q -- loomwright/scripts/one.sh )
+
+# (LK15-LK17) a hung lsof (a stale network mount) is bounded: the stub `exec sleep 30`s on the named
+# call, else answers like the real lsof (or with nothing when lsof is absent). Each run returns well
+# inside the hang, says which read went unchecked, and reports no survivor and no leak verdict.
+REAL_LSOF="$(command -v lsof || true)"
+mkdir -p "$LK/lsofhang"
+{
+  echo '#!/bin/sh'
+  echo 'case "$*" in'
+  echo "  *-sTCP:LISTEN*) n=\$(( \$(cat \"$LK/lsof.lsn.n\" 2>/dev/null || echo 0) + 1 )); echo \"\$n\" > \"$LK/lsof.lsn.n\""
+  echo '    case "$LSOF_HANG" in all) hang=1 ;; after) [ "$n" -lt 2 ] || hang=1 ;; esac ;;'
+  echo '  *" -t "*) case "$LSOF_HANG" in all|fd) hang=1 ;; esac ;;'
+  echo 'esac'
+  echo "if [ -n \"\${hang:-}\" ]; then echo \"\$\$\" >> \"$LK/pids\"; exec sleep 30; fi"
+  if [ -n "$REAL_LSOF" ]; then echo "exec \"$REAL_LSOF\" \"\$@\""; else echo 'exit 1'; fi
+} > "$LK/lsofhang/lsof"
+chmod +x "$LK/lsofhang/lsof"
+lk_hang() { # lk_hang all|after|fd — one full run against the hanging stub; sets out, rc, el
+  rm -f "$LK/lsof.lsn.n"
+  local t0; t0=$(date +%s)
+  LSOF_HANG="$1" CI_LOCAL_LSOF="$LK/lsofhang/lsof" CI_LOCAL_LSOF_BOUND=1 CI_LOCAL_LEAK_SETTLE=1 run --force
+  el=$(( $(date +%s) - t0 ))
+}
+LSN_CUT="ci-local: leak gate — listeners unchecked (lsof timed out after 1s)"
+FD_CUT="ci-local: leak gate — inherited-fd marker unchecked (lsof timed out after 1s)"
+# (LK15) every lsof call hangs: both halves reported unchecked.
+lk_hang all
+if [ "$rc" -eq 0 ] && [ "$el" -lt 20 ] && hasf "$LSN_CUT" && hasf "$FD_CUT" && ! has "survivor pid=" && ! has "leak gate: " \
+   && has "^ci-local: PASS after"; then
+  ok "(LK15) lsof hangs on every call: bounded (${el}s), listeners and inherited-fd marker unchecked, no survivor, PASS"
+else no "(LK15) rc=$rc ${el}s out=$out"; fi
+kill_leaks
+# (LK16) only the after-suite listener read hangs.
+lk_hang after
+if [ "$rc" -eq 0 ] && [ "$el" -lt 20 ] && hasf "$LSN_CUT" && ! hasf "$FD_CUT" && ! has "survivor pid=" && ! has "leak gate: " \
+   && has "^ci-local: PASS after"; then
+  ok "(LK16) only the after-suite listener read hangs: bounded (${el}s), listeners unchecked, no survivor, PASS"
+else no "(LK16) rc=$rc ${el}s out=$out"; fi
+kill_leaks
+# (LK17) only the -t fd-holder probe hangs.
+lk_hang fd
+if [ "$rc" -eq 0 ] && [ "$el" -lt 20 ] && hasf "$FD_CUT" && ! hasf "$LSN_CUT" && ! has "survivor pid=" && ! has "leak gate: " \
+   && has "^ci-local: PASS after"; then
+  ok "(LK17) only the -t fd-holder probe hangs: bounded (${el}s), inherited-fd marker unchecked, no survivor, PASS"
+else no "(LK17) rc=$rc ${el}s out=$out"; fi
+kill_leaks
+# (LK18) a bad CI_LOCAL_LSOF_BOUND is a usage error.
+CI_LOCAL_LSOF_BOUND=0 run --force
+if [ "$rc" -eq 2 ] && has "CI_LOCAL_LSOF_BOUND must be" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LK18) CI_LOCAL_LSOF_BOUND=0: exit 2, nothing ran"
+else no "(LK18) rc=$rc out=$out"; fi
 
 # (A)
 run --bogus
