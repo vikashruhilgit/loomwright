@@ -340,7 +340,7 @@ pi_run() {  # pi_run <sut> <args...> — stdout → PI_OUT, stderr → PI_ERR, r
 }
 pi_row() { printf '%s\n' "$PI_OUT" | grep -F -- "$1" | head -1; }
 # pi_rows_after <item row marker> — the item row and the ↳ rows under it
-pi_rows_after() { printf '%s\n' "$PI_OUT" | awk -v m="$1" 'index($0, m) {on=1; print; next} on && /^\| ↳/ {print; next} on {exit}'; }
+pi_rows_after() { awk -v m="$1" 'index($0, m) {on=1; print; next} on && /^\| ↳/ {print; next} on {exit}' <<<"$PI_OUT"; }
 fmt_wall() { local s="$1"; if [ "$s" -ge 3600 ]; then echo "$((s/3600))h $(((s%3600)/60))m $((s%60))s"; else echo "$((s/60))m $((s%60))s"; fi; }
 
 echo "== PI1. --per-item: one row per item, phase rows under it, every token figure labelled real usage (AC1) =="
@@ -551,14 +551,16 @@ pi_run "$SUT" --per-item "$PI/res/run.md" --root "$PI/res" --projects-dir "$PI/r
   && ok "resumed, no later parked line: window to the last drain end (named), Decide 'not recorded'" || no "resumed no-repark: $(pi_row '| **q.md** |') / $(pi_row '| ↳ Decide |')"
 
 echo "== PI19. invariant: no phase row's context tokens exceed its item row's =="
-# pi_phase_le_item <out> <item row marker> — every ↳ row's context number <= the item row's
+# pi_phase_le_item <out> <item row marker> — every ↳ row's context number <= the item row's.
+# The input is a here-string, never `printf | awk`: awk exits at the first row past the item, and a
+# writer still sending then fails with EPIPE, which pipefail made this helper's verdict (ci 42559229895).
 pi_phase_le_item() {
-  printf '%s\n' "$1" | awk -v m="$2" -F' \\| ' '
+  awk -v m="$2" -F' \\| ' '
     function num(c) { if (c ~ /^[0-9]+ \(main/) { sub(/ .*/, "", c); return c + 0 } return -1 }
     index($0, m) { on = 1; it = num($4); next }
     on && /^\| ↳/ { v = num($4); if (it >= 0 && v > it) { print "phase row exceeds item: " $0; bad = 1 } next }
     on { exit }
-    END { exit bad }'
+    END { exit bad }' <<<"$1"
 }
 pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --root "$PI/l" --projects-dir "$PIP"
 pi_inv_out="$PI_OUT"
