@@ -13,9 +13,11 @@
 #   env -u CLAUDE_PID -u CLAUDECODE nohup bash automate-merge-watch.sh \
 #     <runfile> <item> <pr_url> </dev/null >"<runfile dir>/<run_id>.merge-watch.log" 2>&1 &
 # (NOT setsid — absent on stock macOS). Polls `gh pr view <pr_url> --json
-# state` every LOOMWRIGHT_MERGE_WATCH_INTERVAL seconds (default 60), doubling
-# the wait on a gh error up to 900s and resetting on success (the same read
-# carries headRefOid + statusCheckRollup for the settle re-check below).
+# state,headRefOid` every LOOMWRIGHT_MERGE_WATCH_INTERVAL seconds (default 60),
+# doubling the wait on a gh error up to 900s and resetting on success. That read
+# never names statusCheckRollup: the rollup is a SECOND `gh pr view` made only
+# for an armed settle re-check (below), so a rollup the forge cannot serve never
+# hides a merge.
 #   A FAILED POLL logs ONE line naming why: `merge-watch: gh pr view failed —
 #            next poll in <n>s (exit <rc>: <gh stderr, one line, ≤300 chars>)` —
 #            gh's stderr goes to the gitignored `<run_id>.merge-watch.gh-stderr`,
@@ -47,12 +49,13 @@
 #   SETTLE RE-CHECK (automate-followups/31): while OPEN, when ## Current names
 #            THIS item + PR and carries `- escalation_cause: check_pending` or
 #            `check_red_unrelated` with a non-null check + a sha equal to the
-#            PR's current headRefOid (read by the poll's own `gh pr view --json
-#            state,headRefOid,statusCheckRollup`; a different head latches that
-#            line silent), each poll also reads that ONE check — `gh run view <run_id> --json
+#            PR's current headRefOid (read, with the rollup, by the re-check's own
+#            `gh pr view --json headRefOid,statusCheckRollup` — made only while the
+#            line is armed; a failed read is no report this poll and never gates the
+#            MERGED read; a different head latches that line silent), each poll also
+#            reads that ONE check — `gh run view <run_id> --json
 #            attempt,status,conclusion,headSha` when a run id is recorded, else
-#            `gh api repos/<o>/<r>/commits/<sha>/check-runs` by name (never an
-#            extra `gh pr view`). check_pending reports at the first completed
+#            `gh api repos/<o>/<r>/commits/<sha>/check-runs` by name. check_pending reports at the first completed
 #            attempt >= the recorded one; check_red_unrelated only at a NEWER
 #            attempt (> recorded — a human rerun); `now mergeable` also needs
 #            every OTHER rollup check completed and non-red. The report is ONE ## Progress
@@ -109,6 +112,13 @@
 # holder to its own pid (`exec` + `env`'s exec keep it, so `$$` IS the
 # closeout) — run-lock.sh records `pid_source holder_env`. Resolution order:
 # docs/ARCHITECTURE_CONTRACTS.md §"Run lock".
+#
+# HONEST LIMIT — ## Progress writes are not locked: progress() appends through
+# `automate-helpers.sh progress-append` WITHOUT the run lock. progress-append
+# rewrites the whole run file (temp file + rename), so a writer racing the same
+# run file in that window loses one update — this watcher's line or the other
+# writer's change, whichever rename lands first — though neither leaves a torn
+# file. The notify for a lost line is still sent.
 #
 # Always exits 0. bash 3.2 / BSD-userland safe (no `timeout`; `sleep` only).
 # Seams: LOOMWRIGHT_GH_BIN, LOOMWRIGHT_JQ_BIN (same as automate-helpers.sh).
@@ -307,20 +317,23 @@ esc_fields() {
 # it) — never a permanent latch on an absent or stale line.
 recheck_done=0
 esc_seen=""
-# esc_recheck <pr_view_json> <esc_fields_line> — one settle poll of the recorded
-# check; reports at most once per line content. <pr_view_json> is THIS poll's `gh pr
-# view --json state,headRefOid,statusCheckRollup` (no extra call): the recorded sha
-# must be the PR's CURRENT head (a stale line — a later push, or a line left from
-# another item — is latched silent for that line), and `now mergeable` additionally
-# needs every OTHER rollup entry completed and non-red.
+# esc_recheck <esc_fields_line> — one settle poll of the recorded check; reports at
+# most once per line content. Once the line is armed (a re-checkable cause, a check
+# and a sha) it reads `gh pr view --json headRefOid,statusCheckRollup` itself — the
+# poll's state read never carries the rollup — and compares THAT call's head with
+# the rollup it returned: the recorded sha must be the PR's CURRENT head (a stale
+# line — a later push, or a line left from another item — is latched silent for that
+# line), and `now mergeable` additionally needs every OTHER rollup entry completed
+# and non-red. A failed rollup read is no report this poll (re-read next poll).
 esc_recheck() {
-  local pv="$1" f="${2:-}" cause chk rid att sha rec owner_repo j st concl a hs head others key
+  local f="${1:-}" pv cause chk rid att sha rec owner_repo j st concl a hs head others key
   [ -n "$f" ] || { recheck_done=1; return 0; }
   IFS='|' read -r cause chk rid att sha <<<"$f"
   case "$cause" in check_pending|check_red_unrelated) ;; *) recheck_done=1; return 0 ;; esac
   case "$chk" in ''|null) recheck_done=1; return 0 ;; esac
   case "$sha" in ''|null|*[!0-9a-fA-F]*) recheck_done=1; return 0 ;; esac
   [ "${#sha}" -ge 7 ] || { recheck_done=1; return 0; }   # the sha is prefix-compared below
+  pv="$("$GH" pr view "$pr_url" --json headRefOid,statusCheckRollup 2>/dev/null)" || return 0
   head="$(printf '%s' "$pv" | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
   case "$head" in ''|*[!0-9a-fA-F]*) return 0 ;; esac   # unreadable head ⇒ no report this poll
   case "$head" in "$sha"*) ;; *) case "$sha" in "$head"*) ;; *) recheck_done=1; return 0 ;; esac ;; esac
@@ -412,7 +425,7 @@ while :; do
     progress "lifetime cap (${max}s) reached watching $pr_url — stopped; run /automate --resume after the merge"
     echo "merge-watch: lifetime cap reached"; exit 0
   fi
-  view="$("$GH" pr view "$pr_url" --json state,headRefOid,statusCheckRollup 2>"$GH_ERR")"; rc=$?
+  view="$("$GH" pr view "$pr_url" --json state,headRefOid 2>"$GH_ERR")"; rc=$?
   state="$(printf '%s' "$view" | "$JQ" -r '.state // empty' 2>/dev/null)"
   if [ "$rc" -ne 0 ] || [ -z "$state" ]; then
     wait_s=$(( wait_s * 2 )); [ "$wait_s" -ge 1 ] || wait_s=1
@@ -473,7 +486,7 @@ while :; do
       echo "merge-watch: pr closed unmerged"; exit 0 ;;
     *) esc_now="$(esc_fields)"
        [ "$esc_now" = "$esc_seen" ] || { esc_seen="$esc_now"; recheck_done=0; }
-       [ "$recheck_done" -eq 1 ] || esc_recheck "$view" "$esc_now"
+       [ "$recheck_done" -eq 1 ] || esc_recheck "$esc_now"
        nap "$interval" ;;
   esac
 done
