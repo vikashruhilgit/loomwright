@@ -372,7 +372,32 @@ for v in pointer nopointer; do
     left="$(cd "$P" && bash "$H" resolve-folder stories)"
     case "$left" in *stories/03-y.md*) ok "(V1) AC6: resolve-folder still queues the unstamped story" ;; *) no "(V1) AC6: control story missing from the Queue: $left" ;; esac
     case "$left" in *stories/02-x.md*) no "(V1) AC6: the stamped story is re-queued: $left" ;; *) ok "(V1) AC6: the stamped story is not in the Queue resolve-folder prints" ;; esac
+    # V5 of #851 (live run automate-2026-11-09-153008): the stamp was written on disk but trail-pr's
+    # candidate filter dropped every path outside .supervisor/requirements/, so it never reached main.
+    # The trail branch closeout pushed must carry the stamped story.
+    case "$out" in *"trail-pr: opened "*) ok "(V2) closeout's trail-pr opened a trail PR" ;; *) no "(V2) no trail PR opened: $out" ;; esac
+    tb="$(git -C "$FX/origin.git" show "chore/$RUN_ID-trail-1:$REQ" 2>/dev/null)"
+    printf '%s\n' "$tb" | grep -qxF '## Status: done' && printf '%s\n' "$tb" | grep -qF -- "- **PR:** $PRURL" \
+      && ok "(V2) the trail branch carries $REQ stamped done (the stamp reaches the default branch on merge)" \
+      || no "(V2) trail branch lacks the stamped story: $(printf '%s' "$tb" | tr '\n' '|')"
+    # Evidence gate: the same story whose done stamp names a PR the forge does not read merged is
+    # excluded by name, exactly as a requirement file's would be.
+    sed -i.bak "s|^- \*\*PR:\*\* $PRURL\$|- **PR:** https://github.com/o/r/pull/999|" "$P/$REQ"; rm -f "$P/$REQ.bak"
+    out3="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout)"
+    case "$out3" in *"excluded $REQ — pr not merged"*) ok "(V2) a folder story whose stamp names an unmerged PR is gated: '$REQ — pr not merged'" ;; *) no "(V2) unmerged-PR story not gated: $out3" ;; esac
+    # Branch mode pushes run history to the metadata branch; a story belongs on the default branch, so
+    # it is named as excluded and never pushed there.
+    sed -i.bak "s|^- \*\*PR:\*\* https://github.com/o/r/pull/999\$|- **PR:** $PRURL|" "$P/$REQ"; rm -f "$P/$REQ.bak"
+    bm_switch
+    out4="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout)"
+    case "$out4" in *"excluded $REQ — folder story, not run history"*) ok "(V2/bm) branch mode names the folder story as excluded" ;; *) no "(V2/bm) no folder-story exclusion: $out4" ;; esac
+    bm_tree | grep -qxF "$REQ" && no "(V2/bm) the story was pushed to $BMB" || ok "(V2/bm) the story is not on $BMB"
   else
+    # The story is on main (the fixture commits it), so the trail branch's tree has it either way: ask
+    # whether the trail CHANGES it.
+    td="$(git -C "$FX/origin.git" diff --name-only "main...chore/$RUN_ID-trail-1" 2>/dev/null)"
+    printf '%s\n' "$td" | grep -qxF "$REQ" && no "(V2/control) the trail changed the story with no pointer: $(printf '%s' "$td" | tr '\n' ' ')" \
+      || ok "(V2/control) without a brief pointer the trail does not change the story (no done brief names it)"
     case "$out" in *"closeout: skipped — no done brief"*) ok "(V1/control) a brief without the Source requirement line ⇒ 'skipped — no done brief' (the pointer drives the stamp)" ;; *) no "(V1/control) expected 'skipped — no done brief': $out" ;; esac
     grep -qxF '## Status: done' "$P/$REQ" && no "(V1/control) the story was stamped without a pointer" || ok "(V1/control) the story is left unstamped"
   fi

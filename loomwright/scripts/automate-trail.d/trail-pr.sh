@@ -51,6 +51,7 @@ _trail_is_run_draft() {
 }
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
+TRAIL_STORIES=""           # folder stories _trail_candidates admitted (gated like requirements)
 TRAIL_SKIP_IGNORE_DROP=0   # 1 only on the branch-mode push path (_trail_meta_push)
 # _trail_sidecar_code <sidecar-check fail reason> — #618: the reason as a fixed plugin token for the
 # script event (never the reason text, which names keys and paths): the phrasings come from
@@ -126,23 +127,48 @@ _trail_candidates() {
   done <<EOF
 $(_trail_sidecars "$sc_dir" "$run_id")
 EOF
-  local queue
+  local queue done_ptrs="" brief ptr
   queue="$(awk '/^## Queue/{q=1;next} /^## /{q=0} q && /^- \[[ xX]\] /{sub(/^- \[[ xX]\] /,""); sub(/[[:space:]]+#.*$/,""); sub(/[[:space:]]+$/,""); print}' "$rf_rel" 2>/dev/null)"
+  TRAIL_STORIES=""
+  if [ -r "$HERE/brief-pointer.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$HERE/brief-pointer.sh"
+    for brief in .supervisor/jobs/done/*.md; do
+      [ -f "$brief" ] || continue
+      ptr="$(brief_requirement_pointer "$brief" 2>/dev/null)" || continue
+      [ -n "$ptr" ] && done_ptrs="$done_ptrs"$'\n'"${ptr#./}"
+    done
+  fi
   while IFS= read -r item; do
     [ -n "$item" ] || continue
     case "$item" in /*|*..*) continue ;; esac
     p="${item#./}"
     # Only a requirement file is trail: a Queue item naming any other tracked
     # path (a source file) would commit that file's local WIP into the trail PR.
-    case "$p" in .supervisor/requirements/*.md) ;; *) continue ;; esac
+    # A folder story kept outside .supervisor/requirements/ (`/automate --folder`)
+    # is a requirement file too, but only on evidence: a done brief's Source
+    # requirement names it exactly, it is no symlink, and it carries a done
+    # heading (closeout's stamp), whose PR _gate_keep then verifies as merged.
+    case "$p" in
+      .supervisor/requirements/*.md) ;;
+      *.md)
+        _in_list "$p" "$done_ptrs" || continue
+        [ -f "$p" ] && [ ! -L "$p" ] || continue
+        [ -n "$(_done_prs "$p")" ] || continue
+        # Branch mode pushes run history to the metadata branch; a story lives
+        # on the default branch, so it is named, never pushed there.
+        if [ "$TRAIL_SKIP_IGNORE_DROP" = 1 ]; then
+          TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — folder story, not run history: commit its stamp on the default branch"
+          continue
+        fi
+        TRAIL_STORIES="${TRAIL_STORIES:+$TRAIL_STORIES$'\n'}$p" ;;
+      *) continue ;;
+    esac
     [ -f "$p" ] && cands="$cands"$'\n'"$p"
   done <<EOF
 $queue
 EOF
   if [ -r "$HERE/brief-pointer.sh" ]; then
-    # shellcheck source=/dev/null
-    . "$HERE/brief-pointer.sh"
-    local brief ptr
     for brief in .supervisor/jobs/done/*.md .supervisor/jobs/failed/*.md; do
       [ -f "$brief" ] || continue
       ptr="$(brief_requirement_pointer "$brief" 2>/dev/null)" || continue
@@ -240,7 +266,7 @@ _outcome_prs() {
 # (the path's working copy, or a blob written to a temp file) may ride under
 # <trail-path>; 1 when it carries a done claim whose PR is not verifiably
 # merged. `.supervisor/requirements/**.md` → _done_prs; `.supervisor/jobs/done/*.md`
-# → _outcome_prs; any other path → 0. Every named PR must read `merged` via
+# → _outcome_prs; a folder story in TRAIL_STORIES → _done_prs; any other path → 0. Every named PR must read `merged` via
 # `automate-helpers.sh reconcile-item` (cached per URL in GATE_CACHE); `-`,
 # OPEN, CLOSED or an unreadable forge ⇒ 1 (fail closed).
 GATE_CACHE=""
@@ -249,7 +275,8 @@ _gate_keep() {
   case "$p" in
     .supervisor/requirements/*.md) prs="$(_done_prs "$f")" ;;
     .supervisor/jobs/done/*.md)    prs="$(_outcome_prs "$f")" ;;
-    *) return 0 ;;
+    *) _in_list "$p" "$TRAIL_STORIES" || return 0
+       prs="$(_done_prs "$f")" ;;
   esac
   [ -n "$prs" ] || return 0
   while IFS= read -r u; do
