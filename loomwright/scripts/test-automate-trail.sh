@@ -257,6 +257,8 @@ case "${1:-} ${2:-}" in
     # pr-view-fail: every call fails, its content on stderr (an empty file = no stderr);
     # pr-view-fail-count: the next <n> calls fail with pr-view-fail-msg on stderr.
     [ -f "$d/pr-view-fail" ] && { cat "$d/pr-view-fail" >&2; exit 1; }
+    # pr-view-nostate: exit 0 with a JSON document carrying no .state (and a stderr note)
+    [ -f "$d/pr-view-nostate" ] && { echo 'warning: partial response' >&2; echo '{}'; exit 0; }
     if [ -s "$d/pr-view-fail-count" ] && [ "$(cat "$d/pr-view-fail-count")" -gt 0 ]; then
       echo $(( $(cat "$d/pr-view-fail-count") - 1 )) > "$d/pr-view-fail-count"
       cat "$d/pr-view-fail-msg" >&2 2>/dev/null; exit 1

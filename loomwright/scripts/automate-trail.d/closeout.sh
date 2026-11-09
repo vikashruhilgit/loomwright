@@ -5,10 +5,11 @@
 # The post-merge close-out (SKILL §6 "Post-merge close-out"). Deterministic,
 # idempotent, fail-SAFE. Every output line is `closeout: <verb> — <detail>`
 # (verb ∈ removed|synced|stamped|checked|reconciled|skipped), except the
-# brief-repair and trail-pr lines, which are passed through verbatim. Execution
-# order: evidence gate → brief repair → [run lock] 3a worktrees → 4 sync → 3b
-# branch → 5 stamp → check off → 7b reconcile ## Current → ## Progress →
-# trail-pr → [release]. It never ticks `_BACKLOG.md` (human-owned; the step-5
+# brief-repair and trail-pr lines, which are passed through verbatim, and step 7c's
+# `merge-watch: stopped|stop skipped — …` line (printed only when it stopped, or failed
+# to stop, a watcher). Execution order: evidence gate → brief repair → [run lock] 3a
+# worktrees → 4 sync → 3b branch → 5 stamp → check off → 7b reconcile ## Current →
+# ## Progress → 7c stop this PR's merge watcher → trail-pr → [release]. It never ticks `_BACKLOG.md` (human-owned; the step-5
 # stamp is what `resolve-backlog` reads — SKILL §2). The check-off runs BEFORE
 # the trail so the trail PR records the closed-out item; the trail line is
 # printed but never appended to ## Progress (appending it would leave the run
@@ -161,7 +162,7 @@ closeout() {
 
   # ---- steps 3–7 under the run lock -----------------------------------------
   # The step numbers are the SKILL's labels (§6 "Post-merge close-out"); the
-  # EXECUTION order is 3a → 4 → 3b → 5 → 7 → 7b → 6, and the blocks below follow it.
+  # EXECUTION order is 3a → 4 → 3b → 5 → 7 → 7b → 7c → 6, and the blocks below follow it.
   CO_ROOT="$root"; CO_OWNER="automate-closeout:$run_id"
   local lk rc
   if [ -n "$sid" ]; then
@@ -388,13 +389,16 @@ PROGRESS
   # automate-merge-watch.sh --stop holds the guard (is_our_watcher on the marker pid,
   # the same pr_url, never a recycled pid, never the calling watcher). Silent unless it
   # stopped one: then its line is printed and appended to ## Progress (once — a stopped
-  # watcher is gone, so a re-run leaves the run file byte-identical).
+  # watcher is gone, so a re-run leaves the run file byte-identical). A `could not stop`
+  # line is printed but never appended: the watcher is still there, so every re-run would
+  # append it again.
   local mw
   mw="$(bash "$HERE/automate-merge-watch.sh" --stop "$rf_abs" "$pr_url" </dev/null 2>/dev/null)"
   case "$mw" in
-    "merge-watch: stopped "*|*"could not stop"*)
+    "merge-watch: stopped "*)
       echo "$mw"
       bash "$HLP" progress-append "$rf_rel" "$(date -u +%Y-%m-%dT%H:%M:%SZ) closeout $pr_url: $mw" >/dev/null 2>&1 ;;
+    *"could not stop"*) echo "$mw" ;;
   esac
 
   # ---- item_timing (iq02 T04): ONE script-written event per PR, appended to the

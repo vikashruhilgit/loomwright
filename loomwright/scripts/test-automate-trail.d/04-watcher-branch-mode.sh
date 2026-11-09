@@ -219,6 +219,17 @@ wout="$(WF_MAX=60 wf_watch "$WATCH")"
 ! grep -qE 'merge-watch: gh pr view .* (has failed|works again)' "$P/$RF_REL" && [ "$(spy_count notify "$SPYLOG.notify")" = 1 ] \
   && ok "WF3: a single failed poll (below FAIL_NOTIFY) reports nothing beyond its log line" || no "WF3: $(grep merge-watch "$P/$RF_REL" | tr '\n' '|')"
 
+# (WF4) gh exits 0 but its output has no .state ⇒ the failure line says so (gh_err_detail's
+# rc==0 branch), carrying the stderr gh printed, never a bogus "exit 0: …" line.
+closeout_fixture 929
+spy_reset
+wf_state OPEN
+touch "$GH_STUB_DIR/pr-view-nostate"
+wout="$(wf_watch "$WATCH")"
+nf="$(grep -c '^merge-watch: gh pr view failed — next poll in [0-9]*s (exit 0 but no .state in its output (stderr: warning: partial response))$' <<<"$wout")"
+[ "$nf" -ge 2 ] && [ "$nf" = "$(grep -c 'gh pr view failed' <<<"$wout")" ] \
+  && ok "WF4: exit 0 with no .state ⇒ every failure line names it + gh's stderr ($nf polls)" || no "WF4: $wout"
+
 echo "== WS. closeout from any caller stops this run's watcher of that PR =="
 # ws_live <pr_url> <req> — a live watcher of <pr_url> (OPEN, 30s naps); sets WS_PID
 ws_live() {
