@@ -239,11 +239,11 @@ PR_SNAP=""
 # _pr_snap_get <pid> <col> — one field of <pid>'s snapshot row (2 ppid, 3 lstart, 4 etime, 5 the
 # command, everything after the fourth tab); empty when the pid is not in the snapshot. Never runs ps.
 _pr_snap_get() {
-  printf '%s\n' "$PR_SNAP" | awk -F'\t' -v p="$1" -v c="$2" '
+  awk -F'\t' -v p="$1" -v c="$2" '
     $1 == p {
       if (c < 5) { print $c } else { s = $0; for (k = 1; k < 5; k++) s = substr(s, index(s, "\t") + 1); print s }
       exit
-    }'
+    }' <<<"$PR_SNAP"
 }
 
 # _pr_lstart <pid> — the process start time, TZ- and locale-pinned; empty when the pid is gone.

@@ -332,7 +332,7 @@ load_verdicts() {
 }
 
 verdict_of() {
-  printf '%s\n' "$VERDICTS" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'
+  awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' <<<"$VERDICTS"
 }
 
 # provider_usable <label> <name> — 0 when the check marks <name> usable for read-only or write seats.

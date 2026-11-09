@@ -44,6 +44,17 @@
 # only a TEST sources, is not seen. Builtin-writer occurrences are left to rule 2, so a site is counted
 # once. Pre-existing sites are a per-file RATCHET (PROD_BASELINE below), the same OVER / UNDER / STALE
 # contract as rule 2. The fix is the rule-1 form, `grep -q PAT < <(producer)`.
+#
+# RULE 4 — a builtin WRITER (printf / echo) piped into an awk that can `exit` before reading all its
+# input, in ANY shell script. `grep -q` is not the only early reader: an awk program with `exit` in a
+# BEGIN, pattern or action block stops reading at that point, so a writer still sending gets EPIPE,
+# exactly the rule-2 race. test-read-token-ledger.sh's PI19 helper went red on ci run 42559229895
+# (`printf: write error: Broken pipe` at its `printf '%s\n' "$1"` line): awk exited at the first row
+# past the item, and under pipefail the writer's failure became the helper's verdict, so a correct
+# report read as "phase row exceeds item". An `exit` inside END is safe (input is already read), so
+# the 140-odd writer-into-awk pipes that read to EOF are not flagged. The fix is the same free one:
+# `awk … <<<"$var"`. Every site was rewritten when the rule landed, so AWK_EXIT_BASELINE below is empty;
+# it keeps the rule-2 per-file OVER / UNDER / STALE ratchet contract.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -109,6 +120,97 @@ scan_prod() {
   done
   return 0
 }
+
+# awk_exit_hits <file> — prints `startline:text` for each rule-4 occurrence: a builtin writer (printf /
+# echo) piped into an awk whose INLINE program has an `exit` outside every END block (a BEGIN, pattern
+# or action `exit` stops reading early). It parses past awk's options (-v, -F, -F'…' and their quoted
+# args) to the first single-quoted program, across lines when the program spans them, and drops END
+# blocks by brace matching. An `awk -f file` or a program in a variable is not read. Honest limits: a
+# `|` inside the writer's own quoted args hides that pipe, and a brace inside an END block's string
+# or regex can throw off the brace match.
+awk_exit_hits() {
+  awk -v sq="'" '
+    function skipword(s,   i, c, q) {
+      i = 1
+      while (i <= length(s)) {
+        c = substr(s, i, 1)
+        if (c == " " || c == "\t" || c == "\n") break
+        if (c == sq || c == "\"") { q = index(substr(s, i + 1), c); if (!q) return "\001"; i += q + 1; continue }
+        i++
+      }
+      return substr(s, i)
+    }
+    # parse <text after "awk"> — 1: PROG/REST set; 0: the program is not closed yet; -1: no inline program
+    function parse(s,   q) {
+      while (1) {
+        sub(/^[ \t\n]+/, "", s)
+        if (s == "") return 0
+        if (substr(s, 1, 1) == sq) {
+          q = index(substr(s, 2), sq); if (!q) return 0
+          PROG = substr(s, 2, q - 1); REST = substr(s, q + 2); return 1
+        }
+        if (substr(s, 1, 1) != "-" || s ~ /^-f([ \t]|$)/ || s ~ /^--/) return -1
+        if (s ~ /^-[Fv][ \t]/) { s = substr(s, 3); sub(/^[ \t]+/, "", s) }
+        s = skipword(s); if (s == "\001") return 0
+      }
+    }
+    # strip_end <program> — the program with every END { ... } block removed (brace-matched)
+    function strip_end(p,   out, st, j, i, d, c) {
+      out = ""
+      while (match(p, /(^|[^A-Za-z0-9_])END[ \t\n]*[{]/)) {
+        st = (substr(p, RSTART, 1) == "E") ? RSTART : RSTART + 1
+        j = RSTART + RLENGTH - 1; d = 0
+        for (i = j; i <= length(p); i++) {
+          c = substr(p, i, 1)
+          if (c == "{") d++
+          else if (c == "}") { d--; if (d == 0) break }
+        }
+        out = out substr(p, 1, st - 1); p = substr(p, i + 1)
+      }
+      return out p
+    }
+    # uncomment <logical line> — the line cut at its first ` #` outside single and double quotes, so a
+    # trailing shell comment that NAMES the shape is never red, while a `#` inside an awk program is kept
+    function uncomment(s,   i, c, q) {
+      q = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") { if (c == q) q = ""; else if (c == "\\" && q == "\"") i++; continue }
+        if (c == sq || c == "\"") q = c
+        else if (c == "\\") i++
+        else if (c == "#" && i > 1 && substr(s, i - 1, 1) ~ /[ \t]/) return substr(s, 1, i - 1)
+      }
+      return s
+    }
+    function scan(s, ln, txt,   r) {
+      while (match(s, /(^|[^[:alnum:]_-])(printf|echo)([ \t][^|]*)?[|][ \t]*awk([ \t]|$)/)) {
+        s = substr(s, RSTART + RLENGTH)
+        r = parse(s)
+        if (r == 0) { PEND = s; PLN = ln; PTXT = txt; PN = 0; return }
+        if (r < 0) continue
+        if (strip_end(PROG) ~ /(^|[^A-Za-z0-9_])exit([^A-Za-z0-9_]|$)/) print ln ":" substr(txt, 1, 200)
+        s = REST
+      }
+    }
+    {
+      if (PEND != "") {
+        PEND = PEND "\n" $0; PN++
+        r = parse(PEND)
+        if (r == 0 && PN < 80) next
+        if (r == 1 && strip_end(PROG) ~ /(^|[^A-Za-z0-9_])exit([^A-Za-z0-9_]|$)/) print PLN ":" substr(PTXT, 1, 200)
+        PEND = ""
+        next
+      }
+      if (buf == "") start = NR
+      if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; next }
+      l = buf $0; buf = ""
+      if (l ~ /^[ \t]*#/) next
+      scan(uncomment(l), start, l)
+    }' "$1"
+  return 0
+}
+# count_awk_exit <file> — number of rule-4 occurrences in one file
+count_awk_exit() { awk_exit_hits "$1" | wc -l | tr -d ' '; }
 
 # pipefail_edges <root> <rel...> — ONE awk pass over the files (paths relative to <root>): prints
 # `P <rel>` for a file that sets pipefail at a command position, and `E <rel> <glob>` for each `*.sh`
@@ -365,6 +467,42 @@ $r3out"
 [ -z "$(scan "$S3/entry.d/launch.sh")$(scan_writer "$S3/entry.d/launch.sh")" ] && ok "rules 1 and 2 alone miss the L22 module (the gap)" \
   || no "rule 1 or 2 unexpectedly flags the L22 module — the controls above are stale"
 
+echo "== rule 4 detector controls: a builtin writer piped into an awk that can exit early =="
+# Fixtures are assembled at runtime from "$P" so this file holds none of the shapes it bans.
+{ printf '%s %s awk %s\n' 'printf "%s\n" "$x"' "$P" "'index(\$0, m) { on = 1; next } on { exit }'"; } > "$T/a-bad-action.sh"
+{ printf '%s %s awk -v m="$2" -F%s %s\n' 'printf "%s\n" "$1"' "$P" "' \\\\| '" "'"
+  echo '    index($0, m) { on = 1; next }'; echo '    on { exit }'; echo "    END { exit bad }'"; } > "$T/a-bad-multiline.sh"
+{ printf 'x="$(%s %s awk -F%s %s)"\n' 'echo "$cw"' "$P" "'\\t'" "'\$1 == q { print \$2; exit }'"; } > "$T/a-bad-echo-F.sh"
+{ printf '%s \\\n  %s awk %s\n' 'printf "%s" "$x"' "$P" "'BEGIN { exit 1 }'"; } > "$T/a-bad-begin-continued.sh"
+{ printf '%s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ n++ } END { exit !n }'"; } > "$T/a-good-end-only.sh"
+{ printf '%s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ print \$1 }'"; } > "$T/a-good-noexit.sh"
+{ echo "awk 'on { exit }' <<<\"\$x\""; } > "$T/a-good-herestring.sh"
+{ printf '%s %s awk %s\n' 'jq -r .x "$f"' "$P" "'{ print; exit }'"; } > "$T/a-good-notbuiltin.sh"
+{ printf '%s %s awk -f prog.awk\n' 'printf "%s" "$x"' "$P"; } > "$T/a-good-progfile.sh"
+{ printf '  # %s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ exit }'"; } > "$T/a-good-comment.sh"
+{ printf '%s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ exitcode = 1 } END { exit exitcode }'"; } > "$T/a-good-exit-substring.sh"
+{ printf '[ -n "$x" ] || return 0   # e.g. %s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ n++; exit }'"; } > "$T/a-good-trailing-comment.sh"
+{ printf '%s %s awk %s\n' 'printf "%s" "$x"' "$P" "'{ print \"a # b\"; exit }'"; } > "$T/a-bad-hash-in-program.sh"
+for c in a-bad-action a-bad-multiline a-bad-echo-F a-bad-begin-continued a-bad-hash-in-program; do
+  [ "$(count_awk_exit "$T/$c.sh")" = "1" ] && ok "rule 4 flags $c (once)" \
+    || no "rule 4 missed or miscounted $c ($(count_awk_exit "$T/$c.sh")): $(cat "$T/$c.sh")"
+done
+for c in a-good-end-only a-good-noexit a-good-herestring a-good-notbuiltin a-good-progfile a-good-comment a-good-exit-substring a-good-trailing-comment; do
+  [ -z "$(awk_exit_hits "$T/$c.sh")" ] && ok "rule 4 does not flag $c" \
+    || no "rule 4 false positive on $c: $(cat "$T/$c.sh")"
+done
+# the multi-line hit is reported at the writer's line, where the fix goes
+case "$(awk_exit_hits "$T/a-bad-multiline.sh")" in 1:*) ok "a multi-line program's hit names the writer's line" ;;
+  *) no "multi-line hit at the wrong line: $(awk_exit_hits "$T/a-bad-multiline.sh")" ;; esac
+# MUTATION CONTROL: with END-stripping disabled the END-only fixture IS flagged — strip_end is load-bearing
+mut="$(declare -f awk_exit_hits | sed 's/strip_end(PROG)/(PROG)/g; s/^awk_exit_hits /awk_exit_hits_mut /')"
+eval "$mut"
+[ -n "$(awk_exit_hits_mut "$T/a-good-end-only.sh")" ] && ok "mutation control: without END stripping the END-only fixture is flagged (strip_end is load-bearing)" \
+  || no "mutation control: the END-only fixture passes even without strip_end — that control is vacuous"
+# The red the user saw: rules 1-3 never look at awk, so the pre-fix PI19 helper slipped past all three.
+[ -z "$(scan "$T/a-bad-multiline.sh")$(scan_writer "$T/a-bad-multiline.sh")" ] && ok "rules 1 and 2 alone miss the PI19 shape (the gap)" \
+  || no "rule 1 or 2 unexpectedly flags the PI19 shape — the controls above are stale"
+
 echo "== the suite =="
 shopt -s nullglob
 # suite_files <root> — sets files=(…) to the rule-1 scan set under <root>: every test file, plus every
@@ -453,6 +591,24 @@ else
       STALE) no "PROD_BASELINE lists $rel, which no longer exists or no longer runs under pipefail — drop the entry" ;;
     esac
   done <<<"$phits"
+fi
+
+echo "== rule 4 over every shell script (ratchet) =="
+# AWK_EXIT_BASELINE — pre-existing rule-4 sites, `count path`. Empty: all 27 sites were rewritten when the
+# rule landed. Never add a path — rewrite the new site as `awk … <<<"$var"` instead.
+AWK_EXIT_BASELINE=''
+ahits="$(ratchet "$REPO_ROOT" "$AWK_EXIT_BASELINE" count_awk_exit "${all_sh[@]}")"
+if [ -z "$ahits" ]; then
+  ok "no builtin writer is piped into an early-exiting awk beyond the baseline"
+else
+  while read -r kind rel got base; do
+    case "$kind" in
+      OVER)  no "$rel: $got builtin-writer pipe(s) into an awk that can exit early, baseline $base — rewrite as: awk … <<<\"\$var\""
+             awk_exit_hits "$REPO_ROOT/$rel" | sed "s|^|    $rel:|" ;;
+      UNDER) no "$rel: $got builtin-writer pipe(s) into an early-exiting awk, below baseline $base — lower AWK_EXIT_BASELINE to $got" ;;
+      STALE) no "AWK_EXIT_BASELINE lists $rel, which no longer exists — drop the entry" ;;
+    esac
+  done <<<"$ahits"
 fi
 
 echo

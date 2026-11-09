@@ -170,7 +170,7 @@ ga_decide() {
   # The catalog row — read from lane-policy.sh every call, never a second copy.
   row="$(bash "$GA_LANE_POLICY" catalog 2>/dev/null </dev/null)"
   [ -n "$row" ] || { _ga_ask catalog_unreadable "lane-policy.sh catalog printed nothing"; return 0; }
-  row="$(printf '%s\n' "$row" | awk -F'\t' -v c="$code" '$1 == c { print; exit }')"
+  row="$(awk -F'\t' -v c="$code" '$1 == c { print; exit }' <<<"$row")"
   [ -n "$row" ] || { _ga_ask unknown_code "$code is not a catalog code"; return 0; }
   rowj="$(jq -Rc 'split("\t") | (.[2] | split("|")) as $l
     | {policy: .[1], labels: ($l | map(sub("[?!]$"; ""))),

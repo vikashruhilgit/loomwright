@@ -290,7 +290,7 @@ _jr_snapshot() {
   [ -n "$JR_SNAP" ] || { JR_SNAP_WHY="unavailable — the process snapshot is empty"; return 1; }
   return 0
 }
-_jr_snap_get() { printf '%s\n' "$JR_SNAP" | awk -F'\t' -v p="$1" -v c="$2" '$1 == p { print $c; exit }'; }
+_jr_snap_get() { awk -F'\t' -v p="$1" -v c="$2" '$1 == p { print $c; exit }' <<<"$JR_SNAP"; }
 # _jr_is_host_cmd <command line> — 0 for the host's own session: an executable whose basename is `claude`,
 # or a command line containing `bg-pty-host` (the one host rule; not-the-plugins and the session check
 # share it). `ps` prints argv joined by spaces, so an absolute executable path that contains a space (the
@@ -673,7 +673,7 @@ _jr_c_state() {
     pid="$(awk -F'\t' '$1 == "pid" { print $2; exit }' "$m" 2>/dev/null)"
     pr="$(awk -F'\t' '$1 == "pr_url" { print $2; exit }' "$m" 2>/dev/null)"
     _jr_prlist
-    live="$(printf '%s\n' "$JR_PRLIST" | awk -F'\t' -v p="$pid" '$2 == "merge-watch" && $3 == p && $5 != "finished" { print "y"; exit }')"
+    live="$(awk -F'\t' -v p="$pid" '$2 == "merge-watch" && $3 == p && $5 != "finished" { print "y"; exit }' <<<"$JR_PRLIST")"
     if [ -z "$live" ] && [ -z "$JR_SNAP_WHY" ] && [ -n "$JR_SNAP" ]; then
       cmd="$(_jr_snap_get "$pid" 5)"
       case "$cmd" in *automate-merge-watch.sh*) live=y ;; esac
@@ -725,7 +725,7 @@ _jr_c_adjacent() {
   while IFS="$T" read -r pid p ls et cmd; do
     [ -n "$pid" ] || continue
     case "$cmd" in caffeinate*|*/caffeinate*) ;; *) continue ;; esac
-    w="$(printf '%s\n' "$cmd" | awk '{ for (i = 1; i < NF; i++) if ($i == "-w") { print $(i + 1); exit } }')"
+    w="$(awk '{ for (i = 1; i < NF; i++) if ($i == "-w") { print $(i + 1); exit } }' <<<"$cmd")"
     _jr_is_uint "$w" || continue
     age="$(_jr_etime_s "$et")"
     _jr_row caf "$g" "caf|$pid|$ls" "keep-awake caffeinate pid $pid" "keep-awake for pid $w" "$age" \
@@ -851,7 +851,7 @@ _jr_group_of_id() {
     slot-*|caf-*) echo plugin-adjacent ;; ext-*) echo not-the-plugins ;; unk-*) echo unknown ;; *) echo "" ;;
   esac
 }
-_jr_find() { printf '%s' "$JR_ROWS" | awk -F'\t' -v i="$1" '$1 == i { print; exit }'; }
+_jr_find() { awk -F'\t' -v i="$1" '$1 == i { print; exit }' <<<"$JR_ROWS"; }
 
 _jr_act_lock() {   # _jr_act_lock <id> <checkout> <recorded pid> <mode reclaim|force>
   local c="$2" pid="$3" lv st age out rc after

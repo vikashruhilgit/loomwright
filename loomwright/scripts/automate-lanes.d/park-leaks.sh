@@ -192,7 +192,7 @@ _lanes_leak_claude() {
     fi
     while IFS=$'\t' read -r pid cmd; do
       [ -n "$pid" ] || continue
-      x="$(printf '%s\n' "$cw" | awk -F'\t' -v q="$pid" '$1 == q { print $2; exit }')"
+      x="$(awk -F'\t' -v q="$pid" '$1 == q { print $2; exit }' <<<"$cw")"
       _lanes_path_tied "$x" "$root" "$dirs" && out="$out$pid $cmd"$'\n'
     done <<<"$cand"
   fi
