@@ -83,6 +83,10 @@ BRIEF_REQUIREMENT_PREFIX=".supervisor/requirements/"
 # echoes nothing when the brief carries no pointer line (pre-feature briefs and
 # direct `/supervisor task:` runs legitimately carry none — that is a silent
 # no-op, never an error). Only the FIRST matching line is honoured.
+# The value is untrusted agent text. A caller that opens or writes it as a path
+# goes through brief_requirement_path's containment guards. A membership-only
+# caller (closeout's item match, trail-pr's folder-story check) compares it as a
+# string against a run file's own Queue item and never uses it as a path.
 brief_requirement_pointer() {
   local brief="${1:-}" raw ptr
   [ -n "$brief" ] || return 1

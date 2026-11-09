@@ -388,6 +388,22 @@ for v in pointer nopointer; do
     # Branch mode pushes run history to the metadata branch; a story belongs on the default branch, so
     # it is named as excluded and never pushed there.
     sed -i.bak "s|^- \*\*PR:\*\* https://github.com/o/r/pull/999\$|- **PR:** $PRURL|" "$P/$REQ"; rm -f "$P/$REQ.bak"
+    # The two fail-closed guards: a queued story a done brief names that carries NO done heading
+    # (its WIP must never ride), and one that is a symlink (here to the stamped story, so only the
+    # -L guard keeps it out). Neither may appear among the paths the trail branch changes.
+    ( cd "$P"
+      printf '# Story 04\n\n## Status: ready\n\nlocal WIP\n' > stories/04-z.md
+      ln -s 02-x.md stories/05-l.md
+      awk -v r="$REQ" '{ print } $0 ~ /^- \[[ xX]\] / && substr($0, 7) == r { print "- [ ] stories/04-z.md"; print "- [ ] stories/05-l.md" }' \
+        ".supervisor/automate/$RUN_ID.md" > "$FX/rf.tmp" && mv "$FX/rf.tmp" ".supervisor/automate/$RUN_ID.md"
+      printf '# Brief\n## Environment\n- **Source requirement:** stories/04-z.md\n' > .supervisor/jobs/done/brief-04.md
+      printf '# Brief\n## Environment\n- **Source requirement:** stories/05-l.md\n' > .supervisor/jobs/done/brief-05.md )
+    grep -qxF -- '- [ ] stories/05-l.md' "$P/$RF_REL" || no "(V2) guard legs: the Queue rows were not added"
+    out5="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout)"
+    td="$(git -C "$FX/origin.git" diff --name-only "main...chore/$RUN_ID-trail-1" 2>/dev/null)"
+    printf '%s\n' "$td" | grep -qxF "$REQ" && ok "(V2) guard legs: the stamped story still rides" || no "(V2) guard legs: stamped story missing from the trail: $out5"
+    printf '%s\n' "$td" | grep -qxF stories/04-z.md && no "(V2) an unstamped story rode the trail (its WIP was committed)" || ok "(V2) a story with no done heading is not trail, even with a brief naming it"
+    printf '%s\n' "$td" | grep -qxF stories/05-l.md && no "(V2) a symlinked story rode the trail" || ok "(V2) a symlinked story is not trail, even pointing at a stamped one"
     bm_switch
     out4="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout)"
     case "$out4" in *"excluded $REQ — folder story, not run history"*) ok "(V2/bm) branch mode names the folder story as excluded" ;; *) no "(V2/bm) no folder-story exclusion: $out4" ;; esac

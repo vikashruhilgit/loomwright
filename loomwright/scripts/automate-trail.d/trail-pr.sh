@@ -133,6 +133,10 @@ EOF
   if [ -r "$HERE/brief-pointer.sh" ]; then
     # shellcheck source=/dev/null
     . "$HERE/brief-pointer.sh"
+    # Membership only: a pointer is untrusted brief text and is never used as a
+    # path here, only matched against this run file's own Queue items below. So
+    # no brief_requirement_path guard, which by design refuses every path outside
+    # .supervisor/requirements/ (the folder stories this list exists to admit).
     for brief in .supervisor/jobs/done/*.md; do
       [ -f "$brief" ] || continue
       ptr="$(brief_requirement_pointer "$brief" 2>/dev/null)" || continue
@@ -266,7 +270,8 @@ _outcome_prs() {
 # (the path's working copy, or a blob written to a temp file) may ride under
 # <trail-path>; 1 when it carries a done claim whose PR is not verifiably
 # merged. `.supervisor/requirements/**.md` → _done_prs; `.supervisor/jobs/done/*.md`
-# → _outcome_prs; a folder story in TRAIL_STORIES → _done_prs; any other path → 0. Every named PR must read `merged` via
+# → _outcome_prs; a folder story in TRAIL_STORIES → _done_prs; any other path
+# → 0. Every named PR must read `merged` via
 # `automate-helpers.sh reconcile-item` (cached per URL in GATE_CACHE); `-`,
 # OPEN, CLOSED or an unreadable forge ⇒ 1 (fail closed).
 GATE_CACHE=""
