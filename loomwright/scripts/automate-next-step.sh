@@ -222,7 +222,11 @@
 #                                                   notification (notify-desktop.sh); ready_for_release
 #                                                   ⇒ `lane-park-notify` + the advisory `lane-readiness`
 #   NEXT_STEP_LOCK_CMD    acquire|release --owner automate:<run_id> [--session-id <sid>]
-#                                                   default: bash run-lock.sh
+#                                                   default: bash run-lock.sh — it does NOT intercept the
+#                                                   --resume entry's read-only `run-lock.sh probe`, which
+#                                                   always runs the real script (a scratch root without a
+#                                                   lock reads run_lock_clear; legs that need a held lock
+#                                                   take a real one)
 #   NEXT_STEP_LOCK_RETRY_SECONDS  pause between the 3 retries of a refused post-release acquire (5)
 #   `gh` (LOOMWRIGHT_GH_BIN overrides it, as in every helper) — the drain spawn's head-sha read and
 #   learning-emit's one `gh pr view <pr> --json files,additions,deletions,changedFiles` fetch (a
@@ -243,7 +247,8 @@
 # byte-unchanged, no backup), `config_backup_stranded`, `session_id_missing` / `session_id_malformed`
 # (`--start run|pick` / `--resume` without this loop's session id), `run_already_started`,
 # `pick_already_started` (a spawn of this pass is pending), `run_done` (`--start pick` on a `## Status:
-# done` run), `run_not_incomplete` (`--resume --run <id>` naming no run; a run that reads done is exit 0 `done`), `drain_already_owned`,
+# done` run), `run_not_incomplete` (`--resume --run <id>` naming no run; a run that reads done is exit 0 `done`),
+# `run_lock_held` / `run_lock_unreadable` (`--resume` on a run live in another session: `run-lock.sh probe`), `drain_already_owned`,
 # `reserved_prefix` — nothing written, but for ONE exception: a refused `--result` report appends its ok:false
 # line to the coordinator-model ledger (the coordinator-model block below; usage errors append nothing).
 # A writer's own non-zero code is passed through (progress-append's 3,
@@ -3740,6 +3745,21 @@ elif [ -n "$RESUME_DIR" ]; then
     printf '%s\n' "$pending"; exit 0
   fi
   ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
+  # a run whose PICK lock a RUNNING coordinator in another session holds is live: its sidecar carries that
+  # coordinator's pending instruction, and resetting it here refuses the report that answers it (the
+  # in-flight phase result is orphaned). Refused before the reset, like resume-glob --finalize leaves a
+  # locked run unfinalized. `run-lock.sh probe` applies acquire's own re-entrancy and holder_alive rules;
+  # an answer that is neither of its two lines fails closed (the run's liveness is unknown).
+  # Honest limit: a check, not mutual exclusion — a session that acquires the lock between this probe and
+  # the reset below is not seen (the window is these few lines; the PICK acquire still serialises the runs).
+  ns_lk="$(bash "$HERE/run-lock.sh" probe --session-id "$SID" </dev/null 2>/dev/null | head -n 1)"
+  case "$ns_lk" in
+    run_lock_clear) ;;
+    "run_lock_held owner=automate:$RUN_ID "*)
+      ns_die2 "${ns_lk% age=*} — run $RUN_ID is live in another session (its PICK lock is held by a running coordinator); --resume would reset its next-step sidecar — nothing written past the start steps" ;;
+    "run_lock_held owner="*) ;;   # another run's lock: this run has no live coordinator (PICK refuses while it is held)
+    *) ns_die2 "run_lock_unreadable — run-lock.sh probe printed '${ns_lk:-nothing}'; whether $RUN_ID is live in another session is unknown — nothing written past the start steps" ;;
+  esac
   stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
   NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
   st_set resume_n "$NS_RES_N"; st_set resume_sel "$RUN_SEL"
