@@ -740,7 +740,7 @@ echo "== (r) a TMPDIR inside the repo: the scratch dir goes under /tmp, the user
 # `git status` saw `?? <tmpdir>/prove-rule-check.*/logs/now.out` in the user's tree and failed
 # (FAILS_NOW). The check below asserts exactly that no such path is visible, and still needs the
 # token (so the counterexample proves). A symlinked alias of the in-repo TMPDIR is caught too.
-CHECK_R='grep -q TOKEN src/a.txt && ! git status --porcelain --untracked-files=all | grep -q prove-rule-check.'
+CHECK_R='grep -q TOKEN src/a.txt && ! grep -q prove-rule-check. < <(git status --porcelain --untracked-files=all)'
 # r_case <prover> <repo> <tmpdir> — one run; sets OUT, RC, BEFORE, AFTER.
 r_case() {
   BEFORE="$(state "$2" 2>&1)"
@@ -755,7 +755,7 @@ r_ok() {   # r_ok <prover> — exit 0 iff (r) holds for a direct and a symlinked
     if [ "$t" = link ]; then rm -f "$ROOT/tmplink"; ln -s "$rr/tmpin" "$ROOT/tmplink"; r_case "$1" "$rr" "$ROOT/tmplink"
     else r_case "$1" "$rr" "$rr/tmpin"; fi
     if [ "$RC" -ne 0 ] || [ "$(last_line)" != "verdict: PROVEN" ] || [ -n "$(ls -A "$rr/tmpin")" ] \
-       || [ "$BEFORE" != "$AFTER" ] || ! printf '%s\n' "$OUT" | grep -q 'lies inside the repo'; then
+       || [ "$BEFORE" != "$AFTER" ] || ! grep -q 'lies inside the repo' <<<"$OUT"; then
       RWHY="$RWHY [$t: rc=$RC $(last_line) tmpin=[$(ls -A "$rr/tmpin" | tr '\n' ' ')]]"
     fi
   done
