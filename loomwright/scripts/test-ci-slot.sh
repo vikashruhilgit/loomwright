@@ -88,6 +88,9 @@
 #             is never folded into — the caller is counted and waits (N=1) — while an unreadable
 #             boot time keeps today's fold. MUTATION CONTROL: drop repo_fold's boot-time skip ⇒ the
 #             caller folds into the pre-boot record and (G15) fails.
+#   (P27) LOOMWRIGHT_CI_SLOT_POLL of `.`, `1.2.3`, `0` or empty polls with `sleep 2` (a PATH `sleep`
+#        logs its arguments), never a sleep that returns at once. MUTATION CONTROL: the pre-fix
+#        POLL check restored ⇒ (P27) fails.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -851,6 +854,54 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if repoboot_ok "$mut"; then no "(G15) MUTATION CONTROL: without repo_fold's boot-time skip (G15) still passed — it proves nothing"
   else ok "(G15) MUTATION CONTROL: without repo_fold's boot-time skip (G15) fails ($GWHY)"; fi
 else no "(G15) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (P27) LOOMWRIGHT_CI_SLOT_POLL must be a number `sleep` takes, above zero: `.` and `1.2.3` make every
+# poll's sleep fail at once and `0` returns at once, so a queued waiter spun against the counter mutex.
+# Each such value (and an empty one) must poll with `sleep 2`. A `sleep` on PATH logs every argument
+# it is given; four waiters queue behind one live holder (N=1) with --wait 3, in parallel.
+mkdir -p "$tmp/logsleep"
+cat > "$tmp/logsleep/sleep" <<'EOS'
+#!/bin/sh
+printf '%s\n' "$1" >> "$POLL_ARGS"
+exec /bin/sleep "$@"
+EOS
+chmod +x "$tmp/logsleep/sleep"
+poll_ok() {   # poll_ok SUT — exit 0 iff every bad POLL value polls with `sleep 2`; GWHY says which failed
+  local s="$1" h v i=0 ws="" w lives=""
+  GWHY=""; setload ok; rm -rf "$MDIR/holders/"* "$d1/slots/"* "$d1/tickets/"*
+  live; h=$LIVE
+  (cd "$tmp/c1" && LOOMWRIGHT_CI_SLOTS=1 bash "$s" acquire p27h --pid "$h" >/dev/null 2>&1)
+  for v in . 1.2.3 0 ''; do
+    i=$((i + 1)); : > "$tmp/p27.$i"; live; lives="$lives $LIVE"
+    (cd "$tmp/c1" && PATH="$tmp/logsleep:$PATH" POLL_ARGS="$tmp/p27.$i" LOOMWRIGHT_CI_SLOTS=1 \
+      LOOMWRIGHT_CI_SLOT_POLL="$v" bash "$s" acquire p27 --pid "$LIVE" --wait 3 >/dev/null 2>&1) &
+    ws="$ws $!"
+  done
+  for w in $ws; do wait "$w" 2>/dev/null; done
+  i=0
+  for v in . 1.2.3 0 ''; do
+    i=$((i + 1))
+    if ! grep -qx 2 "$tmp/p27.$i" || { [ -n "$v" ] && grep -qxF -- "$v" "$tmp/p27.$i"; }; then
+      GWHY="${GWHY}POLL='$v' slept with [$(sort "$tmp/p27.$i" | uniq -c | tr -s ' \n' ' ')]; "
+    fi
+  done
+  (cd "$tmp/c1" && bash "$s" release --pid "$h") >/dev/null 2>&1
+  for w in $h $lives; do kill "$w" 2>/dev/null; wait "$w" 2>/dev/null; done
+  rm -rf "$d1/slots/"* "$d1/tickets/"* "$MDIR/holders/"*
+  [ -z "$GWHY" ]
+}
+if poll_ok "$SUT"; then ok "(P27) LOOMWRIGHT_CI_SLOT_POLL of '.', '1.2.3', '0' or empty polls with sleep 2 (never a sleep that returns at once)"
+else no "(P27) $GWHY"; fi
+mut="$tmp/mut-poll.sh"
+P27_ORIG="$(cat <<'EOS'
+case "$POLL" in ''|*[!0-9.]*) POLL=2 ;; esac
+EOS
+)"
+awk -v o="$P27_ORIG" '/# POLLCHECK$/ { if (!d) print o; d = 1; next } { print }' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut" && grep -qxF -- "$P27_ORIG" "$mut"; then
+  if poll_ok "$mut"; then no "(P27) MUTATION CONTROL: with the pre-fix POLL check (P27) still passed — it proves nothing"
+  else ok "(P27) MUTATION CONTROL: with the pre-fix POLL check (P27) fails ($GWHY)"; fi
+else no "(P27) MUTATION CONTROL: mutant not built (empty, unchanged, invalid or the edit did not land)"; fi
 
 echo
 echo "test-ci-slot: $pass passed, $fail failed"
