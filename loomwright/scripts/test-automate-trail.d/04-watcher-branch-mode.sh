@@ -163,6 +163,159 @@ wout="$(cd "$P" && SPYD_REAL="$SPYD" LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGH
 grep -qE "^- .* merge-watch: closeout for $PRURL could not run — skipped: not a git checkout" "$P/$RF_REL" && ok "W: terminal guard ⇒ a Progress line naming it" || no "W terminal Progress line missing"
 [ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && grep -q 'could not run' "$SPYLOG.webhook" && ! grep -q 'closeout ran' "$SPYLOG.webhook" && ok "W: terminal guard ⇒ failure notify, never the success notify" || no "W terminal notify: $(cat "$SPYLOG.webhook" 2>/dev/null)"
 
+echo "== WF. failed polls name their cause; a failure streak is reported =="
+# (WF1) every poll fails with a message on gh's stderr: each failure line carries gh's exit
+# status and that stderr (one line), and the FAIL_NOTIFY-th consecutive failure from launch
+# writes ONE Progress line + ONE notify saying no read ever succeeded. The stderr sidecar is
+# removed on exit. MAX=4 at INTERVAL=0 ⇒ naps 1,2,4 ⇒ 3 polls before the cap.
+wf_watch() { # <watcher> — prints the watcher's output
+  (cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS="${WF_MAX:-4}" LOOMWRIGHT_MERGE_WATCH_FAIL_NOTIFY=2 \
+    bash "$1" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)
+}
+wf_state() { jq --arg s "$1" '.[0].state = $s' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"; }
+closeout_fixture 920
+spy_reset
+wf_state OPEN
+printf 'error connecting to api.github.com\ncheck your internet connection\n' > "$GH_STUB_DIR/pr-view-fail"
+wout="$(wf_watch "$WATCH")"
+nf="$(printf '%s\n' "$wout" | grep -c '^merge-watch: gh pr view failed — next poll in [0-9]*s (exit 1: error connecting to api.github.com check your internet connection)$')"
+[ "$nf" -ge 2 ] && [ "$nf" = "$(printf '%s\n' "$wout" | grep -c 'gh pr view failed')" ] \
+  && ok "WF1: every failed poll names gh's exit status + its stderr on one line ($nf polls)" || no "WF1 failure lines: $wout"
+[ "$(grep -cE "^- .* merge-watch: gh pr view $PRURL has failed every poll since launch \(2\) — last: exit 1: error connecting to api.github.com" "$P/$RF_REL")" = 1 ] \
+  && ok "WF1: the 2nd consecutive failure from launch ⇒ ONE Progress line naming it + the error" || no "WF1 Progress: $(grep merge-watch "$P/$RF_REL")"
+[ "$(spy_count notify "$SPYLOG.notify")" = 1 ] && grep -q 'cannot read .*failed every poll since launch (2); last: exit 1: error connecting' "$SPYLOG.webhook" \
+  && ok "WF1: ONE notify (desktop + webhook) for the streak, not one per failed poll" || no "WF1 notify: $(spy_count notify "$SPYLOG.notify") / $(cat "$SPYLOG.webhook" 2>/dev/null)"
+[ ! -e "$P/.supervisor/automate/$RUN_ID.merge-watch.gh-stderr" ] && ok "WF1: the gh-stderr sidecar is removed on exit" || no "WF1: gh-stderr sidecar left behind"
+# mutation control: the poll's stderr back to /dev/null (the 2026-11-08 shape) ⇒ the cause is gone
+WFM="$TOP/wf-mut"; mkdir -p "$WFM"; cp "$SPYD"/*.sh "$WFM/"; cp -R "$SPYD"/automate-helpers.d "$SPYD"/automate-trail.d "$WFM/"
+sed 's#statusCheckRollup 2>"\$GH_ERR")"#statusCheckRollup 2>/dev/null)"#' "$WATCH" > "$WFM/automate-merge-watch.sh"
+if cmp -s "$WATCH" "$WFM/automate-merge-watch.sh"; then no "WF1 mutant: the poll's stderr redirect was not found"; else
+  closeout_fixture 921
+  wf_state OPEN
+  printf 'error connecting to api.github.com\n' > "$GH_STUB_DIR/pr-view-fail"
+  wout="$(wf_watch "$WFM/automate-merge-watch.sh")"
+  case "$wout" in *"(exit 1: error connecting"*) no "WF1 mutant: stderr still reached the log with it discarded" ;;
+    *"(exit 1: no stderr)"*) ok "WF1 mutation control: stderr to /dev/null ⇒ the failure line reads 'no stderr'" ;; *) no "WF1 mutant: $wout" ;; esac
+fi
+
+# (WF2) two failures, then a good read: the streak is reported once, a `works again` line
+# follows the first good read, and the watcher goes on to act on the state it read (CLOSED).
+closeout_fixture 922
+spy_reset
+wf_state CLOSED
+echo 2 > "$GH_STUB_DIR/pr-view-fail-count"; echo 'HTTP 502: Bad Gateway' > "$GH_STUB_DIR/pr-view-fail-msg"
+wout="$(WF_MAX=60 wf_watch "$WATCH")"
+[ "$(grep -cE "^- .* merge-watch: gh pr view $PRURL has failed every poll since launch \(2\) — last: exit 1: HTTP 502: Bad Gateway" "$P/$RF_REL")" = 1 ] \
+  && grep -qE "^- .* merge-watch: gh pr view $PRURL works again after 2 failed polls" "$P/$RF_REL" \
+  && grep -qE "^- .* merge-watch: $REQ gone — $PRURL closed unmerged" "$P/$RF_REL" \
+  && ok "WF2: streak reported once, recovery recorded, then the read state acted on" || no "WF2: $(grep merge-watch "$P/$RF_REL" | tr '\n' '|') :: $wout"
+[ "$(spy_count notify "$SPYLOG.notify")" = 2 ] && ok "WF2: two notifies — the streak and the CLOSED gone" || no "WF2 notify count $(spy_count notify "$SPYLOG.notify")"
+# (WF3) one failure below the threshold ⇒ no streak line, no streak notify
+closeout_fixture 923
+spy_reset
+wf_state CLOSED
+echo 1 > "$GH_STUB_DIR/pr-view-fail-count"; echo 'HTTP 502: Bad Gateway' > "$GH_STUB_DIR/pr-view-fail-msg"
+wout="$(WF_MAX=60 wf_watch "$WATCH")"
+! grep -qE 'merge-watch: gh pr view .* (has failed|works again)' "$P/$RF_REL" && [ "$(spy_count notify "$SPYLOG.notify")" = 1 ] \
+  && ok "WF3: a single failed poll (below FAIL_NOTIFY) reports nothing beyond its log line" || no "WF3: $(grep merge-watch "$P/$RF_REL" | tr '\n' '|')"
+
+# (WF4) gh exits 0 but its output has no .state ⇒ the failure line says so (gh_err_detail's
+# rc==0 branch), carrying the stderr gh printed, never a bogus "exit 0: …" line.
+closeout_fixture 929
+spy_reset
+wf_state OPEN
+touch "$GH_STUB_DIR/pr-view-nostate"
+wout="$(wf_watch "$WATCH")"
+nf="$(grep -c '^merge-watch: gh pr view failed — next poll in [0-9]*s (exit 0 but no .state in its output (stderr: warning: partial response))$' <<<"$wout")"
+[ "$nf" -ge 2 ] && [ "$nf" = "$(grep -c 'gh pr view failed' <<<"$wout")" ] \
+  && ok "WF4: exit 0 with no .state ⇒ every failure line names it + gh's stderr ($nf polls)" || no "WF4: $wout"
+
+echo "== WS. closeout from any caller stops this run's watcher of that PR =="
+# ws_live <pr_url> <req> — a live watcher of <pr_url> (OPEN, 30s naps); sets WS_PID
+ws_live() {
+  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$2" "$1" </dev/null >"$TOP/ws.log" 2>&1 & )
+  WAIT_LIB_WHAT="the watcher's marker for $1" wait_for_cmd 20 grep -qF "$1" "$P/$MARK"
+  WAIT_LIB_WHAT="the watcher's start line" wait_for_file_content "$TOP/ws.log" "merge-watch: started pid=" 20
+  WS_PID="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
+  # the `started` line precedes the first poll: wait until that poll has READ the PR (OPEN) and the
+  # watcher sits in its 30s interval nap (its `sleep` child), so a state flip after this call is
+  # seen by the closeout under test, never by the watcher's own first poll (a CI-runner race)
+  [ -n "$WS_PID" ] && WAIT_LIB_WHAT="watcher pid=$WS_PID in its interval nap" wait_for_cmd 20 pgrep -P "$WS_PID" -x sleep
+}
+# (WS1) the --resume shape: the watcher is live and OPEN-reading, the PR merges, a closeout
+# NOT run by the watcher (with --session-id, as RECONCILE runs it) stops that watcher.
+closeout_fixture 924
+spy_reset
+wf_state OPEN
+ws_live "$PRURL" "$REQ"
+wf_state MERGED
+cout="$(run_closeout --session-id ws-resume-sid 2>&1)"
+[ -n "$WS_PID" ] && grep -qxF "merge-watch: stopped pid=$WS_PID watching $PRURL" <<<"$cout" \
+  && ok "WS1: a non-watcher closeout prints that it stopped the run's watcher" || no "WS1 closeout output: $cout"
+if wait_for_pid_gone "$WS_PID" 10 && [ ! -e "$P/$MARK" ]; then ok "WS1: the watcher is gone and its marker removed"
+else no "WS1: watcher pid=$WS_PID alive / marker left"; kill "$WS_PID" 2>/dev/null; fi
+grep -qE "^- .* closeout $PRURL: merge-watch: stopped pid=$WS_PID watching $PRURL" "$P/$RF_REL" && ok "WS1: ONE Progress line records the stop" || no "WS1 Progress line missing"
+[ ! -s "$SPYLOG.notify" ] && ok "WS1: the stopped watcher sent no notify (the resume path reports itself)" || no "WS1: notify sent"
+grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "WS1: the item is still closed out" || no "WS1: not checked off"
+cp "$P/$RF_REL" "$TOP/ws1.rf"
+cout="$(run_closeout --session-id ws-resume-sid 2>&1)"
+! grep -q '^merge-watch:' <<<"$cout" && cmp -s "$P/$RF_REL" "$TOP/ws1.rf" \
+  && ok "WS1: a re-run finds no watcher — no line, run file byte-identical" || no "WS1 re-run: $cout"
+# mutation control: closeout without step 7c (the 2026-11-09 shape) leaves the watcher polling
+WSM="$TOP/ws-mut"; mkdir -p "$WSM"; cp -R "$SPYD"/. "$WSM/"
+grep -v 'automate-merge-watch.sh" --stop' "$SPYD/automate-trail.d/closeout.sh" > "$WSM/automate-trail.d/closeout.sh"
+if cmp -s "$SPYD/automate-trail.d/closeout.sh" "$WSM/automate-trail.d/closeout.sh"; then no "WS1 mutant: the --stop call was not found"; else
+  closeout_fixture 925
+  wf_state OPEN
+  ws_live "$PRURL" "$REQ"
+  wf_state MERGED
+  (cd "$P" && bash "$WSM/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" --session-id ws-resume-sid >/dev/null 2>&1)
+  if [ -n "$WS_PID" ] && kill -0 "$WS_PID" 2>/dev/null; then ok "WS1 mutation control: without step 7c the watcher outlives the closeout"
+  else no "WS1 mutant: the watcher died without step 7c"; fi
+  kill "$WS_PID" 2>/dev/null; wait_for_pid_gone "$WS_PID" 10 || true
+fi
+# (WS2) guards: a live watcher of ANOTHER PR of the run, and a live foreign pid named by a
+# same-PR marker, are never signalled.
+closeout_fixture 926
+jq --arg u "$PRURL2" '.[0].state = "OPEN" | . + [{number:8,url:$u,state:"OPEN",headRefName:"feature/y",headRefOid:"0"}]' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+ws_live "$PRURL2" "$REQ2"
+wf_state MERGED
+cout="$(run_closeout 2>&1)"
+[ -n "$WS_PID" ] && kill -0 "$WS_PID" 2>/dev/null && ! grep -q '^merge-watch:' <<<"$cout" \
+  && ok "WS2: closeout of $PRURL leaves the run's watcher of $PRURL2 running" || no "WS2 other PR: $cout"
+out="$(bash "$WATCH" --stop "$P/$RF_REL" "$PRURL")"
+[ "$out" = "merge-watch: stop skipped — the run's watcher watches $PRURL2, not $PRURL" ] && ok "WS2: --stop names why it skipped another PR's watcher" || no "WS2 --stop: $out"
+kill "$WS_PID" 2>/dev/null; wait_for_pid_gone "$WS_PID" 10 || true
+sleep 30 </dev/null >/dev/null 2>&1 &
+foreign=$!
+printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$foreign" "$PRURL" > "$P/$MARK"
+out="$(bash "$WATCH" --stop "$P/$RF_REL" "$PRURL")"
+kill -0 "$foreign" 2>/dev/null && [ "$out" = "merge-watch: stop skipped — pid=$foreign is not a merge watcher of $PRURL (not signalled)" ] \
+  && ok "WS2: a recycled (foreign) marker pid is never signalled" || no "WS2 foreign: $out"
+kill "$foreign" 2>/dev/null; wait "$foreign" 2>/dev/null
+# (WS3) the watcher's OWN closeout: --stop sees the calling watcher as its ancestor and leaves
+# it alone, so the watcher still sends its closeout notify (AC13's single-notify leg above is
+# the end-to-end check; this pins the reason). Mutation control: drop the ancestor guard ⇒ the
+# watcher's own closeout TERMs it mid-closeout and the closeout notify is lost.
+WSA="$TOP/ws-anc"; mkdir -p "$WSA"; cp -R "$SPYD"/. "$WSA/"
+grep -v 'is_ancestor "\$s_pid" &&' "$WATCH" > "$WSA/automate-merge-watch.sh"
+if cmp -s "$WATCH" "$WSA/automate-merge-watch.sh"; then no "WS3 mutant: the ancestor guard was not found"; else
+  for v in real mut; do
+    if [ "$v" = real ]; then closeout_fixture 927; w="$WATCH"; else closeout_fixture 928; w="$WSA/automate-merge-watch.sh"; fi
+    spy_reset
+    printf 'OPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"
+    wf_state OPEN
+    wout="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
+    n="$(spy_count notify "$SPYLOG.notify")"; n="${n:-0}"   # no notify ⇒ no spy file ⇒ empty count
+    if [ "$v" = real ]; then
+      [ "$n" = 1 ] && case "$wout" in *"merge-watch: closeout done"*) true ;; *) false ;; esac && ! grep -q 'merge-watch: stopped' <<<"$wout" \
+        && ok "WS3: the watcher's own closeout does not stop it — closeout done + its one notify" || no "WS3: notify=$n :: $wout"
+    else
+      [ "$n" = 0 ] && ok "WS3 mutation control: without the ancestor guard the watcher's own closeout kills it (no notify)" || no "WS3 mutant: notify=$n :: $wout"
+    fi
+  done
+fi
+
 echo "== WE. escalated park: watcher armed + settle re-check (automate-followups/31) =="
 # Every leg runs the watcher against an `escalated` park whose ## Current carries
 # the `- escalation_cause:` line Subtask 1's `current-escalation` writes.
