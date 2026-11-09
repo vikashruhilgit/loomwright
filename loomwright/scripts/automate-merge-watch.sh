@@ -210,6 +210,8 @@ case "$max" in ''|*[!0-9]*) max=259200 ;; esac
 # 4 at the default interval is ~14 min (polls at 0/120/360/840s): long enough to ride out
 # a network blip, short enough that a gh that never works does not go unreported for a night.
 fail_notify="${LOOMWRIGHT_MERGE_WATCH_FAIL_NOTIFY:-4}"
+# 0 is not "never" and not "every failure": it is invalid like empty/non-numeric and falls
+# back to 4. `1` already means "report the first failed poll" (one report per streak).
 case "$fail_notify" in ''|*[!0-9]*|0) fail_notify=4 ;; esac
 BACKOFF_CAP=900
 
