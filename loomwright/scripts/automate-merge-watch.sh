@@ -7,6 +7,7 @@
 # once its PR has merged).
 #
 # Usage: automate-merge-watch.sh <runfile> <item> <pr_url>
+#        automate-merge-watch.sh --stop <runfile> <pr_url>   (closeout step 7c; see --stop below)
 #
 # Pure bash, no Claude session, no tokens. The launcher detaches it:
 #   env -u CLAUDE_PID -u CLAUDECODE nohup bash automate-merge-watch.sh \
@@ -15,6 +16,15 @@
 # state` every LOOMWRIGHT_MERGE_WATCH_INTERVAL seconds (default 60), doubling
 # the wait on a gh error up to 900s and resetting on success (the same read
 # carries headRefOid + statusCheckRollup for the settle re-check below).
+#   A FAILED POLL logs ONE line naming why: `merge-watch: gh pr view failed —
+#            next poll in <n>s (exit <rc>: <gh stderr, one line, ≤300 chars>)` —
+#            gh's stderr goes to the gitignored `<run_id>.merge-watch.gh-stderr`,
+#            never /dev/null (run automate-2026-11-08-175120 failed 18 polls in 7h
+#            with the cause discarded). LOOMWRIGHT_MERGE_WATCH_FAIL_NOTIFY (default
+#            4, ~14 min of backoff) consecutive failures ⇒ ONE ## Progress line +
+#            ONE notify naming the last error (and `every poll since launch` when no
+#            read ever succeeded); a later good read re-arms it with one `works
+#            again` line. The watcher keeps retrying either way.
 #   MERGED ⇒ `automate-helpers.sh closeout <runfile> <item> <pr_url>` (NO
 #            --session-id: it takes the run lock as `automate-closeout:<run_id>`).
 #            Its output is classified, never assumed a success:
@@ -78,6 +88,11 @@
 # registers itself (`proc-registry.sh register --kind merge-watch`, its own pid,
 # --max-lifetime = the cap below), fail-safe: a registry failure never changes
 # the watcher.
+# Closeout from ANY caller ends the watcher of the PR it closed out: closeout's
+# step 7c runs `--stop <runfile> <pr_url>`, which signals the marker pid only when
+# is_our_watcher confirms it for that same pr_url, and never its own ancestor (the
+# watcher running that closeout). Before this, a `--resume` closeout left the
+# watcher polling a merged PR until someone killed it.
 # Count watchers by the marker pid (or `ps -o ppid` lineage), NEVER by `pgrep -f`:
 # every `$(…)` command substitution here forks a subshell carrying the same argv,
 # so `pgrep -f automate-merge-watch` mid-poll shows two processes for ONE
@@ -105,6 +120,70 @@ GH="${LOOMWRIGHT_GH_BIN:-gh}"
 JQ="${LOOMWRIGHT_JQ_BIN:-jq}"
 HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
 
+MARKER=""
+marker_field() { awk -F'\t' -v k="$1" '$1==k{print $2; exit}' "$MARKER" 2>/dev/null; }
+
+# is_our_watcher <pid> <pr_url> — 0: <pid> is an automate-merge-watch.sh process
+# watching <pr_url>; 1: it is not (a recycled pid, or already gone); 2: cannot
+# tell (no `ps`). Only a 0 is ever signalled.
+is_our_watcher() {
+  local cmd
+  [ -n "$2" ] || return 1
+  command -v ps >/dev/null 2>&1 || return 2
+  cmd="$(ps -ww -p "$1" -o command= 2>/dev/null)"
+  case "$cmd" in *automate-merge-watch.sh*) ;; *) return 1 ;; esac
+  case "$cmd" in *" $2"|*" $2 "*) return 0 ;; esac
+  return 1
+}
+
+# is_ancestor <pid> — 0 when <pid> is this process or one of its ancestors (a ppid
+# walk, bounded). A closeout the watcher itself runs reaches `--stop` with the
+# watcher above it, and must not stop its own caller (the watcher would then exit
+# without its closeout notify).
+is_ancestor() {
+  local p="$$" n=0
+  while [ -n "$p" ] && [ "$p" -gt 1 ] && [ "$n" -lt 64 ]; do
+    [ "$p" = "$1" ] && return 0
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+    case "$p" in ''|*[!0-9]*) return 1 ;; esac
+    n=$((n + 1))
+  done
+  return 1
+}
+
+# ---- --stop <runfile> <pr_url> (closeout, from every path) ------------------
+# Stops THIS run's live watcher of <pr_url> once its PR has been closed out, so a
+# close-out the watcher did not run itself (`/automate --resume`'s RECONCILE,
+# closeout-others, the --auto-merge SYNC) never leaves it polling a merged PR.
+# Guarded exactly like the replace path above it: only a marker pid that
+# is_our_watcher confirms for the SAME pr_url is signalled (TERM — its EXIT trap
+# removes the marker; KILL only if it outlives 10s), never a recycled pid, never
+# a watcher of another PR of the run, never the calling watcher. Prints ONE line
+# — `merge-watch: stopped pid=<p> watching <pr>` or `merge-watch: stop skipped —
+# <reason>` — and always exits 0.
+if [ "${1:-}" = --stop ]; then
+  s_rf="${2:-}"; s_pr="${3:-}"; S="merge-watch: stop skipped —"
+  if [ -z "$s_rf" ] || [ -z "$s_pr" ]; then echo "$S usage: automate-merge-watch.sh --stop <runfile> <pr_url>"; exit 0; fi
+  s_dir="$(cd "$(dirname "$s_rf")" 2>/dev/null && pwd -P)" || { echo "$S run file directory not found"; exit 0; }
+  MARKER="$s_dir/$(basename "$s_rf" .md).merge-watch"
+  [ -f "$MARKER" ] || { echo "$S no watcher marker"; exit 0; }
+  s_pid="$(marker_field pid)"; s_mpr="$(marker_field pr_url)"
+  case "$s_pid" in ''|*[!0-9]*) echo "$S unreadable marker pid"; exit 0 ;; esac
+  [ "$s_mpr" = "$s_pr" ] || { echo "$S the run's watcher watches ${s_mpr:-an unknown PR}, not $s_pr"; exit 0; }
+  kill -0 "$s_pid" 2>/dev/null || { echo "$S watcher pid=$s_pid is not running"; exit 0; }
+  is_ancestor "$s_pid" && { echo "$S pid=$s_pid is the calling watcher"; exit 0; }
+  is_our_watcher "$s_pid" "$s_pr"; s_v=$?
+  [ "$s_v" -ne 2 ] || { echo "$S cannot verify pid=$s_pid (ps unavailable)"; exit 0; }
+  [ "$s_v" -eq 0 ] || { echo "$S pid=$s_pid is not a merge watcher of $s_pr (not signalled)"; exit 0; }
+  kill -TERM "$s_pid" 2>/dev/null
+  i=0; while kill -0 "$s_pid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
+  if kill -0 "$s_pid" 2>/dev/null && is_our_watcher "$s_pid" "$s_pr"; then kill -KILL "$s_pid" 2>/dev/null; sleep 0.2; fi
+  if kill -0 "$s_pid" 2>/dev/null && is_our_watcher "$s_pid" "$s_pr"; then echo "$S could not stop watcher pid=$s_pid"; exit 0; fi
+  # a TERMed watcher's trap removed its marker; after a KILL remove the one we inspected
+  [ "$(marker_field pid)" = "$s_pid" ] && rm -f "$MARKER" 2>/dev/null
+  echo "merge-watch: stopped pid=$s_pid watching $s_pr"; exit 0
+fi
+
 runfile="${1:-}"; item="${2:-}"; pr_url="${3:-}"
 if [ -z "$runfile" ] || [ -z "$item" ] || [ -z "$pr_url" ]; then
   echo "merge-watch: skipped — usage: automate-merge-watch.sh <runfile> <item> <pr_url>"; exit 0
@@ -117,6 +196,9 @@ MARKER="$rf_dir/$run_id.merge-watch"
 # the settle re-check's restart latch (not `*.md` ⇒ gitignored, never in a trail);
 # kept across exits on purpose: a stale one silences only a byte-identical line.
 REPORTED="$rf_dir/$run_id.merge-watch-reported"
+# one poll's gh stderr (gitignored, not `*.md`); removed on exit. Read back into the
+# failure line, so a broken gh names itself instead of a bare "failed".
+GH_ERR="$rf_dir/$run_id.merge-watch.gh-stderr"
 root="$(git -C "$rf_dir" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$root" ] && cd "$root" 2>/dev/null
 
@@ -124,6 +206,11 @@ interval="${LOOMWRIGHT_MERGE_WATCH_INTERVAL:-60}"
 case "$interval" in ''|*[!0-9]*) interval=60 ;; esac
 max="${LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS:-259200}"
 case "$max" in ''|*[!0-9]*) max=259200 ;; esac
+# N consecutive failed polls ⇒ ONE ## Progress line + ONE notify (re-armed by a good read).
+# 4 at the default interval is ~14 min (polls at 0/120/360/840s): long enough to ride out
+# a network blip, short enough that a gh that never works does not go unreported for a night.
+fail_notify="${LOOMWRIGHT_MERGE_WATCH_FAIL_NOTIFY:-4}"
+case "$fail_notify" in ''|*[!0-9]*|0) fail_notify=4 ;; esac
 BACKOFF_CAP=900
 
 now() { date +%s; }
@@ -139,20 +226,6 @@ notify_as() {
   return 0
 }
 notify() { notify_as automate_merge_watch "$1"; }
-marker_field() { awk -F'\t' -v k="$1" '$1==k{print $2; exit}' "$MARKER" 2>/dev/null; }
-
-# is_our_watcher <pid> <pr_url> — 0: <pid> is an automate-merge-watch.sh process
-# watching <pr_url>; 1: it is not (a recycled pid, or already gone); 2: cannot
-# tell (no `ps`). Only a 0 is ever signalled.
-is_our_watcher() {
-  local cmd
-  [ -n "$2" ] || return 1
-  command -v ps >/dev/null 2>&1 || return 2
-  cmd="$(ps -ww -p "$1" -o command= 2>/dev/null)"
-  case "$cmd" in *automate-merge-watch.sh*) ;; *) return 1 ;; esac
-  case "$cmd" in *" $2"|*" $2 "*) return 0 ;; esac
-  return 1
-}
 
 # ---- single instance (per run: one marker, one watched PR) -----------------
 replaced=""
@@ -191,7 +264,7 @@ fi
 SLEEP_PID=""
 cleanup() {
   [ -n "$SLEEP_PID" ] && kill "$SLEEP_PID" 2>/dev/null
-  [ "$(marker_field pid)" = "$$" ] && rm -f "$MARKER" 2>/dev/null
+  [ "$(marker_field pid)" = "$$" ] && rm -f "$MARKER" "$GH_ERR" 2>/dev/null
   return 0
 }
 trap cleanup EXIT
@@ -315,6 +388,17 @@ wait_s="$interval"
 co_wait="$interval"
 merged_seen=0   # this watcher has read MERGED at least once
 last_skip=""    # the last transient closeout skip reason (why it retried)
+fails=0         # consecutive failed `gh pr view` polls
+read_ok=0       # at least one poll has read a state
+fail_reported=0 # the current failure streak has been reported
+# gh_err_detail <rc> — one line naming why THIS poll failed: gh's exit status and the
+# first 300 chars of its stderr, collapsed to one line (empty stderr is said so).
+gh_err_detail() {
+  local e
+  e="$(tr '\r\n\t' '   ' < "$GH_ERR" 2>/dev/null | sed 's/   */ /g; s/^ //; s/ $//' | cut -c1-300)"
+  if [ "$1" -ne 0 ]; then printf 'exit %s: %s' "$1" "${e:-no stderr}"
+  else printf 'exit 0 but no .state in its output%s' "${e:+ (stderr: $e)}"; fi
+}
 while :; do
   if [ $(( $(now) - start )) -ge "$max" ]; then
     if [ "$merged_seen" -eq 1 ]; then
@@ -326,14 +410,26 @@ while :; do
     progress "lifetime cap (${max}s) reached watching $pr_url — stopped; run /automate --resume after the merge"
     echo "merge-watch: lifetime cap reached"; exit 0
   fi
-  view="$("$GH" pr view "$pr_url" --json state,headRefOid,statusCheckRollup 2>/dev/null)"; rc=$?
+  view="$("$GH" pr view "$pr_url" --json state,headRefOid,statusCheckRollup 2>"$GH_ERR")"; rc=$?
   state="$(printf '%s' "$view" | "$JQ" -r '.state // empty' 2>/dev/null)"
   if [ "$rc" -ne 0 ] || [ -z "$state" ]; then
     wait_s=$(( wait_s * 2 )); [ "$wait_s" -ge 1 ] || wait_s=1
     [ "$wait_s" -le "$BACKOFF_CAP" ] || wait_s="$BACKOFF_CAP"
-    echo "merge-watch: gh pr view failed — next poll in ${wait_s}s"
+    fails=$((fails + 1))
+    detail="$(gh_err_detail "$rc")"
+    echo "merge-watch: gh pr view failed — next poll in ${wait_s}s ($detail)"
+    if [ "$fails" -ge "$fail_notify" ] && [ "$fail_reported" -eq 0 ]; then
+      fail_reported=1
+      if [ "$read_ok" -eq 0 ]; then since="every poll since launch"; else since="$fails consecutive polls"; fi
+      progress "gh pr view $pr_url has failed $since ($fails) — last: $detail; a merge is not closed out until gh works (still retrying, backoff up to ${BACKOFF_CAP}s)"
+      notify "/automate merge watcher cannot read $pr_url — gh pr view failed $since ($fails); last: $detail (item $item, run $run_id)"
+    fi
     nap "$wait_s"; continue
   fi
+  if [ "$fail_reported" -eq 1 ]; then
+    progress "gh pr view $pr_url works again after $fails failed polls"
+  fi
+  fails=0; fail_reported=0; read_ok=1
   wait_s="$interval"
   case "$state" in
     MERGED)

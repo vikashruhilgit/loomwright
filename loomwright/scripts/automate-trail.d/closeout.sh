@@ -381,6 +381,22 @@ $lines
 PROGRESS
   fi
 
+  # ---- 7c. stop this run's merge watcher of THIS PR (any caller) ------------
+  # The PR is merged and closed out, so a live watcher of it has nothing left to do —
+  # but only the watcher's OWN closeout used to end it: a `--resume` RECONCILE (or
+  # closeout-others, the --auto-merge SYNC) closed the item out and left it polling.
+  # automate-merge-watch.sh --stop holds the guard (is_our_watcher on the marker pid,
+  # the same pr_url, never a recycled pid, never the calling watcher). Silent unless it
+  # stopped one: then its line is printed and appended to ## Progress (once — a stopped
+  # watcher is gone, so a re-run leaves the run file byte-identical).
+  local mw
+  mw="$(bash "$HERE/automate-merge-watch.sh" --stop "$rf_abs" "$pr_url" </dev/null 2>/dev/null)"
+  case "$mw" in
+    "merge-watch: stopped "*|*"could not stop"*)
+      echo "$mw"
+      bash "$HLP" progress-append "$rf_rel" "$(date -u +%Y-%m-%dT%H:%M:%SZ) closeout $pr_url: $mw" >/dev/null 2>&1 ;;
+  esac
+
   # ---- item_timing (iq02 T04): ONE script-written event per PR, appended to the
   # item's session log (a gitignored .supervisor/logs/ file — never a trail path,
   # so trail-pr does not carry it; /insights reads it locally). IDEMPOTENT like
