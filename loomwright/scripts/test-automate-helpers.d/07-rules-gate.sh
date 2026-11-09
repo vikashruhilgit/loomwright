@@ -854,6 +854,29 @@ fi
 rm -rf "${M_INC:-/nonexistent-r11}"
 reset_live
 
+# R11o — the tree read is --root's own tree, and a missing HOME is not dirt.
+# (a) HOME and XDG_CONFIG_HOME both unset, a clean at-head checkout ⇒ no dirty-tree park: the
+#     user-global excludes read has no config to read and counts as key-unset.
+reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'; rm -f "$GH_STUB_DIR/merge.log"; printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+R11O_OUT="$( e_git_env env -u HOME -u XDG_CONFIG_HOME PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" GIT_CEILING_DIRECTORIES="$WD" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$E_ROOT" 2>/dev/null )"
+if [ "$R11O_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "R11o HOME + XDG_CONFIG_HOME unset, clean at-head checkout ⇒ no rules_gate_dirty_tree park (MERGE)"
+else no "R11o HOME-unset clean checkout parked or failed (out='$R11O_OUT' merges=$(merges))"; fi
+r11_restored "R11o HOME unset"
+# (b) the repo's own config points core.worktree at ANOTHER, clean copy of the tree while --root
+#     is dirty: --root is not the toplevel git reports nor beneath it ⇒ rules_gate_dirty_tree.
+R11O_WT="$WD/r11o-clean-tree"; rm -rf "$R11O_WT"; mkdir -p "$R11O_WT"
+( cd "$E_ROOT" && tar cf - --exclude ./.git . ) | ( cd "$R11O_WT" && tar xf - )
+git -C "$E_ROOT" config core.worktree "$R11O_WT"; echo dirt > "$E_ROOT/r11o-untracked.txt"
+if [ "$(git -C "$E_ROOT" rev-parse --show-toplevel 2>/dev/null)" -ef "$R11O_WT" ] \
+   && [ -z "$(git -C "$E_ROOT" status --porcelain -uall 2>/dev/null)" ]; then
+  r11_dirty "core.worktree redirects the toplevel to another clean tree while --root itself is dirty"
+else no "R11o precondition: core.worktree did not redirect the toplevel to a clean tree ($(git -C "$E_ROOT" rev-parse --show-toplevel 2>&1))"; fi
+git -C "$E_ROOT" config --unset core.worktree; rm -f "$E_ROOT/r11o-untracked.txt"; rm -rf "$R11O_WT"; r11_restored "R11o core.worktree"
+# control: a SUBDIRECTORY --root of the clean checkout is beneath the toplevel ⇒ the verdict decides.
+E_GATE_ROOT="$E_ROOT/sub"; r11_decides "clean checkout, SUBDIRECTORY --root (beneath the toplevel)"; E_GATE_ROOT=""
+reset_live
+
 unset GH_STUB_DIR R11N_LOG R11N_REAL_GIT
 rm -rf "$WD"
 
