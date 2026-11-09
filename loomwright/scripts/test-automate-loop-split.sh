@@ -58,6 +58,9 @@
 #      outside index-only blocks retires E — Step 0 missing one file (F), the index entry a citation uses removed — exactly
 #      one line fewer — and an anchors-table row removed (G), a reader re-pointed back to the raw index (H),
 #      assemble.sh with its `..` guard deleted — exactly two lines fewer — accepting the traversal (A2).
+#   N. START ORDER TWINS — commands/automate.md's Step 0 intake row and resume.md's Start order each
+#      carry `mkdir -p .supervisor/automate` before `pick-guard .supervisor/automate` on one line; its
+#      own mutation controls drop the mkdir from, or reverse the order in, a copy of each surface.
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
