@@ -2030,7 +2030,7 @@ ns_plan() {
   ns_driver_sid || return 1
   st_set item "$ITEM"; st_set pr "$PR"
   st_setj plan_briefs_before "$(ns_pending_briefs | "$JQ" -Rsc 'split("\n") | map(select(length > 0))')"
-  inv="/loomwright:launch-pad goal: $ITEM"
+  inv="/loomwright:launch-pad goal: $ITEM --source-requirement $ITEM"
   ns_interactive || inv="$inv --non-interactive"
   p="$inv — If the requirement file at $ITEM has an ## Outcomes Rubric section, copy it verbatim into the saved brief during Phase 5 (PACKAGE — Brief Assembly). Do not paraphrase, do not drop items, do not reformat. When Launch Pad finishes, write its LAUNCH_PAD_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.launch-pad-result.md."
   rv="$(ns_revise_note)"

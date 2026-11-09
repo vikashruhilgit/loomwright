@@ -342,3 +342,39 @@ echo '[]' > "$GH_STUB_DIR/prs.json"
 out="$(cd "$P" && PATH="$CUNOGH:$PATH" bash "$H" trail-gate "$RF_REL" 2>"$FX/tg.err")"; rc=$?
 [ "$out" = "trail-gate: clear — no open trail PR; sync skipped — base_branch_unresolved" ] && [ "$rc" -eq 0 ] && ok "(U2) trail-gate ⇒ '$out', exit 0 (no PARK, no sync)" || no "(U2) trail-gate ⇒ '$out' rc=$rc"
 grep -qx base_branch_unresolved < <(head -n1 "$FX/tg.err") && ok "(U2) the status token is on stderr" || no "(U2) stderr: $(tr '\n' '|' < "$FX/tg.err")"
+
+echo "== V. closeout stamps a folder story kept OUTSIDE .supervisor/requirements/ (the brief's Source requirement line is the key) =="
+# `/automate --folder stories` queues stories/02-x.md; the driver hands Launch Pad `--source-requirement stories/02-x.md`,
+# so the done brief carries `- **Source requirement:** stories/02-x.md` and step 5 matches it against the Queue item —
+# no change to closeout.sh, brief-pointer.sh or the guarded readers. This leg sets its OWN item and restores the global
+# REQ afterwards, so every other leg keeps its fixture. Control (v=nopointer): the same world with the brief's pointer
+# line dropped must print `skipped — no done brief` — the pointer, not the path's location, is what drives the stamp.
+SR_REQ_SAVED="$REQ"
+for v in pointer nopointer; do
+  REQ="$SR_REQ_SAVED"   # closeout_fixture / new_fixture read the global REQ
+  if [ "$v" = pointer ]; then closeout_fixture 120; else closeout_fixture 121; fi
+  REQ="stories/02-x.md"
+  ( cd "$P" && git pull -q --ff-only origin main 2>/dev/null; mkdir -p stories
+    printf '# Story 02\n\n## Status: ready\n\nA story kept outside the handoff directory.\n' > "$REQ"
+    printf '# Story 03\n\nstill to do\n' > stories/03-y.md
+    git add stories && git commit -qm "stories" && git push -q origin main 2>/dev/null
+    sed -i.bak "s|^- \[ \] .supervisor/requirements/f/01-a.md\$|- [ ] $REQ|; s|^- item: .supervisor/requirements/f/01-a.md |- item: $REQ |" ".supervisor/automate/$RUN_ID.md"; rm -f ".supervisor/automate/$RUN_ID.md.bak"
+    if [ "$v" = pointer ]; then printf '# Brief\n## Environment\n- **Source requirement:** %s\n' "$REQ" > .supervisor/jobs/done/brief-story.md
+    else printf '# Brief\n## Environment\n- **Base commit:** abc\n' > .supervisor/jobs/done/brief-story.md; fi )
+  out="$(run_closeout)"; rc=$?
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  [ "$rc" -eq 0 ] && ok "(V1/$v) closeout exits 0" || no "(V1/$v) closeout rc=$rc"
+  if [ "$v" = pointer ]; then
+    case "$out" in *"closeout: stamped — stories/02-x.md"*) ok "(V1) AC5: a folder story whose done brief carries the pointer prints 'closeout: stamped — stories/02-x.md'" ;; *) no "(V1) AC5: no stamped line: $out" ;; esac
+    case "$out" in *"no done brief"*) no "(V1) AC5: 'no done brief' printed for a story with a pointer" ;; *) ok "(V1) AC5: no 'no done brief' line" ;; esac
+    grep -qxF '## Status: done' "$P/$REQ" && grep -qF -- '- **Completed:** ' "$P/$REQ" && grep -qF -- '- **Brief:** .supervisor/jobs/done/brief-story.md' "$P/$REQ" && grep -qF -- "- **PR:** $PRURL" "$P/$REQ" \
+      && ok "(V1) AC5: the story reads '## Status: done' with the close-out block (Completed, Brief, PR)" || no "(V1) AC5: story not stamped: $(tr '\n' '|' < "$P/$REQ")"
+    left="$(cd "$P" && bash "$H" resolve-folder stories)"
+    case "$left" in *stories/03-y.md*) ok "(V1) AC6: resolve-folder still queues the unstamped story" ;; *) no "(V1) AC6: control story missing from the Queue: $left" ;; esac
+    case "$left" in *stories/02-x.md*) no "(V1) AC6: the stamped story is re-queued: $left" ;; *) ok "(V1) AC6: the stamped story is not in the Queue resolve-folder prints" ;; esac
+  else
+    case "$out" in *"closeout: skipped — no done brief"*) ok "(V1/control) a brief without the Source requirement line ⇒ 'skipped — no done brief' (the pointer drives the stamp)" ;; *) no "(V1/control) expected 'skipped — no done brief': $out" ;; esac
+    grep -qxF '## Status: done' "$P/$REQ" && no "(V1/control) the story was stamped without a pointer" || ok "(V1/control) the story is left unstamped"
+  fi
+done
+REQ="$SR_REQ_SAVED"

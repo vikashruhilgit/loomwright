@@ -303,7 +303,7 @@ AUT_CMD="$PLUGIN_ROOT/commands/autonomous.md"
 al_plan="$(awk '/^## PLAN/{p=1; next} p && /^## /{exit} p' "$AL_SKILL")"
 lp_fwd="$(printf '%s\n' "$al_plan" | grep -F -- '**Launch Pad forward' | head -1 || true)"
 case "$lp_fwd" in
-  *'`--non-interactive-fallback` was passed at INIT'*'`<requirement_path> --non-interactive`'*'ONLY flag'*'an interactive run'*'requirement path alone'*)
+  *'`--non-interactive-fallback` was passed at INIT'*'`<requirement_path> --source-requirement <requirement_path> --non-interactive`'*'exactly two forwards'*'an interactive run'*'without the second'*)
     ok "(g) autonomous-loop PLAN forwards --non-interactive to Launch Pad, only under --non-interactive-fallback" ;;
   '') no "(g) autonomous-loop PLAN has no Launch Pad forward (the Can't-ask rule's flag never reaches the inlined Launch Pad)" ;;
   *) no "(g) autonomous-loop PLAN Launch Pad forward misses the condition / the flag / the interactive-unchanged clause" ;;
@@ -319,7 +319,7 @@ case "$sv_set" in
 esac
 cheap_note="$(grep -F -- '`--cheap` interaction note' "$AUT_CMD" | head -1 || true)"
 case "$cheap_note" in
-  *'**No other flag is forwarded to `/supervisor`.**'*'one other forward is to Launch Pad'*'only when `--non-interactive-fallback` was passed at INIT'*)
+  *'**No other flag is forwarded to `/supervisor`.**'*'two forwards to Launch Pad'*'only when `--non-interactive-fallback` was passed at INIT'*)
     ok "(g) commands/autonomous.md forward-set note names the separate Launch Pad forward" ;;
   *) no "(g) commands/autonomous.md forward-set note does not name the separate Launch Pad forward" ;;
 esac
