@@ -377,7 +377,7 @@ for v in pointer nopointer; do
     # The trail branch closeout pushed must carry the stamped story.
     case "$out" in *"trail-pr: opened "*) ok "(V2) closeout's trail-pr opened a trail PR" ;; *) no "(V2) no trail PR opened: $out" ;; esac
     tb="$(git -C "$FX/origin.git" show "chore/$RUN_ID-trail-1:$REQ" 2>/dev/null)"
-    printf '%s\n' "$tb" | grep -qxF '## Status: done' && printf '%s\n' "$tb" | grep -qF -- "- **PR:** $PRURL" \
+    grep -qxF '## Status: done' <<<"$tb" && grep -qF -- "- **PR:** $PRURL" <<<"$tb" \
       && ok "(V2) the trail branch carries $REQ stamped done (the stamp reaches the default branch on merge)" \
       || no "(V2) trail branch lacks the stamped story: $(printf '%s' "$tb" | tr '\n' '|')"
     # Evidence gate: the same story whose done stamp names a PR the forge does not read merged is
@@ -401,18 +401,18 @@ for v in pointer nopointer; do
     grep -qxF -- '- [ ] stories/05-l.md' "$P/$RF_REL" || no "(V2) guard legs: the Queue rows were not added"
     out5="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout)"
     td="$(git -C "$FX/origin.git" diff --name-only "main...chore/$RUN_ID-trail-1" 2>/dev/null)"
-    printf '%s\n' "$td" | grep -qxF "$REQ" && ok "(V2) guard legs: the stamped story still rides" || no "(V2) guard legs: stamped story missing from the trail: $out5"
-    printf '%s\n' "$td" | grep -qxF stories/04-z.md && no "(V2) an unstamped story rode the trail (its WIP was committed)" || ok "(V2) a story with no done heading is not trail, even with a brief naming it"
-    printf '%s\n' "$td" | grep -qxF stories/05-l.md && no "(V2) a symlinked story rode the trail" || ok "(V2) a symlinked story is not trail, even pointing at a stamped one"
+    grep -qxF "$REQ" <<<"$td" && ok "(V2) guard legs: the stamped story still rides" || no "(V2) guard legs: stamped story missing from the trail: $out5"
+    grep -qxF stories/04-z.md <<<"$td" && no "(V2) an unstamped story rode the trail (its WIP was committed)" || ok "(V2) a story with no done heading is not trail, even with a brief naming it"
+    grep -qxF stories/05-l.md <<<"$td" && no "(V2) a symlinked story rode the trail" || ok "(V2) a symlinked story is not trail, even pointing at a stamped one"
     bm_switch
     out4="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout)"
     case "$out4" in *"excluded $REQ — folder story, not run history"*) ok "(V2/bm) branch mode names the folder story as excluded" ;; *) no "(V2/bm) no folder-story exclusion: $out4" ;; esac
-    bm_tree | grep -qxF "$REQ" && no "(V2/bm) the story was pushed to $BMB" || ok "(V2/bm) the story is not on $BMB"
+    bt="$(bm_tree)"; grep -qxF "$REQ" <<<"$bt" && no "(V2/bm) the story was pushed to $BMB" || ok "(V2/bm) the story is not on $BMB"
   else
     # The story is on main (the fixture commits it), so the trail branch's tree has it either way: ask
     # whether the trail CHANGES it.
     td="$(git -C "$FX/origin.git" diff --name-only "main...chore/$RUN_ID-trail-1" 2>/dev/null)"
-    printf '%s\n' "$td" | grep -qxF "$REQ" && no "(V2/control) the trail changed the story with no pointer: $(printf '%s' "$td" | tr '\n' ' ')" \
+    grep -qxF "$REQ" <<<"$td" && no "(V2/control) the trail changed the story with no pointer: $(printf '%s' "$td" | tr '\n' ' ')" \
       || ok "(V2/control) without a brief pointer the trail does not change the story (no done brief names it)"
     case "$out" in *"closeout: skipped — no done brief"*) ok "(V1/control) a brief without the Source requirement line ⇒ 'skipped — no done brief' (the pointer drives the stamp)" ;; *) no "(V1/control) expected 'skipped — no done brief': $out" ;; esac
     grep -qxF '## Status: done' "$P/$REQ" && no "(V1/control) the story was stamped without a pointer" || ok "(V1/control) the story is left unstamped"
