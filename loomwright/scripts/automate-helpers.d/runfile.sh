@@ -4,7 +4,7 @@
 #:  progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title; exit 3 + `current_not_set: <line>` on stderr (line still appended) when a `picked `/`ran /autonomous`/`owned drain started` line meets a null ## Current item, or `picked <X>` meets a different non-done item
 #:  queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
 #:  current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
-#:  current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|validation_unrun|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline, non-numeric run id/attempt) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
+#:  current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|validation_unrun|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline/control character, non-numeric run id/attempt, non-hex sha) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
 #:  current-wave     <runfile_path> --wave <k|null> [--items <i1,i2,…>]  # parallel-automate/05 (--parallel N>1 parent only): the ONLY writer of ## Current's `- wave: <k> | items: <i1>, <i2>` line (replaced if present, else appended at the block end; `--wave null` removes it); refusal (non-positive-integer wave, `|`/newline, --items with null) = exit 1, file byte-unchanged; identical values ⇒ `current-wave: unchanged`
 #:  current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running + pause_reason null; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
 #:  remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
@@ -272,7 +272,7 @@ _current_build_line() {
 # as passed. Refusals (exit 1, file byte-unchanged): an unknown status/pause_reason,
 # a half-null item form, an item form missing --item or --status, a run-level form
 # missing --pause-reason (or carrying --pr/--branch), an empty value or one holding
-# `|` or a newline, a missing/non-run file, a file with no `## Current` heading, and —
+# `|`, a newline or any other control character (CR, tab, …), a missing/non-run file, a file with no `## Current` heading, and —
 # single-lane mode — a `ready_for_release` status or pause_reason in a checkout whose
 # `.supervisor/lane.json` carries `"single_lane": true` (its READY park is awaiting_merge).
 # Values reach awk through the ENVIRONMENT (never awk -v — SKILL Anti-Patterns); the
@@ -298,6 +298,7 @@ current_set() {
         case "$2" in
           "") die "$CS $1 value is empty; $out left unchanged" ;;
           *"|"*|*"$NL_CHAR"*) die "$CS $1 value contains '|' or a newline; $out left unchanged" ;;
+          *[[:cntrl:]]*) die "$CS $1 value contains a control character (CR, tab, …); $out left unchanged" ;;
         esac
         shift 2 ;;
       *) die "$CS unknown argument '$1'; $out left unchanged" ;;
@@ -402,8 +403,9 @@ current_set() {
 # `- pause_reason:` line; else appended at the end of the block (current-set's own
 # append rule). `--cause null` removes the line (absent ⇒ unchanged). An omitted
 # field is `null`. Refusals (exit 1, file byte-unchanged): an unknown cause, a
-# missing --cause, an empty value or one holding `|` or a newline, a non-numeric
-# --run-id/--attempt (other than `null`), field flags with `--cause null`, a
+# missing --cause, an empty value or one holding `|`, a newline or any other control
+# character (CR, tab, …), a non-numeric --run-id/--attempt or non-hex --sha (other
+# than `null`), field flags with `--cause null`, a
 # missing/non-run file, no `## Current` heading. Values reach awk through the
 # ENVIRONMENT (never awk -v); the write goes through `_runfile_install … full`.
 # Idempotent: the identical line already present ⇒ `current-escalation: unchanged`.
@@ -423,6 +425,7 @@ current_escalation() {
         case "$2" in
           "") die "$CE $1 value is empty; $out left unchanged" ;;
           *"|"*|*"$NL_CHAR"*) die "$CE $1 value contains '|' or a newline; $out left unchanged" ;;
+          *[[:cntrl:]]*) die "$CE $1 value contains a control character (CR, tab, …); $out left unchanged" ;;
         esac
         case "$1" in
           --cause) cause="$2"; hc=1 ;;
@@ -439,6 +442,7 @@ current_escalation() {
   case "$ESCALATION_CAUSE_ENUM" in *" $cause "*) ;; *) die "$CE unknown cause '$cause'; $out left unchanged" ;; esac
   case "$rid" in null) ;; *[!0-9]*) die "$CE --run-id '$rid' is not numeric; $out left unchanged" ;; esac
   case "$att" in null) ;; *[!0-9]*) die "$CE --attempt '$att' is not numeric; $out left unchanged" ;; esac
+  case "$sha" in null) ;; *[!0-9a-fA-F]*) die "$CE --sha '$sha' is not hex; $out left unchanged" ;; esac
   if [ "$cause" = null ] && [ "$hf" = 1 ]; then die "$CE --cause null takes no field flags; $out left unchanged"; fi
   [ -f "$out" ] || die "$CE run file not found: $out"
   is_run_file "$out" || die "$CE not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
