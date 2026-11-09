@@ -9,8 +9,9 @@
 # `merge-watch: stopped|stop skipped — …` line (printed only when it stopped, or failed
 # to stop, a watcher). Execution order: evidence gate → brief repair → [run lock] 3a
 # worktrees → 4 sync → 3b branch → 5 stamp → check off → 7b reconcile ## Current →
-# ## Progress → 7c stop this PR's merge watcher → trail-pr → [release]. It never ticks `_BACKLOG.md` (human-owned; the step-5
-# stamp is what `resolve-backlog` reads — SKILL §2). The check-off runs BEFORE
+# ## Progress → 7c stop this PR's merge watcher → trail-pr → [release]. It
+# never ticks `_BACKLOG.md` (human-owned; the step-5 stamp is what
+# `resolve-backlog` reads — SKILL §2). The check-off runs BEFORE
 # the trail so the trail PR records the closed-out item; the trail line is
 # printed but never appended to ## Progress (appending it would leave the run
 # file one line ahead of the trail, so every re-run would push again). The step
