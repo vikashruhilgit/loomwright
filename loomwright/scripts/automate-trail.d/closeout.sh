@@ -106,8 +106,9 @@ _co_current() {
 # only for a REAL close-out block: a line that is exactly the sentinel
 # `<!-- loomwright:requirement-closeout -->` (trailing blanks and a trailing CR
 # tolerated), whose NEXT line is exactly a `## Status: done` / `## Status:
-# done_with_escalation` heading (trailing blanks tolerated; `done-ish`, `done.` or
-# any other suffix is not a stamp) — the shape the step-5 printf writes. A sentinel quoted inline in prose, or on a
+# done_with_escalation` heading, ending there (trailing blanks tolerated) or going on
+# with the ` — <reason>` suffix the escalation and abandon writers add; `done-ish`,
+# `done.`, `done (later)` or any other suffix is not a stamp — the step-5 printf's shape. A sentinel quoted inline in prose, or on a
 # line of its own followed by anything else, does not count (automate-followups/38:
 # af/37's own requirement quotes it in `## Problem`, and a plain substring match
 # read that as stamped, so closeout never stamped it). A block quoted in a code fence does not count
@@ -115,7 +116,7 @@ _co_current() {
 _co_stamped() {
   awk 'BEGIN { s = "<!-- loomwright:requirement-closeout -->" }
     { sub(/\r$/, "") }
-    prev && /^## Status:[[:space:]]*done(_with_escalation)?[[:space:]]*$/ { f = 1; exit }
+    prev && /^## Status:[[:space:]]*done(_with_escalation)?([[:space:]]*$|[[:space:]]+—[[:space:]])/ { f = 1; exit }
     { t = $0; sub(/[[:space:]]+$/, "", t); prev = (t == s) }
     END { exit !f }' 2>/dev/null <<<"$(_unfenced_text "$1")"
 }

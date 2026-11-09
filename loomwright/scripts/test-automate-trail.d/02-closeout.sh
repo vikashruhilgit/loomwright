@@ -443,8 +443,9 @@ x_cls="$(printf 'closeout: skipped — --session-id needs a value\n' | bash "$H"
   && ok "(X1) closeout-classify reads the refusal as a leftover with step guard (not unknown)" || no "(X1) classify: $x_cls"
 
 # (X2) _co_stamped: a sentinel line with trailing blanks still leads a stamp; the heading after
-# it must be exactly done / done_with_escalation (trailing blanks allowed) — `done-ish` and
-# `done.` are not stamps. Runs the bundled function itself, with its _unfenced_text helper.
+# it must be exactly done / done_with_escalation (trailing blanks allowed), or that word followed
+# by the writers' ` — <reason>` suffix — `done-ish`, `done.`, `done (later)` and a glued `done—x`
+# are not stamps. Runs the bundled function itself, with its _unfenced_text helper.
 x_stamped() { # <file> → stamped | unstamped
   ( eval "$(awk '/^_unfenced_text\(\) \{$/,/^}$/' "$TB")"; eval "$(awk '/^_co_stamped\(\) \{$/,/^}$/' "$TB")"
     _co_stamped "$1" ) && echo stamped || echo unstamped
@@ -454,6 +455,8 @@ for xc in "sentinel-trailing-blanks|<!-- loomwright:requirement-closeout -->   |
           "sentinel-trailing-tab|<!-- loomwright:requirement-closeout -->	|## Status: done|stamped" \
           "heading-trailing-blanks|<!-- loomwright:requirement-closeout -->|## Status: done  |stamped" \
           "done_with_escalation|<!-- loomwright:requirement-closeout -->|## Status: done_with_escalation|stamped" \
+          "dwe-reason|<!-- loomwright:requirement-closeout -->|## Status: done_with_escalation — ABANDONED (x)|stamped" \
+          "done-dash-glued|<!-- loomwright:requirement-closeout -->|## Status: done—x|unstamped" \
           "done-ish|<!-- loomwright:requirement-closeout -->|## Status: done-ish|unstamped" \
           "done-dot|<!-- loomwright:requirement-closeout -->|## Status: done.|unstamped" \
           "done-paren|<!-- loomwright:requirement-closeout -->|## Status: done (later)|unstamped"; do
