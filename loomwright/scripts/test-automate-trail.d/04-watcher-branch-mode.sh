@@ -226,6 +226,10 @@ ws_live() {
   WAIT_LIB_WHAT="the watcher's marker for $1" wait_for_cmd 20 grep -qF "$1" "$P/$MARK"
   WAIT_LIB_WHAT="the watcher's start line" wait_for_file_content "$TOP/ws.log" "merge-watch: started pid=" 20
   WS_PID="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
+  # the `started` line precedes the first poll: wait until that poll has READ the PR (OPEN) and the
+  # watcher sits in its 30s interval nap (its `sleep` child), so a state flip after this call is
+  # seen by the closeout under test, never by the watcher's own first poll (a CI-runner race)
+  [ -n "$WS_PID" ] && WAIT_LIB_WHAT="watcher pid=$WS_PID in its interval nap" wait_for_cmd 20 pgrep -P "$WS_PID" -x sleep
 }
 # (WS1) the --resume shape: the watcher is live and OPEN-reading, the PR merges, a closeout
 # NOT run by the watcher (with --session-id, as RECONCILE runs it) stops that watcher.
@@ -235,7 +239,7 @@ wf_state OPEN
 ws_live "$PRURL" "$REQ"
 wf_state MERGED
 cout="$(run_closeout --session-id ws-resume-sid 2>&1)"
-[ -n "$WS_PID" ] && printf '%s\n' "$cout" | grep -qxF "merge-watch: stopped pid=$WS_PID watching $PRURL" \
+[ -n "$WS_PID" ] && grep -qxF "merge-watch: stopped pid=$WS_PID watching $PRURL" <<<"$cout" \
   && ok "WS1: a non-watcher closeout prints that it stopped the run's watcher" || no "WS1 closeout output: $cout"
 if wait_for_pid_gone "$WS_PID" 10 && [ ! -e "$P/$MARK" ]; then ok "WS1: the watcher is gone and its marker removed"
 else no "WS1: watcher pid=$WS_PID alive / marker left"; kill "$WS_PID" 2>/dev/null; fi
@@ -244,7 +248,7 @@ grep -qE "^- .* closeout $PRURL: merge-watch: stopped pid=$WS_PID watching $PRUR
 grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "WS1: the item is still closed out" || no "WS1: not checked off"
 cp "$P/$RF_REL" "$TOP/ws1.rf"
 cout="$(run_closeout --session-id ws-resume-sid 2>&1)"
-! printf '%s\n' "$cout" | grep -q '^merge-watch:' && cmp -s "$P/$RF_REL" "$TOP/ws1.rf" \
+! grep -q '^merge-watch:' <<<"$cout" && cmp -s "$P/$RF_REL" "$TOP/ws1.rf" \
   && ok "WS1: a re-run finds no watcher — no line, run file byte-identical" || no "WS1 re-run: $cout"
 # mutation control: closeout without step 7c (the 2026-11-09 shape) leaves the watcher polling
 WSM="$TOP/ws-mut"; mkdir -p "$WSM"; cp -R "$SPYD"/. "$WSM/"
@@ -266,7 +270,7 @@ jq --arg u "$PRURL2" '.[0].state = "OPEN" | . + [{number:8,url:$u,state:"OPEN",h
 ws_live "$PRURL2" "$REQ2"
 wf_state MERGED
 cout="$(run_closeout 2>&1)"
-[ -n "$WS_PID" ] && kill -0 "$WS_PID" 2>/dev/null && ! printf '%s\n' "$cout" | grep -q '^merge-watch:' \
+[ -n "$WS_PID" ] && kill -0 "$WS_PID" 2>/dev/null && ! grep -q '^merge-watch:' <<<"$cout" \
   && ok "WS2: closeout of $PRURL leaves the run's watcher of $PRURL2 running" || no "WS2 other PR: $cout"
 out="$(bash "$WATCH" --stop "$P/$RF_REL" "$PRURL")"
 [ "$out" = "merge-watch: stop skipped — the run's watcher watches $PRURL2, not $PRURL" ] && ok "WS2: --stop names why it skipped another PR's watcher" || no "WS2 --stop: $out"
@@ -293,7 +297,7 @@ if cmp -s "$WATCH" "$WSA/automate-merge-watch.sh"; then no "WS3 mutant: the ance
     wout="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
     n="$(spy_count notify "$SPYLOG.notify")"; n="${n:-0}"   # no notify ⇒ no spy file ⇒ empty count
     if [ "$v" = real ]; then
-      [ "$n" = 1 ] && case "$wout" in *"merge-watch: closeout done"*) true ;; *) false ;; esac && ! printf '%s\n' "$wout" | grep -q 'merge-watch: stopped' \
+      [ "$n" = 1 ] && case "$wout" in *"merge-watch: closeout done"*) true ;; *) false ;; esac && ! grep -q 'merge-watch: stopped' <<<"$wout" \
         && ok "WS3: the watcher's own closeout does not stop it — closeout done + its one notify" || no "WS3: notify=$n :: $wout"
     else
       [ "$n" = 0 ] && ok "WS3 mutation control: without the ancestor guard the watcher's own closeout kills it (no notify)" || no "WS3 mutant: notify=$n :: $wout"
