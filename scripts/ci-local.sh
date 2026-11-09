@@ -145,7 +145,16 @@
 #                      and with `lsof` absent too it prints `ci-local: leak gate — unverifiable (ps
 #                      cannot show the environment)` and does not FAIL — the one documented fail-open
 #                      case; (6) a nested ci-local run re-exports its own id and re-opens fd 9, so a
-#                      process it leaves behind is attributed to the nested run only.
+#                      process it leaves behind is attributed to the nested run only; (7) each `lsof`
+#                      call (the two listener reads and the fd-holder probe) is bounded by
+#                      CI_LOCAL_LSOF_BOUND s, then killed: a cut-off listener read prints `ci-local:
+#                      leak gate — listeners unchecked (lsof timed out after <N>s)`, a cut-off probe
+#                      `ci-local: leak gate — inherited-fd marker unchecked (lsof timed out after
+#                      <N>s)` — only the environment half attributes then, and with the environment
+#                      also hidden that run attributes nothing (report-only, never a FAIL). lsof runs
+#                      without the marker variable and with fd 9 closed, so a hung lsof is never
+#                      counted as a survivor. No `-b`: on macOS it makes the fd-holder probe fail
+#                      with a status error on the marker path.
 #
 # usage: ci-local.sh [--force] [--list] | --affected [--list] | --last | --wait
 #   --force     ignore the pass cache and run everything
@@ -164,6 +173,7 @@
 #        CI_LOCAL_LEAK_SETTLE  seconds a leak candidate may take to exit before it counts (default 5)
 #        CI_LOCAL_LSOF        the lsof command the leak gate runs (default `lsof`; a name that does
 #                             not resolve is treated as lsof absent)
+#        CI_LOCAL_LSOF_BOUND  seconds each leak-gate lsof call may take before it is killed (default 10)
 #        LOOMWRIGHT_CI_LOCAL_RUN  SET by this script (the leak gate's run id), never read from the caller
 # exit:  0 = every gate passed (fresh or cached) · 1 = a gate failed / fail-closed condition · 2 = usage
 #        --last: 0 = PASS · 1 = FAIL / UNVERIFIED / INCOMPLETE / stale-key / no log
@@ -204,6 +214,8 @@ case "$wait_poll" in ''|.|*[!0-9.]*|*.*.*) echo "ci-local: CI_LOCAL_WAIT_POLL mu
 leak_settle="${CI_LOCAL_LEAK_SETTLE:-5}"
 case "$leak_settle" in ''|*[!0-9]*) echo "ci-local: CI_LOCAL_LEAK_SETTLE must be a non-negative integer, got '$leak_settle'" >&2; exit 2 ;; esac
 leak_lsof="${CI_LOCAL_LSOF:-lsof}"
+leak_lsof_bound="${CI_LOCAL_LSOF_BOUND:-10}"
+case "$leak_lsof_bound" in ''|0*|*[!0-9]*) echo "ci-local: CI_LOCAL_LSOF_BOUND must be a positive integer (no leading zero), got '$leak_lsof_bound'" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
@@ -385,7 +397,7 @@ content_key() {
 # --- leak gate (see LEAK GATE in the header) ----------------------------------------------------------
 # Every helper the gate itself runs closes fd 9 (`9<&-`), so it never holds the marker file. A snapshot
 # runs in the background and is awaited, so its pid is known ($leak_ps_pid) and excluded.
-leak_id=""; leak_form=""; leak_env=0; leak_have_lsof=0; leak_k=0; leak_status=""; leak_ps_pid=""
+leak_id=""; leak_form=""; leak_env=0; leak_have_lsof=0; leak_k=0; leak_status=""; leak_ps_pid=""; leak_lsn_cut=0
 # leak_ps FORM OUT — one snapshot (pid, uid, lstart, command + environment) in FORM (bsd | procps) to
 # OUT, with the lstart TZ/locale pinned so two snapshots compare; returns ps's exit code.
 leak_ps() {
@@ -413,9 +425,31 @@ leak_marked() {
   leak_records "$1" | awk -v p="$2" -v m=" LOOMWRIGHT_CI_LOCAL_RUN=$leak_id " \
     '$1 == p && index($0 " ", m) { f = 1 } END { exit !f }'
 }
-# leak_listeners OUT — the sorted pids holding a listening TCP socket (lsof exits 1 when none).
+# leak_lsof_run OUT ARGS... — one lsof call into OUT, bounded the way finish_log bounds its tee drain:
+# a kill -0 poll of CI_LOCAL_LSOF_BOUND s, then kill -KILL (a stale network mount can block lsof
+# indefinitely, and macOS has no `timeout`). It runs with the run-marker variable removed and fd 9
+# closed, so an lsof that outlives even the KILL (uninterruptible sleep) is never counted as a
+# survivor; such a one is not waited for. Returns 1 when the call was cut off (OUT is then empty).
+leak_lsof_run() {
+  local out="$1" p i=0; shift
+  env -u LOOMWRIGHT_CI_LOCAL_RUN "$leak_lsof" "$@" > "$out" 2>/dev/null 9<&- &
+  p=$!
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt $((leak_lsof_bound * 10)) ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$p" 2>/dev/null; then
+    kill -KILL "$p" 2>/dev/null || true
+    i=0
+    while kill -0 "$p" 2>/dev/null && [ "$i" -lt 10 ]; do sleep 0.1; i=$((i + 1)); done
+    kill -0 "$p" 2>/dev/null || wait "$p" 2>/dev/null || true
+    : > "$out"
+    return 1
+  fi
+  wait "$p" 2>/dev/null || true   # lsof exits 1 when nothing matches
+  return 0
+}
+# leak_listeners OUT — the sorted pids holding a listening TCP socket. A cut-off read sets leak_lsn_cut.
 leak_listeners() {
-  { "$leak_lsof" -nP -iTCP -sTCP:LISTEN -Fp 2>/dev/null 9<&- || true; } | sed -n 's/^p//p' | env LC_ALL=C sort -u > "$1"
+  leak_lsof_run "$1.raw" -nP -iTCP -sTCP:LISTEN -Fp || leak_lsn_cut=1
+  sed -n 's/^p//p' "$1.raw" | env LC_ALL=C sort -u > "$1"
 }
 
 # leak_gate_start — exports the run id, opens the marker fd, probes the snapshot form and takes the
@@ -464,8 +498,8 @@ leak_gate_end() {
   fi
   [ "$leak_env" -eq 1 ] || echo "ci-local: leak gate — environment unverifiable (ps cannot show the environment); attributing by the inherited fd marker only"
   : > "$tmpd/leak.fdholders"
-  if [ "$leak_have_lsof" -eq 1 ]; then
-    { "$leak_lsof" -nP -t -- "$tmpd/leak.fd" 2>/dev/null 9<&- || true; } > "$tmpd/leak.fdholders"
+  if [ "$leak_have_lsof" -eq 1 ] && ! leak_lsof_run "$tmpd/leak.fdholders" -nP -t -- "$tmpd/leak.fd"; then
+    echo "ci-local: leak gate — inherited-fd marker unchecked (lsof timed out after ${leak_lsof_bound}s)"
   fi
   leak_records "$before" > "$before.rec"
   # Candidates: new (pid + lstart not in the before-snapshot), mine, not this gate's own ps, and
@@ -515,7 +549,9 @@ leak_gate_end() {
   fi
   if [ "$leak_k" -gt 0 ]; then leak_status=survivors
   else echo "ci-local: leak gate — clean (0 new processes survived)"; fi
-  if [ "$leak_have_lsof" -eq 1 ]; then
+  if [ "$leak_have_lsof" -eq 1 ] && [ "$leak_lsn_cut" -eq 1 ]; then
+    echo "ci-local: leak gate — listeners unchecked (lsof timed out after ${leak_lsof_bound}s)"
+  elif [ "$leak_have_lsof" -eq 1 ]; then
     env LC_ALL=C comm -13 "$tmpd/leak.lsn.before" "$tmpd/leak.lsn.after" | while IFS= read -r pid; do
       grep -qx "$pid" "$surv" && continue
       kill -0 "$pid" 2>/dev/null || continue
