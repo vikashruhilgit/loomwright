@@ -60,7 +60,8 @@
 #                  not a number) is taken over at once. Lock waits honour the acquire --wait deadline.
 # WAITING          stderr, first wait then every LOOMWRIGHT_CI_SLOT_PRINT_EVERY s (default 30):
 #                  `waiting for a CI slot — position <p>, holders: <name> (<age>), …`. Poll period:
-#                  LOOMWRIGHT_CI_SLOT_POLL s (default 2). All diagnostics go to stderr.
+#                  LOOMWRIGHT_CI_SLOT_POLL s (default 2; a value that is not a number above zero,
+#                  such as `.`, `1.2.3` or `0`, reads as 2). All diagnostics go to stderr.
 # NUMBERS          integer options and env values may be zero-padded; they are read as decimal
 #                  (--slots 010 = 10 slots, never octal 8).
 # MACHINE GATE     the per-repo pool above caps one repository; this gate caps the MACHINE. Before a
@@ -630,7 +631,10 @@ is_uint "$SLOTS" && [ "$SLOTS" -gt 0 ] || die "LOOMWRIGHT_CI_SLOTS must be a pos
 SLOTS=$((10#$SLOTS))
 JOBS=$(( CPUS / SLOTS )); [ "$JOBS" -ge 2 ] || JOBS=2
 POLL="${LOOMWRIGHT_CI_SLOT_POLL:-2}"
-case "$POLL" in ''|*[!0-9.]*) POLL=2 ;; esac
+# A number `sleep` takes (digits, at most one inner `.`) above zero, else 2: `.`, `1.2.3` or `0` made
+# every poll's sleep return at once, so the wait loop spun against the counter mutex.
+case "$POLL" in ''|*[!0-9.]*|*.*.*|.*|*.) POLL=2 ;; esac   # POLLCHECK
+case "$POLL" in *[1-9]*) ;; *) POLL=2 ;; esac              # POLLCHECK
 CHECKOUT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 MY_TICKET=""
 CLAIMING=""

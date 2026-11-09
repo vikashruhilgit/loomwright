@@ -44,6 +44,11 @@
 #      from resolve-base-branch.sh (the cwd repo's .supervisor/config.json);
 #      with neither, protection is never read and required=unknown — never a
 #      `main` guess, never a vacuous green.
+#  41. zero-padded --bound 08 / --call-max 08 read as decimal: the resumable
+#      path (CONTINUE + one persisted deadline), no `value too great for base`;
+#      mutation control (normalisation removed).
+#  42. the poll sleep is cut to the remaining --call-max budget: --call-max 1
+#      --interval 8 prints CONTINUE within 4 s; mutation control (clamp removed).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -920,6 +925,59 @@ else
   no "missing library wrong (out='$OUTP')"
 fi
 rm -rf "$D40"
+
+# 41-42. Zero-padded numbers and the per-call ceiling. `$((… + BOUND))` read `08` as a bad octal
+# literal; the error aborted the deadline block, so `--bound 08 --call-max 1` ran the non-resumable
+# path for the whole bound (no CONTINUE, no state file). And the ceiling was checked only BEFORE the
+# poll sleep, so a call could overshoot --call-max by up to one --interval.
+# wfc_err <dir> <script> <args...> — wfc with stderr kept in <dir>/err.
+wfc_err() { local d="$1" s="$2"; shift 2; ( cd "$d" && GH="$d/gh" bash "$s" "$@" 2>"$d/err" ); }
+octal_ok() {   # octal_ok SUT — exit 0 iff (41) holds; WHY41 says which part failed
+  local s="$1" d out
+  WHY41=""
+  d="$(fresh_stub_dir)"; write_never_settles_stub "$d"
+  out="$(wfc_err "$d" "$s" "$PR" --sha "$SHA" --bound 08 --call-max 1 --interval 1 --required-only)"
+  case "$out" in "CONTINUE sha=$SHA remaining="[5678]" pending=none") ;; *) WHY41="--bound 08: '$out' (want CONTINUE)" ;; esac
+  grep -q 'value too great' "$d/err" && WHY41="$WHY41 --bound 08 stderr: $(head -1 "$d/err")"
+  [ "$(state_count "$d")" = 1 ] || WHY41="$WHY41 --bound 08 state files: $(state_count "$d")"
+  rm -rf "$d"
+  d="$(fresh_stub_dir)"; write_pending_then_settle_stub "$d" "SUCCESS"
+  out="$(wfc_err "$d" "$s" "$PR" --sha "$SHA" --bound 09 --call-max 08 --interval 1 --required-only)"
+  case "$out" in "SETTLED sha=$SHA required=green"*) ;; *) WHY41="$WHY41 --call-max 08: '$out' (want SETTLED green)" ;; esac
+  grep -q 'value too great' "$d/err" && WHY41="$WHY41 --call-max 08 stderr: $(head -1 "$d/err")"
+  rm -rf "$d"
+  [ -z "$WHY41" ]
+}
+ceiling_ok() {   # ceiling_ok SUT — exit 0 iff (42) holds; WHY42 says why not
+  local s="$1" d out t0 t
+  d="$(fresh_stub_dir)"; write_never_settles_stub "$d"
+  t0=$SECONDS
+  out="$(wfc_err "$d" "$s" "$PR" --sha "$SHA" --bound 60 --call-max 1 --interval 8 --required-only)"
+  t=$((SECONDS - t0))
+  rm -rf "$d"
+  WHY42="out='$out' in ${t}s"
+  case "$out" in "CONTINUE sha=$SHA remaining="*" pending=none") [ "$t" -le 4 ] ;; *) false ;; esac
+}
+echo "== 41. --bound 08 / --call-max 08 are decimal: resumable CONTINUE + state, no octal error =="
+if octal_ok "$SUT"; then ok "--bound 08 --call-max 1 prints CONTINUE with one persisted deadline; --call-max 08 settles; no 'value too great'"
+else no "zero-padded numbers: $WHY41"; fi
+M41="$(fresh_stub_dir)/mut-octal.sh"
+grep -v '# BOUNDDEC$' "$SUT" > "$M41"
+if [ -s "$M41" ] && ! cmp -s "$SUT" "$M41" && bash -n "$M41"; then
+  if octal_ok "$M41"; then no "case 41 MUTATION CONTROL: without the --bound normalisation case 41 still passed — it proves nothing"
+  else ok "case 41 MUTATION CONTROL: without the --bound normalisation case 41 fails ($WHY41)"; fi
+else no "case 41 mutant invalid (empty / identical / bash -n)"; fi
+rm -rf "$(dirname "$M41")"
+echo "== 42. --call-max 1 --interval 8: the poll sleep ends at the per-call ceiling, not 8 s later =="
+if ceiling_ok "$SUT"; then ok "the last sleep is cut to the remaining --call-max budget ($WHY42)"
+else no "per-call ceiling overshoot: $WHY42"; fi
+M42="$(fresh_stub_dir)/mut-ceil.sh"
+grep -v '# CEILCAP$' "$SUT" > "$M42"
+if [ -s "$M42" ] && ! cmp -s "$SUT" "$M42" && bash -n "$M42"; then
+  if ceiling_ok "$M42"; then no "case 42 MUTATION CONTROL: without the sleep clamp case 42 still passed — it proves nothing"
+  else ok "case 42 MUTATION CONTROL: without the sleep clamp the call overshoots ($WHY42)"; fi
+else no "case 42 mutant invalid (empty / identical / bash -n)"; fi
+rm -rf "$(dirname "$M42")"
 
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi

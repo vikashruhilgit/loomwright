@@ -109,6 +109,9 @@
 #      session, for LOOMWRIGHT_RUN_LOCK_SESSION_ID = the holder's, and for a
 #      dead holder; the meta byte-identical throughout (never acquires,
 #      refreshes or reclaims).
+#  37. `liveness --pid ''` exits 1 with the usage text (never an unbound
+#      verdict); no --pid at all still prints `alive`. Mutation control: the
+#      `''` arm removed ⇒ (37) fails.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1038,6 +1041,32 @@ if [ "$p36u" = run_lock_clear ] && [ "$rc36u" = 0 ] && [ "$o36" = 1 ] && [ "$rc3
 else
   no "probe: none='$p36u'($rc36u) other='$p36o'($rc36o) own='$p36s' env='$p36e' dead='$p36d' meta $([ "$m36" = "$m36d" ] && echo same || echo CHANGED)"
 fi
+
+echo "== 37. liveness --pid '' is a usage error, never an unbound check =="
+# An empty --pid matched no arm of the numeric check, then `[ -n "$EXPECT_PID" ]` was false, so the
+# verdict silently stopped being bound to a holder. No --pid at all still prints the unbound verdict.
+emptypid_ok() {   # emptypid_ok SUT — exit 0 iff (37) holds; WHY37 names what failed
+  local s="$1" d l v rc vn rcn
+  d="$(fresh_root)"
+  sleep 600 & l=$!
+  env LOOMWRIGHT_HOLDER_PID="$l" bash "$s" acquire --owner x:37 --root "$d" >/dev/null 2>&1
+  v="$(bash "$s" liveness --pid '' --root "$d" 2>"$d/err37")"; rc=$?
+  vn="$(bash "$s" liveness --root "$d" 2>/dev/null)"; rcn=$?
+  kill "$l" 2>/dev/null; wait "$l" 2>/dev/null
+  WHY37="--pid '': rc=$rc out='$v' usage_lines=$(grep -c '^usage:' "$d/err37"); no --pid: rc=$rcn out='$vn'"
+  rm -rf "$d"
+  [ "$rc" = 1 ] && [ -z "$v" ] && case "$WHY37" in *"usage_lines=1;"*) true ;; *) false ;; esac \
+    && [ "$rcn" = 0 ] && [ "$vn" = alive ]
+}
+if emptypid_ok "$SUT"; then ok "liveness --pid '' exits 1 with the usage text; no --pid still prints alive ($WHY37)"
+else no "liveness --pid '': $WHY37"; fi
+M37D="$(mktemp -d)"; M37="$M37D/mut-emptypid.sh"
+sed "s/^    case \"\$EXPECT_PID\" in ''|\*\[!0-9\]\*) die_usage ;; esac\$/    case \"\$EXPECT_PID\" in *[!0-9]*) die_usage ;; esac/" "$SUT" > "$M37"
+if [ -s "$M37" ] && ! cmp -s "$SUT" "$M37" && bash -n "$M37"; then
+  if emptypid_ok "$M37"; then no "37 MUTATION CONTROL: without the '' arm (37) still passed — it proves nothing"
+  else ok "37 MUTATION CONTROL: without the '' arm (37) fails ($WHY37)"; fi
+else no "37 mutant invalid (empty / identical / bash -n)"; fi
+rm -rf "$M37D"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

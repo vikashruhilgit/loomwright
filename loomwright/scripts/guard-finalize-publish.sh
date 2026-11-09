@@ -16,7 +16,10 @@
 # AFTER pushing and opening its PR — nothing refused that. Now a Supervisor run cannot `git push` /
 # `gh pr create` until this script itself has run check-children-settled.sh for the current plugin
 # session and HEAD. The marker is written by a script that runs the check, never by prose and never
-# by a hand `Write` (which would let the same agent forge it).
+# by a hand `Write` (which would let the same agent forge it). HONEST LIMIT: that last rule is a
+# convention, not enforced — no hook denies a `Write`, `Edit` or Bash redirect to the marker path
+# (the hooks.json `Write|Edit` leaf is guard-test-integrity.sh, which does not look at it), so an
+# agent that writes the marker by hand gets past this gate.
 #
 # MARKER: `.supervisor/logs/<plugin_session_id>.finalize-gate` — keyed by the PLUGIN session id (the
 # `## Session` block's `- session_id:` in `.supervisor/state.md`), never the Claude Code UUID:

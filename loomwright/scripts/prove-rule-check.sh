@@ -39,7 +39,8 @@
 #                     pass as "outside". The containment check runs BEFORE any refusal that could
 #                     write a proof, so an in-repo --out never receives one on ANY path: an earlier
 #                     refusal (bad_args, counterexample_unreadable, …) still names its own reason,
-#                     but writes nothing.
+#                     but writes nothing. Run from inside a git dir (cwd under `.git/`, or a bare
+#                     repo) the working tree is unknown, so no proof is written (not_a_git_repo).
 #   --confirm         run without a prompt. See "CONFIRMATION".
 #   --timeout         per-leg timeout in seconds (positive integer; default 60). The environment
 #                     variable PROVE_RULE_CHECK_TIMEOUT sets the default; argv wins.
@@ -49,6 +50,8 @@
 #   TMPDIR                    where the scratch dir (run logs + the scratch worktree) is created:
 #                             `mktemp -d "${TMPDIR:-/tmp}/prove-rule-check.XXXXXX"`, /tmp when unset.
 #                             A TMPDIR that cannot hold it ⇒ `UNPROVABLE (scratch_create_failed)`.
+#                             A TMPDIR inside the repo is not used (/tmp instead); a scratch dir
+#                             that still resolves inside it ⇒ `UNPROVABLE (scratch_create_failed)`.
 #
 # CONFIRMATION (scope 2/3 — same trust boundary as `rules-check.sh --confirm`, skills/rules/SKILL.md
 # §9). A check is arbitrary shell. The check string and the patch text are PRINTED first; the check
@@ -369,6 +372,9 @@ TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || TOP=""
 if [ -n "$TOP" ]; then
   TOP="$(cd "$TOP" 2>/dev/null && pwd -P)" || { TOP=""; TOP_ERR="cannot resolve the repo root"; }
 fi
+# Inside a repo's git dir (cwd under `.git/`, or a bare repo) `--git-dir` resolves but `--show-toplevel`
+# does not: the working tree an --out could land in is unknown, so containment is unknown — fail CLOSED.
+[ -z "$TOP" ] && [ -z "$TOP_ERR" ] && git rev-parse --git-dir >/dev/null 2>&1 && TOP_ERR="inside a git directory, not a working tree — no scratch worktree is possible"   # GITDIRCASE
 
 # --out is resolved FIRST, so even a bad-args run leaves a proof file saying so — but OUT_ABS (the
 # ONLY thing write_proof reads) is set only after the containment check has passed. Every exit
@@ -454,10 +460,20 @@ fi
 # Scratch dir (logs + the scratch worktree), physical path so it matches git's own record.
 # ---------------------------------------------------------------------------
 # An explicit template: a bare `mktemp -d` on macOS ignores $TMPDIR, so the scratch location would not
-# be the caller's to choose (or to observe).
-s_raw="$(mktemp -d "${TMPDIR:-/tmp}/prove-rule-check.XXXXXX" 2>/dev/null)" || s_raw=""
+# be the caller's to choose (or to observe). A TMPDIR inside the repo (judged by identity, like --out)
+# would land leg 1's logs and the scratch worktree in the user's tree as untracked content, so it is
+# not used: the scratch dir goes under /tmp instead.
+s_phys="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || s_phys=""
+if [ -n "$s_phys" ] && same_file_or_ancestor "$s_phys" "$TOP"; then   # SCRATCHIN
+  say "$PROG: TMPDIR (${TMPDIR:-/tmp}) lies inside the repo — the scratch dir goes under /tmp instead"
+  s_raw="$(mktemp -d "/tmp/prove-rule-check.XXXXXX" 2>/dev/null)" || s_raw=""
+else
+  s_raw="$(mktemp -d "${TMPDIR:-/tmp}/prove-rule-check.XXXXXX" 2>/dev/null)" || s_raw=""
+fi
 [ -n "$s_raw" ] || unprovable scratch_create_failed "mktemp -d failed"
 SCRATCH="$(cd "$s_raw" && pwd -P)" || { SCRATCH="$s_raw"; unprovable scratch_create_failed "cannot resolve the scratch dir"; }
+# Verified, not assumed: whatever the base, a scratch dir that resolves inside the repo is never used.
+same_file_or_ancestor "$SCRATCH" "$TOP" && unprovable scratch_create_failed "the scratch dir resolves inside the repo: $SCRATCH"   # SCRATCHIN-VERIFY
 SCRATCH_LOGS="$SCRATCH/logs"
 WT="$SCRATCH/wt"
 mkdir -p "$SCRATCH_LOGS" || unprovable scratch_create_failed "cannot create $SCRATCH_LOGS"
