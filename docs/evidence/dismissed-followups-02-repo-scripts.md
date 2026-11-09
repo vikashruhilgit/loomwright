@@ -12,7 +12,7 @@ scratchpad. The sibling groups' records are `docs/evidence/dismissed-followups-0
 | Finding | Re-verified on base | Disposition | Leg / reason |
 |---|---|---|---|
 | F002 | present | fixed | `scripts/test-bump-version.sh` :: `scratch: a SIGKILLed bump keeps its backups under the git dir; git status --untracked-files=all lists no .bump-version. path` and `scratch: a SIGKILLed re-fold keeps both scratch dirs (re-fold + child bump) under the git dir; git status lists neither` |
-| F070 | present | fixed | `scripts/test-bump-version.sh` :: `dry-run: a contract stale BEFORE the bump is reported stale (exit 1), never 'plugin_version only'; nothing written` (control: `dry-run: a fresh contract still prints 'also regenerates: … (plugin_version only)' (exit 0, nothing written)`) |
+| F070 | present | fixed | `scripts/test-bump-version.sh` :: `dry-run: a contract stale BEFORE the bump is reported stale (exit 1), never 'plugin_version only'; nothing written` and `dry-run: a generator that fails is reported (exit 1, nothing written, no scratch dir left)` (control: `dry-run: a fresh contract still prints 'also regenerates: … (plugin_version only)' (exit 0, nothing written)`) |
 | F350 | present | fixed | `scripts/test-ci-local.sh` :: `(LK15)` every lsof call hangs, `(LK16)` only the after-suite listener read hangs, `(LK17)` only the `-t` fd-holder probe hangs, `(LK18)` a bad `CI_LOCAL_LSOF_BOUND` |
 | F292 | present | fixed (name only) | `.github/workflows/ci.yml` step renamed to `Check prompt token budgets (agents, skills, commands)`. No leg: it is a step label, and the line count is unchanged (no `ci.yml:NN` pin moves) |
 
@@ -68,13 +68,14 @@ Each anchor was grepped in the base blob (`git show 8ec200e:<path> | grep -nF '<
 
 | Run | Result | Failing legs |
 |---|---|---|
-| base `bump-version.sh` | `RESULT: 142 passed, 3 failed` | both `scratch: a SIGKILLed …` legs, `dry-run: a contract stale BEFORE the bump …` |
-| fixed `bump-version.sh` | `RESULT: 145 passed, 0 failed` | — |
-| pin mutation: the re-fold's `CW=` site flipped back to `$repo_root` | `144 passed, 1 failed` | `scratch: a SIGKILLed re-fold keeps both scratch dirs …` |
-| pin mutation: the dry-run render and caps verify deleted (the old one-line claim restored) | `144 passed, 1 failed` | `dry-run: a contract stale BEFORE the bump …` |
+| base `bump-version.sh` | `RESULT: 143 passed, 4 failed` | both `scratch: a SIGKILLed …` legs, `dry-run: a contract stale BEFORE the bump …`, `dry-run: a generator that fails is reported …` |
+| fixed `bump-version.sh` | `RESULT: 147 passed, 0 failed` | — |
+| pin mutation: the re-fold's `CW=` site flipped back to `$repo_root` | `146 passed, 1 failed` | `scratch: a SIGKILLed re-fold keeps both scratch dirs …` |
+| pin mutation: the dry-run render and caps verify deleted (the old one-line claim restored) | `145 passed, 2 failed` | both `dry-run: …` refusal legs |
 
 The fresh-contract control (`dry-run: a fresh contract still prints …`) and the successful-bump control
-(`scratch: a successful bump removes its scratch dir …`) pass on both scripts, as they should. The SIGKILL legs kill
+(`scratch: a successful bump removes its scratch dir …`) pass on both scripts, as they should. So does
+`scratch: outside a git repo the bump still works and leaves no scratch dir at the repo root`, the fallback branch. The SIGKILL legs kill
 the bump from inside an injected validator. The bump leg kills `$PPID`. The re-fold leg kills the child bump and its
 parent re-fold, so no EXIT trap runs. Each leg also asserts that the scratch dir really is under `.git`, so it cannot
 pass on an empty tree.

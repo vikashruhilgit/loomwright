@@ -767,6 +767,16 @@ run_bump "$D" --dry-run; rc=$?
 [ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF "also regenerates: $CJ (plugin_version only)" "$TMP/last.out" \
   && ! grep -qF 'REFUSES:' "$TMP/last.out" && [ "$(scratch_in_gitdir "$D")" = "0" ]
 check $? "dry-run: a fresh contract still prints 'also regenerates: … (plugin_version only)' (exit 0, nothing written)"
+D="$TMP/sc6"; make_caps_fixture "$D"; printf '#!/usr/bin/env bash\nexit 1\n' > "$D/loomwright/scripts/build-capabilities.sh"
+g "$D" add -A && g "$D" commit -q -m "generator broken"; frag "$D" x.md 'X\n'; before="$(tree_sum "$D")"
+run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF "REFUSES:   cannot regenerate $CJ" "$TMP/last.out" && [ "$(scratch_in_gitdir "$D")" = "0" ]
+check $? "dry-run: a generator that fails is reported (exit 1, nothing written, no scratch dir left)"
+# Outside a git repo the scratch dir falls back to the repo root and is still removed.
+D="$TMP/sc7"; make_fixture "$D"; frag "$D" x.md 'X\n'; rm -rf "$D/.git"
+run_bump "$D"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ver_of "$D")" = "1.2.4 1.2.4 1.2.4" ] && [ -z "$(find "$D" -maxdepth 1 -name '.bump-version.*')" ]
+check $? "scratch: outside a git repo the bump still works and leaves no scratch dir at the repo root"
 
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
