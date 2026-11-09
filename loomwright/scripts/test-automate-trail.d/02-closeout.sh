@@ -419,3 +419,61 @@ for v in pointer nopointer; do
   fi
 done
 REQ="$SR_REQ_SAVED"
+
+echo "== X. closeout argument + stamp + record guards =="
+# (X1) --session-id takes a value. Followed by the next flag, an empty value, or nothing at all,
+# closeout prints ONE refusal line, exits 0 and runs nothing: no trail-pr, run file and
+# requirement byte-unchanged (a closeout that read `--no-trail` as the session id ran the trail).
+xn=140
+for xv in next-flag empty last; do
+  closeout_fixture "$xn"; xn=$((xn + 1)); spy_reset
+  x_rf0="$(cksum < "$P/$RF_REL")"; x_rq0="$(cksum < "$P/$REQ")"
+  case "$xv" in
+    next-flag) out="$(run_closeout --session-id --no-trail 2>/dev/null)"; rc=$? ;;
+    empty)     out="$(run_closeout --session-id '' 2>/dev/null)"; rc=$? ;;
+    last)      out="$(run_closeout --session-id 2>/dev/null)"; rc=$? ;;
+  esac
+  if [ "$rc" -eq 0 ] && [ "$out" = "closeout: skipped — --session-id needs a value" ] && ! grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null \
+     && [ "$x_rf0" = "$(cksum < "$P/$RF_REL")" ] && [ "$x_rq0" = "$(cksum < "$P/$REQ")" ]; then
+    ok "(X1) [$xv] --session-id without a value ⇒ 'closeout: skipped — --session-id needs a value', exit 0, nothing run"
+  else no "(X1) [$xv] rc=$rc out=$(printf '%s' "$out" | tr '\n' '|') trail=$(grep -c '^trail-pr ' "$SPYLOG" 2>/dev/null)"; fi
+done
+x_cls="$(printf 'closeout: skipped — --session-id needs a value\n' | bash "$H" closeout-classify --run R1 --item q/01.md --pr "$PRURL")"
+[ "$x_cls" = "leftover	R1	q/01.md	$PRURL	guard	skipped — --session-id needs a value" ] \
+  && ok "(X1) closeout-classify reads the refusal as a leftover with step guard (not unknown)" || no "(X1) classify: $x_cls"
+
+# (X2) _co_stamped: a sentinel line with trailing blanks still leads a stamp; the heading after
+# it must be exactly done / done_with_escalation (trailing blanks allowed), or that word followed
+# by the writers' ` — <reason>` suffix — `done-ish`, `done.`, `done (later)` and a glued `done—x`
+# are not stamps. Runs the bundled function itself, with its _unfenced_text helper.
+x_stamped() { # <file> → stamped | unstamped
+  ( eval "$(awk '/^_unfenced_text\(\) \{$/,/^}$/' "$TB")"; eval "$(awk '/^_co_stamped\(\) \{$/,/^}$/' "$TB")"
+    _co_stamped "$1" ) && echo stamped || echo unstamped
+}
+XS="$TOP/x-stamped.md"
+for xc in "sentinel-trailing-blanks|<!-- loomwright:requirement-closeout -->   |## Status: done|stamped" \
+          "sentinel-trailing-tab|<!-- loomwright:requirement-closeout -->	|## Status: done|stamped" \
+          "heading-trailing-blanks|<!-- loomwright:requirement-closeout -->|## Status: done  |stamped" \
+          "done_with_escalation|<!-- loomwright:requirement-closeout -->|## Status: done_with_escalation|stamped" \
+          "dwe-reason|<!-- loomwright:requirement-closeout -->|## Status: done_with_escalation — ABANDONED (x)|stamped" \
+          "done-dash-glued|<!-- loomwright:requirement-closeout -->|## Status: done—x|unstamped" \
+          "done-ish|<!-- loomwright:requirement-closeout -->|## Status: done-ish|unstamped" \
+          "done-dot|<!-- loomwright:requirement-closeout -->|## Status: done.|unstamped" \
+          "done-paren|<!-- loomwright:requirement-closeout -->|## Status: done (later)|unstamped"; do
+  IFS='|' read -r xname xsen xhead xwant <<<"$xc"
+  printf '# req\n\n## Status: pending\n\n%s\n%s\n- **Completed:** 2026-01-01T00:00:00Z\n' "$xsen" "$xhead" > "$XS"
+  [ "$(x_stamped "$XS")" = "$xwant" ] && ok "(X2) [$xname] _co_stamped ⇒ $xwant" || no "(X2) [$xname] _co_stamped ⇒ $(x_stamped "$XS"), want $xwant"
+done
+
+# (X3) closeout-classify --record: a close-out whose only change is the trail it committed
+# (`trail-pr: opened …` / `trail-pr: pushed …`) did close something out, so no
+# `closeout: nothing to close out` line is appended; a `synced`-only result still appends it.
+x_rec() { # <trail-pr line> → the run file's 'nothing to close out' line count after one --record
+  printf '# Automate Run: x\n## Status: running\n## Queue\n- [x] q/01.md\n## Current\n- item: q/01.md | status: done | pr: %s | branch: null\n- pause_reason: null\n## Progress\n- t0 run created\n' "$PRURL" > "$TOP/x-rec.md"
+  printf 'brief-repair: skipped — nothing to repair\ncloseout: synced — main at abc1234\ncloseout: skipped — already removed (no worktree on feature/x)\n%s\n' "$1" \
+    | bash "$H" closeout-classify --run R1 --item q/01.md --pr "$PRURL" --record "$TOP/x-rec.md" >/dev/null
+  grep -c 'closeout: nothing to close out — q/01.md$' "$TOP/x-rec.md" || true
+}
+[ "$(x_rec "trail-pr: opened https://github.com/acme/widgets/pull/101")" = 0 ] && ok "(X3) a trail-pr: opened change ⇒ no 'nothing to close out' line" || no "(X3) opened: $(tail -n1 "$TOP/x-rec.md")"
+[ "$(x_rec "trail-pr: pushed https://github.com/acme/widgets/pull/101")" = 0 ] && ok "(X3) a trail-pr: pushed change ⇒ no 'nothing to close out' line" || no "(X3) pushed: $(tail -n1 "$TOP/x-rec.md")"
+[ "$(x_rec "trail-pr: skipped — trail already up to date")" = 1 ] && ok "(X3) control: synced + a skipped trail ⇒ one 'nothing to close out' line (unchanged)" || no "(X3) control: $(tail -n1 "$TOP/x-rec.md")"

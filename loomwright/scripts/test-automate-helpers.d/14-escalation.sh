@@ -395,4 +395,21 @@ if [ "$RUN_OUT" = "current-set: unchanged" ] && cmp -s "$ESC_T/esc-done" "$ESC_R
 cp "$ESC_T/esc-on" "$ESC_RF"
 run_h bash "$H" current-set "$ESC_RF" --item b.md --status escalated --pr https://github.com/acme/widgets/pull/2
 if [ "$RUN_RC" -eq 0 ] && ! grep -q '^- escalation_cause:' "$ESC_RF"; then ok "ESC current-set: a changed item (PICK of the next item) removes the previous item's escalation line"; else no "ESC current-set changed item kept a stale line"; fi
+# A value carrying a CR, a tab or any other control byte, and a --sha that is not hex, are
+# refused: exit 1, the `… left unchanged` message family, the run file byte-identical.
+esc_rf; cp "$ESC_RF" "$ESC_T/cntrl-ref"
+for ev in check-cr check-tab check-soh sha-cr sha-nonhex; do
+  case "$ev" in
+    check-cr)   ea=(--cause check_pending --check "$(printf 'ci\r')" --sha 1e35336) ;;
+    check-tab)  ea=(--cause check_pending --check "$(printf 'c\ti')" --sha 1e35336) ;;
+    check-soh)  ea=(--cause check_pending --check "$(printf 'c\001i')" --sha 1e35336) ;;
+    sha-cr)     ea=(--cause check_pending --check ci --sha "$(printf '1e35336\r')") ;;
+    sha-nonhex) ea=(--cause check_pending --check ci --sha 1e3533z) ;;
+  esac
+  cp "$ESC_T/cntrl-ref" "$ESC_RF"
+  eerr="$(bash "$H" current-escalation "$ESC_RF" "${ea[@]}" 2>&1 >/dev/null)"; rc=$?
+  if [ "$rc" -eq 1 ] && cmp -s "$ESC_T/cntrl-ref" "$ESC_RF" && case "$eerr" in *"left unchanged"*) true ;; *) false ;; esac; then
+    ok "ESC current-escalation refuses $ev (exit 1, '… left unchanged', byte-identical)"
+  else no "ESC current-escalation $ev: rc=$rc err=$eerr line=$(grep escalation_cause "$ESC_RF" | od -c | head -3 | tr '\n' ' ')"; fi
+done
 rm -rf "$ESC_T"

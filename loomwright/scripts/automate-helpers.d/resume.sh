@@ -308,6 +308,7 @@ leftover|guard|skipped — gh unavailable
 leftover|guard|skipped — git unavailable
 leftover|guard|skipped — jq unavailable
 leftover|guard|skipped — missing argument
+leftover|guard|skipped — --session-id needs a value
 leftover|guard|skipped — run file not found
 leftover|guard|skipped — not a git checkout
 leftover|guard|skipped — run file outside the checkout
@@ -331,7 +332,9 @@ EOF
 # SKILL §1.5 / §6 step 1 "Close-out leftover gate" is the spec. Reads ONE closeout
 # invocation's output on stdin and classifies ONLY its `closeout: ` lines (the
 # passed-through `brief-repair:` / `trail-pr:` lines are ignored, except that a
-# non-skip brief-repair line counts as a change for --record). Prints `complete`
+# non-skip brief-repair line, and a `trail-pr: opened …` / `trail-pr: pushed …` line
+# (the trail committed something), count as a change for --record; neither is ever a
+# `closeout:` row. A `closeout: synced — ` line alone is not a change). Prints `complete`
 # or one `leftover<TAB><run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover
 # (`-` for an omitted value), followed by one `run_lock_held<TAB>…` row (same
 # columns, step `lock`) per `run lock held by <owner> (live pid <p>)` line — not a
@@ -364,6 +367,7 @@ closeout_classify() {
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "brief-repair: "*) case "$line" in *"skipped —"*) ;; *) changed=1 ;; esac; continue ;;
+      "trail-pr: opened "*|"trail-pr: pushed "*) changed=1; continue ;;
       "closeout: "*) ;;
       *) continue ;;
     esac

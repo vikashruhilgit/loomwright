@@ -188,8 +188,8 @@ nf="$(printf '%s\n' "$wout" | grep -c '^merge-watch: gh pr view failed — next 
 [ ! -e "$P/.supervisor/automate/$RUN_ID.merge-watch.gh-stderr" ] && ok "WF1: the gh-stderr sidecar is removed on exit" || no "WF1: gh-stderr sidecar left behind"
 # mutation control: the poll's stderr back to /dev/null (the 2026-11-08 shape) ⇒ the cause is gone
 WFM="$TOP/wf-mut"; mkdir -p "$WFM"; cp "$SPYD"/*.sh "$WFM/"; cp -R "$SPYD"/automate-helpers.d "$SPYD"/automate-trail.d "$WFM/"
-sed 's#statusCheckRollup 2>"\$GH_ERR")"#statusCheckRollup 2>/dev/null)"#' "$WATCH" > "$WFM/automate-merge-watch.sh"
-if cmp -s "$WATCH" "$WFM/automate-merge-watch.sh"; then no "WF1 mutant: the poll's stderr redirect was not found"; else
+sed 's#--json state,headRefOid 2>"\$GH_ERR")"#--json state,headRefOid 2>/dev/null)"#' "$WATCH" > "$WFM/automate-merge-watch.sh"
+if [ ! -s "$WFM/automate-merge-watch.sh" ] || cmp -s "$WATCH" "$WFM/automate-merge-watch.sh" || ! bash -n "$WFM/automate-merge-watch.sh"; then no "WF1 mutant: the state read's stderr redirect was not found (empty / identical / bash -n)"; else
   closeout_fixture 921
   wf_state OPEN
   printf 'error connecting to api.github.com\n' > "$GH_STUB_DIR/pr-view-fail"
@@ -327,7 +327,29 @@ we_park() { # <cause> [current-escalation flags…] — turn the fixture's park 
 }
 # we_open: the PR is OPEN at head $ESHA with an empty rollup (review iteration 1: the
 # watcher reports only when the recorded sha IS the PR's current headRefOid and every
-# OTHER rollup check is settled green — both read from the poll's own `gh pr view`).
+# OTHER rollup check is settled green — both read from the armed re-check's own
+# `gh pr view --json headRefOid,statusCheckRollup`, a second call the state poll never makes).
+# WE_GH wraps the stub for this section: it answers that rollup-only read itself from
+# prs.json WITHOUT popping state-seq (the stub pops one state per `pr view <url>` call,
+# and the rollup read is not a state poll), and with $GH_STUB_DIR/rollup-fail present it
+# fails ANY read naming statusCheckRollup. Every other call goes to the stub unchanged.
+WE_GH="$TOP/we-gh"
+cat > "$WE_GH" <<'WEGH'
+#!/usr/bin/env bash
+d="$GH_STUB_DIR"
+case "$*" in *statusCheckRollup*)
+  if [ -f "$d/rollup-fail" ]; then echo "$*" >> "$d/argv.log"; echo 'GraphQL: statusCheckRollup timed out' >&2; exit 1; fi ;;
+esac
+case "${1:-} ${2:-} ${4:-} ${5:-} ${6:-}" in "pr view --json headRefOid,statusCheckRollup ")
+  echo "$*" >> "$d/argv.log"
+  jq -e --arg h "${3:-}" '[.[] | select(.url == $h)] | last' "$d/prs.json" || exit 1
+  exit 0 ;;
+esac
+exec "$WE_STUB" "$@"
+WEGH
+chmod +x "$WE_GH"
+export WE_STUB="$LOOMWRIGHT_GH_BIN"
+export LOOMWRIGHT_GH_BIN="$WE_GH"
 we_open() { jq --arg h "$ESHA" '.[0].state = "OPEN" | .[0].headRefOid = $h | .[0].statusCheckRollup = []' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"; }
 we_watch() { (cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1); }
 we_n() { grep -c -- "$1" "$P/$RF_REL" 2>/dev/null || true; }
@@ -501,7 +523,11 @@ we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha aaaaa
 printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed success aaaaaaa > "$GH_STUB_DIR/run-seq"
 we_watch >/dev/null
 [ "$(we_calls)" = "0" ] && [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E9) recorded sha != PR head ⇒ no polling, no 'now mergeable', no recheck notify" || no "(E9) stale sha reported: calls=$(we_calls) $(grep 'mergeable' "$P/$RF_REL")"
-grep -q -- '--json state,headRefOid,statusCheckRollup' "$GH_STUB_DIR/argv.log" && [ "$(grep -c '^pr view ' "$GH_STUB_DIR/argv.log")" = "3" ] && ok "(E9) head + rollup come from the poll's own gh pr view (3 polls = 3 calls, no extra one)" || no "(E9) argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
+# The state polls never name the rollup; the armed line's head + rollup come from ONE
+# `--json headRefOid,statusCheckRollup` read, after which the stale line latches (no more).
+[ "$(grep -c -- '--json state,headRefOid$' "$GH_STUB_DIR/argv.log")" = "3" ] && [ "$(grep -c -- '--json headRefOid,statusCheckRollup$' "$GH_STUB_DIR/argv.log")" = "1" ] \
+  && [ "$(grep -c '^pr view ' "$GH_STUB_DIR/argv.log")" = "4" ] && ! grep -q -- '--json state,headRefOid,statusCheckRollup' "$GH_STUB_DIR/argv.log" \
+  && ok "(E9) head + rollup come from the armed re-check's own gh pr view (3 state polls carry no rollup; one rollup read, then the stale line latches)" || no "(E9) argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
 # mutation control: delete EXACTLY the head-mismatch latch ⇒ the stale line reports.
 MUT10="$TOP/mut10"; mkdir -p "$MUT10"; cp -R "$SPYD"/* "$MUT10/"
 grep -vxF '  case "$head" in "$sha"*) ;; *) case "$sha" in "$head"*) ;; *) recheck_done=1; return 0 ;; esac ;; esac' "$WATCH" > "$MUT10/automate-merge-watch.sh"
@@ -651,6 +677,33 @@ if [ -s "$MUT14/automate-merge-watch.sh" ] && ! cmp -s "$WATCH" "$MUT14/automate
   e14_flow "$MUT14/automate-merge-watch.sh" 419
   [ "$E14_A" = 1 ] && [ "$E14_B" = 1 ] && ok "(E14) mutant (whole-run-file search restored) swallows attempt 3's report — the line-keyed sidecar is load-bearing" || no "(E14) mutant did not discriminate: lines=$E14_A/$E14_B"
 else no "(E14) whole-file-search mutant invalid (empty / identical / bash -n / not a 1-for-1 line swap)"; fi
+
+# (E15) the merge read never depends on the rollup. (a) An armed check_pending line whose
+# every statusCheckRollup read fails (WE_GH's rollup-fail): the state polls still read
+# OPEN, OPEN, MERGED and the watcher closes the item out. A watcher whose poll names the
+# rollup fails every poll and never sees the merge (capped at 10 s here).
+closeout_fixture 431; spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+printf 'OPEN\nOPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"; rj 1 in_progress "" > "$GH_STUB_DIR/run-seq"
+: > "$GH_STUB_DIR/rollup-fail"
+(cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=10 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null >/dev/null 2>&1)
+rm -f "$GH_STUB_DIR/rollup-fail"
+[ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && [ "$(grep -c 'statusCheckRollup' "$GH_STUB_DIR/argv.log")" -ge 1 ] \
+  && ok "(E15) a failing statusCheckRollup read never hides the merge: MERGED is read and the item is closed out (rollup read attempted and failed)" \
+  || no "(E15) merge hidden by the rollup read: closeouts=$(spy_count '^closeout ' "$SPYLOG") argv=$(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
+# (b) no armed re-check — the plain awaiting_merge park, and a check_red line (never
+# re-checked) ⇒ no call names statusCheckRollup; the state polls alone drive the merge.
+for wv in none check_red; do
+  if [ "$wv" = none ]; then closeout_fixture 432; else closeout_fixture 433; fi
+  spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"
+  [ "$wv" = none ] || we_park check_red --check ci --run-id 555 --attempt 1 --sha "$ESHA"
+  printf 'OPEN\nOPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"
+  we_watch >/dev/null
+  [ "$(grep -c -- '--json state,headRefOid$' "$GH_STUB_DIR/argv.log")" = "3" ] && ! grep -q 'statusCheckRollup' "$GH_STUB_DIR/argv.log" && [ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] \
+    && ok "(E15) [$wv] no armed re-check line ⇒ no poll requests statusCheckRollup (3 state polls, then closeout)" \
+    || no "(E15) [$wv] argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log") closeouts=$(spy_count '^closeout ' "$SPYLOG")"
+done
+export LOOMWRIGHT_GH_BIN="$WE_STUB"   # the WE section's wrapper ends here
 
 echo "== K. SKILL wiring (Part B) =="
 grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-watch.sh" || no "SKILL lacks the watcher"
