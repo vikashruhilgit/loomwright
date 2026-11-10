@@ -288,7 +288,7 @@ check "(GT) TERM while tripped removes the trip file" "$(gt_term_leg "$SUT")" no
 # load stub) is TERM'd while a trip file names a live other pid.
 cat > "$ST/slowload" <<'EOF'
 #!/bin/sh
-sleep 2; exec "$ST/load"
+: > "$FX/in-load"; sleep 2; exec "$ST/load"
 EOF
 chmod +x "$ST/slowload"
 # gt_owner_leg <sampler> — prints the trip file's line 3 after the TERM'd --once run exits.
@@ -298,8 +298,13 @@ gt_owner_leg() {
   sleep 60 & other=$!
   printf 'tripped_utc: 2026-11-10T00:00:00Z\nsample: x\nsampler_pid: %s\n' "$other" > "$TRIP"
   LOOMWRIGHT_MACHINE_LOAD_CMD="$ST/slowload" bash "$1" --once --parent-run-id "$RID" --root "$ROOT" >/dev/null 2>&1 & GT_PID=$!
-  sleep 1; kill -TERM "$GT_PID" 2>/dev/null; wait "$GT_PID" 2>/dev/null
-  if [ "$(sed -n 3p "$TRIP" 2>/dev/null)" = "sampler_pid: $other" ]; then echo kept; else echo removed; fi
+  # TERM only once the run is inside its load read (the stub's marker), never on a guessed delay.
+  if ! gt_wait_file "$FX/in-load"; then   # never reached its load read ⇒ the leg proves nothing: fail it
+    kill -KILL "$GT_PID" 2>/dev/null; wait "$GT_PID" 2>/dev/null; echo never-in-load
+  else
+    kill -TERM "$GT_PID" 2>/dev/null; wait "$GT_PID" 2>/dev/null
+    if [ "$(sed -n 3p "$TRIP" 2>/dev/null)" = "sampler_pid: $other" ]; then echo kept; else echo removed; fi
+  fi
   kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 }
 check "(GT) a TERM never removes a trip file that names another sampler" "$(gt_owner_leg "$SUT")" kept

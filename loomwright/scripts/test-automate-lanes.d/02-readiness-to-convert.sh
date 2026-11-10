@@ -596,3 +596,11 @@ check "U17f 'Validation 1 skipped' + fence ⇒ NL (the step number is not a coun
 check "U17g 'step 3 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nstep 3 skipped\n')" "NL"
 check "U17h 'V2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nV2 skipped\n')" "NL"
 check "U17i 'Validation #1 skipped' ⇒ NL" "$(u17 'Validation #1 skipped\n```\nok\n```\n')" "NL"
+# U17j-o the tally exemption is an allow-list (count at line start / after a bullet, `:`, `(` or a result
+# word); every other digit-prefixed form names a step and stays NL (fail-closed).
+check "U17j 'Validation 1 and 2 skipped' + fence ⇒ NL" "$(u17 'Validation 1 and 2 skipped — no simulator on this machine:\n```\nok\n```\n')" "NL"
+check "U17k 'Validation 1, 2 skipped' + fence ⇒ NL" "$(u17 'Validation 1, 2 skipped\n```\nok\n```\n')" "NL"
+check "U17l 'Validation 1.2 skipped' + fence ⇒ NL" "$(u17 'Validation 1.2 skipped\n```\nok\n```\n')" "NL"
+check "U17m 'AC3 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nAC3 skipped\n')" "NL"
+check "U17n 'check 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\ncheck 2 skipped\n')" "NL"
+check "U17o a bulleted '- 2 skipped' tally ⇒ nothing printed" "$(u17 'Validation 1 baseline\n- 2 skipped\n```\nok\n```\n')" ""

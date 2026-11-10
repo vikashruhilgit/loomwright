@@ -27,8 +27,11 @@
 # the same match, so the not-run tests can never drift from the evidence test. Fenced lines never raise
 # NL (pasted output that says "skipped" is output, not the PR's statement), and neither does a
 # count-prefixed "skipped" (`2 skipped`, `40 passed, 2 skipped` — a result tally, not a not-run
-# statement); a bare "skipped", one whose digits name the step ("validation 1 skipped", "step 3
-# skipped", "v2 skipped", "#4 skipped") and every heading rule still do (fail-closed stays the default). <others> is the item's
+# statement). The tally exemption is an ALLOW-LIST: the count must open the line (after an optional
+# `-`/`*`/`+` bullet), follow `:` / `(`, or follow a result word (passed / failed / ok / pass / fail /
+# error(s) / warning(s), optional `,` `;` `:`). Any other prefix ("validation 1 skipped", "validation 1
+# and 2 skipped", "validation 1.2 skipped", "ac3 skipped", "check 2 skipped") names a step, and a bare
+# "skipped" and every heading rule still raise NL / NV (fail-closed stays the default). <others> is the item's
 # entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's title
 # contains is not unique — that entry needs its own "validation <n>"). Titles are read through
 # ENVIRON (awk -v would rewrite a backslash). Fence-aware: a line inside a ``` / ~~~ block (shell
@@ -65,8 +68,9 @@ _lanes_rd_section() {
       ph(s, "couldn\342\200\231t run") || ph(s, "could not get to") || ph(s, "not tested") || ph(s, "untested") }
     function tly(p) {   # p (the text before "skipped") ends in a result-tally count, not a step identifier
       if (p !~ /[0-9][ \t]*$/) return 0
-      sub(/[0-9]+[ \t]*$/, "", p)   # the digits name the step ("validation 1", "step 3", "v2", "#4") ⇒ no tally
-      return p !~ /(^|[^a-z0-9])(validation|step|stage|phase|v)[ \t#.]*$/ && p !~ /#[ \t]*$/ }
+      sub(/[0-9]+[ \t]*$/, "", p)   # ALLOW-LIST: the count opens the line (after an optional bullet), or
+      # follows ":" / "(", or a result word ("40 passed, 2 skipped"); any other prefix names a step ⇒ no tally
+      return p ~ /(^[ \t]*([-*+][ \t]+)?|[:(][ \t]*|(^|[^a-z0-9])(passed|failed|ok|errors?|warnings?|pass|fail)[ \t]*[,;:]?[ \t]*)$/ }
     function skp(s,  st, i, j) { st = 1   # a whole-phrase "skipped" NOT preceded by a tally count (`2 skipped`)
       while ((i = index(substr(s, st), "skipped")) > 0) { j = st + i - 1
         if ((j == 1 || substr(s, j - 1, 1) !~ /[a-z0-9]/) && substr(s, j + 7, 1) !~ /[a-z0-9]/ &&
