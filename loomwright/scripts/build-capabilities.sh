@@ -414,14 +414,15 @@ ROOT_VAR='CLAUDE_PLUGIN_ROOT'   # the one place the generator names the install-
 HOST_VAR='LOOMWRIGHT_HOST_MODE' # the one place the generator names the host-mode switch
 HOST_STATE_VAR='LOOMWRIGHT_HOST_STATE_DIR' # the one place it names the host-mode state-dir variable
 # host_switch.effect — one sentence; scripts/host-mode.sh's header is the behavioural authority.
-HOST_EFFECT="Host mode is on only when env is exactly 1; then no hook writes the session's working tree: hook state goes to the state_dir_env directory when it is valid, otherwise gate state goes to a per-user temp root and every other hook write is skipped."
+HOST_EFFECT="Host mode is on only when env is exactly 1; then no hook writes the session's working tree: gate and redirects-class hook state goes to the state_dir_env directory when it is valid, otherwise gate state goes to a per-user temp root; a skips-class hook never writes, whatever the state dir."
 
 # HOST-MODE TABLE — hooks[].host_mode is parsed from docs/HOOKS.md §"Host mode", the
 # `| Script / leaf | Class | Under host mode |` table (that doc owns the classification; editing a row
 # there requires a regeneration). Row key: a first cell starting `StopFailure inline leaf` is the
 # inline-leaf row; a first cell that is exactly `TaskCompleted` (backticked) is the prompt row; any other
-# row is keyed by the FIRST backticked token of its first cell — a script file name or a shell glob
-# matched against a script's basename. The class is the Class cell's first word.
+# row is keyed by the FIRST backticked token of its first cell — a script file name or a glob of `*`
+# and `?` only, matched against a script's basename (any other character, `[...]` included, is literal;
+# an unmatched basename fails safe to unknown). The class is the Class cell's first word.
 #   prompt leaf   -> the prompt row's class
 #   command leaf  -> every script's class (a basename matching no row, or rows that disagree, is
 #                    unknown), plus the inline-leaf row's class for a StopFailure leaf whose only

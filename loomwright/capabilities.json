@@ -287,7 +287,7 @@
       "name": "orchestrator"
     },
     {
-      "description": "Read-only post-hoc analysis of an existing PR — categorize each review round into one of 6 root-cause classes, attribute it to a flow stage, print a root-cause report, and append one fail-safe trend line to .supervisor/postmortem/results.jsonl",
+      "description": "Read-only post-hoc analysis of an existing PR — categorize each evidenced review round into one of 6 root-cause classes, attribute it to a flow stage, print a root-cause report, and append one fail-safe trend line to .supervisor/postmortem/results.jsonl",
       "name": "pr-postmortem"
     },
     {
@@ -1110,7 +1110,7 @@
     }
   ],
   "host_switch": {
-    "effect": "Host mode is on only when env is exactly 1; then no hook writes the session's working tree: hook state goes to the state_dir_env directory when it is valid, otherwise gate state goes to a per-user temp root and every other hook write is skipped.",
+    "effect": "Host mode is on only when env is exactly 1; then no hook writes the session's working tree: gate and redirects-class hook state goes to the state_dir_env directory when it is valid, otherwise gate state goes to a per-user temp root; a skips-class hook never writes, whatever the state dir.",
     "env": "LOOMWRIGHT_HOST_MODE",
     "state_dir_env": "LOOMWRIGHT_HOST_STATE_DIR"
   },
