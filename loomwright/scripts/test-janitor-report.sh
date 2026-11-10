@@ -60,6 +60,8 @@
 #        evidence the line `automate-helpers.sh meta-push-failed` prints (the marker's first line) and its
 #        reason the report-only retry pointer; act refuses it, the marker unchanged.
 #   leg_usage  bad arguments exit 2; an unknown row id is refused, exit 0.
+#   leg_empty_id  an empty-string row id (`act --confirm ''`, `act ''`) is a usage error, exit 2, never the
+#        checkout refusal.
 #   MUTATION CONTROLS (gated per lesson fa32a308: non-empty, byte-differs, parses, a line-delete removes
 #   exactly one line), each must turn its leg red: act's report-only guard line deleted (leg_noninteractive),
 #   the not-the-plugin's `none` action flipped to stop-unregistered (leg_report_only), the report path
@@ -70,7 +72,8 @@
 #   act's once-per-call sweep guard dropped (leg_act_sweep), the fin row's ids quoted into one word
 #   (leg_act_reap), the lock and config-backup no-status fail-closeds dropped (leg_nostatus), the
 #   config-backup unjudgeable-lock fail-closed dropped (leg_cfg_unjudged), the mpf row's helper read dropped
-#   and its none action flipped to stop-unregistered (leg_meta_push_failed).
+#   and its none action flipped to stop-unregistered (leg_meta_push_failed), act's empty-id arm deleted
+#   (leg_empty_id).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -730,9 +733,24 @@ leg_usage() {
   leg_end
 }
 
+# leg_empty_id — an empty-string row id is a usage error (exit 2, `act — empty row id` on stderr), never
+# appended to the id list: with --root at a non-checkout it would otherwise get past the no-id check
+# and print the checkout refusal, exit 0.
+leg_empty_id() {
+  local rc out err
+  mk_fixture
+  out="$(jr act --confirm --root "$WORK/not-a-checkout" '' 2>"$WORK/empty-id.err")"; rc=$?; err="$(cat "$WORK/empty-id.err")"
+  check "leg_empty_id act --confirm '' exits 2 with 'act — empty row id' on stderr, no checkout refusal" \
+    eval '[ "$rc" = 2 ] && has "$err" "act — empty row id" && ! has "$out$err" "refused — not a git checkout"'
+  out="$(jr act --root "$WORK/not-a-checkout" '' 2>"$WORK/empty-id.err")"; rc=$?; err="$(cat "$WORK/empty-id.err")"
+  check "leg_empty_id act '' (no --confirm) exits 2 the same way" \
+    eval '[ "$rc" = 2 ] && has "$err" "act — empty row id" && ! has "$out$err" "refused — not a git checkout"'
+  leg_end
+}
+
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_abandoned_removed leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_usage; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_abandoned_removed leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_usage leg_empty_id; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -813,6 +831,8 @@ run_mutant "the mpf row's none action flipped to stop-unregistered (act would ac
 
 mk_mutant abandongone sub 'removed|abandoned) [ -d "$path" ] || continue' 'removed) [ -d "$path" ] || continue'
 run_mutant "an abandoned lane with its dir gone no longer skipped (a removed lane offered for lane-remove)" leg_abandoned_removed
+mk_mutant emptyid del "act — empty row id"
+run_mutant "act's empty-id arm deleted (an empty id reaches the checkout guard, exit 0)" leg_empty_id
 
 echo
 echo "test-janitor-report.sh: $pass passed, $fail failed"
