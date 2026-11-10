@@ -1,6 +1,7 @@
 # Dismissed follow-ups 06c: Doc, header and evidence-file drift (part 3 of 3)
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/876
 
 > Bundled 2026-10-27 from the `/automate` dismissed-finding drafts in `.supervisor/requirements/proposed/`, all decided
 > **follow-up** by the owner and never acted on (sweep: `00-sweep-classification.md`; prevention: `01-follow-up-decision-becomes-tracked-work.md`).
@@ -194,3 +195,9 @@ scripts/ci-local.sh
 - `automate-2026-10-22-123646-L8--39f-janitor-command-fd1e55--dismissed-summary.md`
 - `automate-2026-10-22-123646-L9--25-backlog-board-feeds-b22457--dismissed-summary.md`
 - `automate-2026-10-26-193127--01-module-layout-standard-091a74--dismissed-summary.md`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-10T17:59:32Z
+- **Brief:** .supervisor/jobs/done/2026-11-10-dismissed-followups-06c-docs-drift.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/876
