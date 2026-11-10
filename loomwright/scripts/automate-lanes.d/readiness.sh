@@ -26,11 +26,15 @@
 # as a whole phrase, never inside a longer word ("not running hot" is not "not run"); else nothing —
 # the same match, so the not-run tests can never drift from the evidence test. Fenced lines never raise
 # NL (pasted output that says "skipped" is output, not the PR's statement), and neither does a
-# count-prefixed "skipped" (`2 skipped`, `40 passed, 2 skipped` — a result tally, not a not-run
-# statement). The tally exemption is an ALLOW-LIST: the count must open the line (after an optional
-# `-`/`*`/`+` bullet), follow `:` / `(`, or follow a result word (passed / failed / ok / pass / fail /
-# error(s) / warning(s), optional `,` `;` `:`). Any other prefix ("validation 1 skipped", "validation 1
-# and 2 skipped", "validation 1.2 skipped", "ac3 skipped", "check 2 skipped") names a step, and a bare
+# count-prefixed "skipped" (`- 2 skipped`, `40 passed, 2 skipped` — a result tally, not a not-run
+# statement). The tally exemption is an ALLOW-LIST: the count before "skipped" must follow a `-`/`*`/`+`
+# bullet that opens the line ("- 2 skipped"), a word label + `:` that is not a result word ("tests: 2
+# skipped"), or a result word (passed / failed / ok / pass / fail / error(s) / warning(s), optional `,` `;`
+# `:`) that carries its OWN count in such a context — where the first count of that chain may also open
+# the line or follow `(` / `: ` ("40 passed, 2 skipped", "(40 passed, 2 skipped)"). Any other prefix
+# ("validation 1 skipped", "validation 1 and 2 skipped", "validation 1.2 skipped", "validation 1:2
+# skipped", "validation 1 passed, 2 skipped", "pass 2 skipped", "ok 2 skipped", "ac3 skipped", "check 2
+# skipped", an unbulleted line-start "2 skipped", "(2 skipped)") names a step or is not a tally, and a bare
 # "skipped" and every heading rule still raise NL / NV (fail-closed stays the default). <others> is the item's
 # entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's title
 # contains is not unique — that entry needs its own "validation <n>"). Titles are read through
@@ -66,12 +70,21 @@ _lanes_rd_section() {
     function nrv(s) { return ph(s, "not verified") || ph(s, "not run") || ph(s, "not yet run") ||
       ph(s, "wasn\047t run") || ph(s, "wasn\342\200\231t run") || ph(s, "couldn\047t run") ||
       ph(s, "couldn\342\200\231t run") || ph(s, "could not get to") || ph(s, "not tested") || ph(s, "untested") }
-    function tly(p) {   # p (the text before "skipped") ends in a result-tally count, not a step identifier
+    function rw(p) { return p ~ /(^|[^a-z0-9])(passed|failed|ok|errors?|warnings?|pass|fail)$/ }   # ends in a result word
+    function lbl(p,  q) {   # p ends in a word label + ":" ("tests:", "baseline:") - never a step number, never a result word
+      if (p !~ /[a-z][ \t]*:[ \t]*$/) return 0
+      q = p; sub(/[ \t]*:[ \t]*$/, "", q); return !rw(q) }
+    function cnt(p, h,  q) {   # p ends in a count whose context is itself a tally (ALLOW-LIST; anything else names a step)
       if (p !~ /[0-9][ \t]*$/) return 0
-      sub(/[0-9]+[ \t]*$/, "", p)   # ALLOW-LIST: the count opens the line (after an optional bullet), or
-      # follows ":" / "(", or a result word ("40 passed, 2 skipped"); any other prefix names a step ⇒ no tally
-      return p ~ /(^[ \t]*([-*+][ \t]+)?|[:(][ \t]*|(^|[^a-z0-9])(passed|failed|ok|errors?|warnings?|pass|fail)[ \t]*[,;:]?[ \t]*)$/ }
-    function skp(s,  st, i, j) { st = 1   # a whole-phrase "skipped" NOT preceded by a tally count (`2 skipped`)
+      sub(/[0-9]+[ \t]*$/, "", p)   # the count follows a bullet or a word label ("- 2", "tests: 40"); the FIRST count
+      # of a chain (h) may also open the line or follow "(" / ": "; else it follows a result word that carries its OWN
+      # counted context ("40 passed, 2 skipped") - a bare result word ("pass 2 skipped") is no context
+      if (p ~ /^[ \t]*[-*+][ \t]+$/ || lbl(p) || (h && (p ~ /^[ \t]*$/ || p ~ /(\(|:[ \t])[ \t]*$/))) return 1
+      q = p; sub(/[ \t]*[,;:]?[ \t]*$/, "", q)
+      if (!rw(q)) return 0
+      sub(/[a-z]+$/, "", q); return cnt(q, 1) }
+    function tly(p) { return cnt(p, 0) }   # p (the text before "skipped") ends in a result-tally count
+    function skp(s,  st, i, j) { st = 1   # a whole-phrase "skipped" NOT preceded by a tally count (`- 2 skipped`)
       while ((i = index(substr(s, st), "skipped")) > 0) { j = st + i - 1
         if ((j == 1 || substr(s, j - 1, 1) !~ /[a-z0-9]/) && substr(s, j + 7, 1) !~ /[a-z0-9]/ &&
             !tly(substr(s, 1, j - 1))) return 1

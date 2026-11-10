@@ -27,7 +27,7 @@ fixed tree `passed: 1286  failed: 0` and `238 passed, 0 failed`.
 | F076 | `` \| Single write \| `lane-create` writes into a lane only `lane.json` `` (`docs/ARCHITECTURE_CONTRACTS.md`) | fixed (doc only) | — (the three-list diff is below) | doc-only (AC2 carve-out) |
 | F262 | `ns_cm_ledger() { printf '%s/coordinator-model.jsonl'` (`automate-next-step.sh`); base `lanes.md` names no coordinator-model ledger | fixed (doc only) | — | doc-only (AC2 carve-out) |
 | F077 | `eline="headline-repro: PASS — n/a (the Validation names no repro)"` (`readiness.sh`) | fixed | `test-automate-lanes.d/02-readiness-to-convert.sh` :: U16, U16b, U16c; `03-fixes-to-finalize.sh` :: Z-F5b (rewritten in place) | U16, U16b, Z-F5b red (`PASS — n/a`, total 5) |
-| F133 | `function nrl(s) { return nrv(s) \|\| ph(s, "skipped") }` (`readiness.sh`) | fixed | `02-readiness-to-convert.sh` :: U17–U17o | U17, U17b, U17o red (`NL` for a count-prefixed `skipped`); U17c–U17n green on base too (the unchanged fail-closed side — U17f–U17n pin that digits naming the step, `Validation 1` / `step 3` / `V2` / `#1` / `Validation 1 and 2` / `Validation 1, 2` / `Validation 1.2` / `AC3` / `check 2`, are not a tally; U17j–U17n were red against the iteration-1 deny-list `tly()`) |
+| F133 | `function nrl(s) { return nrv(s) \|\| ph(s, "skipped") }` (`readiness.sh`) | fixed | `02-readiness-to-convert.sh` :: U17–U17x | U17, U17b, U17o red (`NL` for a count-prefixed `skipped`); U17c–U17n green on base too (the unchanged fail-closed side — U17f–U17n pin that digits naming the step, `Validation 1` / `step 3` / `V2` / `#1` / `Validation 1 and 2` / `Validation 1, 2` / `Validation 1.2` / `AC3` / `check 2`, are not a tally; U17j–U17n were red against the iteration-1 deny-list `tly()`; U17p–U17v were red against the iteration-2 `tly()` — `pass 2` / `ok 2` / `fail 2` / `Validation 1:2` / an undotted list's `2` / `Validation 1 passed, 2` read as a tally; U17w–U17x pin the chained tallies that stay exempt) |
 
 ## F076 — the three after-launch write lists at base, diffed
 
@@ -58,7 +58,11 @@ row does not list it.
 - **F105:** `fleet-closeout`'s `*"finalize skipped"*` ⇒ `human —` branch stays for the branch-mode case whose
   finalize mode reader disagrees.
 - **F133:** the bold pseudo-heading rule keeps its old phrase test inline, so no heading rule changes. Only a
-  tally count exempts a `skipped`, and the tally test is an allow-list: the count must open the line (after an
-  optional bullet), follow `:` / `(`, or follow a result word (`passed` / `failed` / `ok` / `pass` / `fail` /
-  `error(s)` / `warning(s)`). Every other prefix (`Validation 1 and 2`, `AC3`, `check 2`, …) names a step and
-  still raises `NL`; an earlier deny-list of step words failed open on every unlisted form.
+  tally count exempts a `skipped`, and the tally test is an allow-list: the count must follow a line-opening
+  bullet (`- 2 skipped`), a word label + `:` that is not a result word (`tests: 2 skipped`), or a result word
+  (`passed` / `failed` / `ok` / `pass` / `fail` / `error(s)` / `warning(s)`) that carries its own count in such
+  a context — the first count of that chain may also open the line or follow `(` / `: ` (`40 passed, 2
+  skipped`, `(40 passed, 2 skipped)`). Every other prefix (`Validation 1 and 2`, `Validation 1:2`,
+  `Validation 1 passed,`, `pass`, `ok`, `AC3`, `check 2`, an unbulleted line-start count, `(`) names a step or
+  is not a tally and still raises `NL`; an earlier deny-list of step words failed open on every unlisted form,
+  and iteration 2's allow-list accepted a count after a bare result word, `:` or `(` (U17p–U17v).

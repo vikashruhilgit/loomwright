@@ -604,3 +604,14 @@ check "U17l 'Validation 1.2 skipped' + fence ⇒ NL" "$(u17 'Validation 1.2 skip
 check "U17m 'AC3 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nAC3 skipped\n')" "NL"
 check "U17n 'check 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\ncheck 2 skipped\n')" "NL"
 check "U17o a bulleted '- 2 skipped' tally ⇒ nothing printed" "$(u17 'Validation 1 baseline\n- 2 skipped\n```\nok\n```\n')" ""
+# U17p-x a count is a tally only when its context is itself a counted result: a result word with no count
+# of its own, a step number before ':', an unbulleted line-start count or a '(' are not that context ⇒ NL.
+check "U17p 'pass 2 skipped' ⇒ NL (the result word carries no count)" "$(u17 'Validation 1 baseline\npass 2 skipped\n```\nok\n```\n')" "NL"
+check "U17q 'Validation 1 baseline: pass 2 skipped' + fence ⇒ NL" "$(u17 'Validation 1 baseline: pass 2 skipped\n```\nok\n```\n')" "NL"
+check "U17r 'ok 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nok 2 skipped\n')" "NL"
+check "U17s 'Validation 1:2 skipped' + fence ⇒ NL (a step number before ':' is no label)" "$(u17 'Validation 1:2 skipped\n```\nok\n```\n')" "NL"
+check "U17t 'fail 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nfail 2 skipped\n')" "NL"
+check "U17u an undotted list's '2 skipped' ⇒ NL (a bare line-start count may be an item number)" "$(u17 'Validation 1 baseline\n1 ran\n2 skipped\n')" "NL"
+check "U17v 'Validation 1 passed, 2 skipped' ⇒ NL (the step number is not a count)" "$(u17 'Validation 1 passed, 2 skipped\n```\nok\n```\n')" "NL"
+check "U17w '(40 passed, 2 skipped)' stays a tally" "$(u17 'Validation 1 baseline\n(40 passed, 2 skipped)\n```\nok\n```\n')" ""
+check "U17x 'Validation 1: 40 passed, 1 failed, 2 skipped' stays a tally" "$(u17 'Validation 1: 40 passed, 1 failed, 2 skipped\n```\nok\n```\n')" ""
