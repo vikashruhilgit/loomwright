@@ -923,7 +923,7 @@ for fnt_pos in after before; do
   { grep -qxF -- "## Status: done" "$P/$AUTD/$fnt_id.md" && grep -qxF -- "- pause_reason: null" "$P/$AUTD/$fnt_id.md"; } \
     && ok "(FNT) finalize-empty --no-trail ($fnt_pos the run file): ## Status: done + pause_reason: null" \
     || no "(FNT) --no-trail ($fnt_pos) state: $(grep -E '^## Status|^- pause_reason' "$P/$AUTD/$fnt_id.md" | tr '\n' '|')"
-  { printf '%s\n' "$fnt_out" | grep -qxF "finalize-empty: finalized $AUTD/$fnt_id.md" && printf '%s\n' "$fnt_out" | grep -qxF 'trail-pr: skipped — --no-trail'; } \
+  { grep -qxF -- "finalize-empty: finalized $AUTD/$fnt_id.md" <<<"$fnt_out" && grep -qxF -- 'trail-pr: skipped — --no-trail' <<<"$fnt_out"; } \
     && ok "(FNT) … prints the finalized line and 'trail-pr: skipped — --no-trail' ($fnt_pos)" || no "(FNT) --no-trail ($fnt_pos) output: $(printf '%s' "$fnt_out" | tr '\n' '|')"
   grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null && no "(FNT) --no-trail ($fnt_pos) still called trail-pr: $(grep '^trail-pr ' "$SPYLOG" | tr '\n' '|')" \
     || ok "(FNT) … and calls no trail-pr ($fnt_pos)"

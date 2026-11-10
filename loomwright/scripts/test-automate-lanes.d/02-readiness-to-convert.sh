@@ -591,3 +591,8 @@ check "U17b '2 skipped' on the step's own line ⇒ nothing printed" "$(u17 'Vali
 check "U17c a bare 'skipped' on such a line still reads NL" "$(u17 'Validation 1 baseline\ntests: skipped\n```\nok\n```\n')" "NL"
 check "U17d a count elsewhere does not excuse a bare 'skipped' ('40 passed, skipped on CI')" "$(u17 'Validation 1 baseline\n40 passed, skipped on CI\n')" "NL"
 check "U17e a not-run heading over the step still reads NV (heading rules unchanged)" "$(u17 '## Not run\nValidation 1 baseline\n2 skipped\n')" "NV"
+# U17f-i the digits before `skipped` that NAME the step are an identifier, not a tally ⇒ still NL.
+check "U17f 'Validation 1 skipped' + fence ⇒ NL (the step number is not a count)" "$(u17 '- Validation 1 skipped — no simulator on this machine; unit output instead:\n```\nok\n```\n')" "NL"
+check "U17g 'step 3 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nstep 3 skipped\n')" "NL"
+check "U17h 'V2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nV2 skipped\n')" "NL"
+check "U17i 'Validation #1 skipped' ⇒ NL" "$(u17 'Validation #1 skipped\n```\nok\n```\n')" "NL"

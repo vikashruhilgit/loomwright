@@ -27,7 +27,7 @@ fixed tree `passed: 1286  failed: 0` and `238 passed, 0 failed`.
 | F076 | `` \| Single write \| `lane-create` writes into a lane only `lane.json` `` (`docs/ARCHITECTURE_CONTRACTS.md`) | fixed (doc only) | — (the three-list diff is below) | doc-only (AC2 carve-out) |
 | F262 | `ns_cm_ledger() { printf '%s/coordinator-model.jsonl'` (`automate-next-step.sh`); base `lanes.md` names no coordinator-model ledger | fixed (doc only) | — | doc-only (AC2 carve-out) |
 | F077 | `eline="headline-repro: PASS — n/a (the Validation names no repro)"` (`readiness.sh`) | fixed | `test-automate-lanes.d/02-readiness-to-convert.sh` :: U16, U16b, U16c; `03-fixes-to-finalize.sh` :: Z-F5b (rewritten in place) | U16, U16b, Z-F5b red (`PASS — n/a`, total 5) |
-| F133 | `function nrl(s) { return nrv(s) \|\| ph(s, "skipped") }` (`readiness.sh`) | fixed | `02-readiness-to-convert.sh` :: U17–U17e | U17, U17b red (`NL` for a count-prefixed `skipped`); U17c–U17e green on base too (the unchanged fail-closed side) |
+| F133 | `function nrl(s) { return nrv(s) \|\| ph(s, "skipped") }` (`readiness.sh`) | fixed | `02-readiness-to-convert.sh` :: U17–U17i | U17, U17b red (`NL` for a count-prefixed `skipped`); U17c–U17i green on base too (the unchanged fail-closed side — U17f–U17i pin that digits naming the step, `Validation 1` / `step 3` / `V2` / `#1`, are not a tally) |
 
 ## F076 — the three after-launch write lists at base, diffed
 
@@ -57,4 +57,6 @@ row does not list it.
   red for a case that heals itself).
 - **F105:** `fleet-closeout`'s `*"finalize skipped"*` ⇒ `human —` branch stays for the branch-mode case whose
   finalize mode reader disagrees.
-- **F133:** the bold pseudo-heading rule keeps its old phrase test inline, so no heading rule changes.
+- **F133:** the bold pseudo-heading rule keeps its old phrase test inline, so no heading rule changes. Only a
+  tally count exempts a `skipped`: digits that follow `validation` / `step` / `stage` / `phase` / `v` / `#`
+  name the step and still raise `NL`.
