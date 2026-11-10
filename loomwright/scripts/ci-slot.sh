@@ -18,7 +18,7 @@
 #                                     cpus, slots, jobs, holders, waiters (each also `slots`, its N,
 #                                     and `held`, its hold reason or null), machine {dir, holders,
 #                                     last_reading {at, state, load1} or null}
-#        ci-slot.sh dir              print the repo-keyed state dir (mkdir -p only), for callers that
+#        ci-slot.sh dir               print the repo-keyed state dir (mkdir -p only), for callers that
 #                                     keep their own files next to the slots (e.g. a pass cache)
 #        ci-slot.sh --help            this header
 #

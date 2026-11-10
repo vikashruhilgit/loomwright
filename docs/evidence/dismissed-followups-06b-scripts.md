@@ -52,5 +52,11 @@ no leg; their rows say so.
   0 failed; `test-proc-registry.sh` 194 passed, 0 failed (its AC9 header leg still finds
   `LOOMWRIGHT_PROC_PS_SNAPSHOT`); `test-build-floor.sh` 421 passed, 0 failed, 1 skipped;
   `test-review-heal-next-step.sh` 221 passed, 0 failed; `test-system-contract.sh` 124 passed, 0 failed.
-- `bash scripts/ci-local.sh --affected` and `bash scripts/check-version-bump.sh`: results recorded in the
-  worker's hand-back for this subtask.
+- `bash scripts/ci-local.sh --affected` after the edits: PASS, 24 entries (the early set, which includes
+  `check-doc-currency.sh`, `check-token-budget.sh`, `check-prompt-history-refs.sh`, `check-version-bump.sh`
+  and `build-capabilities.sh`, plus `test-automate-helpers-dispatch.sh`, `test-citation-drift.sh` and the six
+  suites above). It listed three changed files as not covered: the fragment and this evidence file (no suite
+  reads either), and `review-heal-next-step.md`, whose only reading suite is `test-review-heal-next-step.sh`
+  (run, above).
+- `bash scripts/check-version-bump.sh`: `check OK — not bumped (version 17.35.3, the merge base's); 1
+  fragment(s) pending`. `bash scripts/bump-version.sh --dry-run` folds the fragment into a patch entry.
