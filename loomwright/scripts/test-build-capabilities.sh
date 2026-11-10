@@ -16,7 +16,8 @@
 #   (H)   hooks: blocking only on the guard leaves; StopFailure writes pinned; no /dev/null or &N target;
 #         the four audited scripts non-empty; unknown only where audited unknown
 #   (HM)  host mode: host_switch env names exact AND read by scripts/host-mode.sh (grep, with a rename
-#         control); the real contract has no unknown host_mode; spot pins; a HOOKS.md class edit
+#         control); effect names the redirects and skips classes; the real contract has no unknown
+#         host_mode; spot pins; a HOOKS.md class edit
 #         reaches the output and trips --check (mutation control); fail-CLOSED source controls
 #   (U)   a hook script with no audit entry => writes ["unknown"] and host_mode "unknown"
 #   (P)   fail-CLOSED hook parser: every script-path spelling, write construct (&>, >|, >&word, tee, cp,
@@ -207,6 +208,11 @@ if [ "$(q '.host_switch.env')" = LOOMWRIGHT_HOST_MODE ] && [ "$(q '.host_switch.
    && [ -n "$(q '.host_switch.effect')" ]; then
   ok "(HM) host_switch = {env: LOOMWRIGHT_HOST_MODE, state_dir_env: LOOMWRIGHT_HOST_STATE_DIR, effect: <non-empty>}"
 else no "(HM) host_switch = $(q '.host_switch' -c)"; fi
+# effect summarises docs/HOOKS.md §"Host mode"'s classes, so it names both writing class words (whole words:
+# `skipped` is not `skips`) — a redirects-only sentence would say a skips-class hook writes to the state dir.
+if [ "$(q '.host_switch.effect | test("\\bredirects\\b") and test("\\bskips\\b")')" = true ]; then
+  ok "(HM) host_switch.effect names both HOOKS.md host-mode class words: redirects and skips"
+else no "(HM) host_switch.effect does not name both class words redirects and skips: $(q '.host_switch.effect')"; fi
 for k in env state_dir_env; do
   n="$(q ".host_switch.$k")"
   if [ -f "$hm_src" ] && reads_var "$hm_src" "$n"; then ok "(HM) host_switch.$k ($n) is actually read by scripts/host-mode.sh"

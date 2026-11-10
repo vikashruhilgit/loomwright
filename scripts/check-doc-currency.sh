@@ -22,10 +22,10 @@
 # frontmatter field lists in build-insights.sh, budget/zone numbers, and /insights
 # dashboard section enumerations. Per-row skill `version:` cells in SKILLS_INDEX.md
 # are instead mechanically enforced by scripts/check-skills-index-sync.sh, and the
-# ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets" per-agent mirror table's budget
-# cells are mechanically synced to prompt-token-budgets.json by
-# scripts/check-token-budget.sh (drifted/missing/ghost rows fail CI closed there) —
-# neither needs this gate's coverage.
+# ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets" mirror tables (per-agent,
+# "Skill size ceilings", "Command size ceilings") have every budget cell synced to
+# prompt-token-budgets.json by scripts/check-token-budget.sh (drifted/missing/ghost
+# rows fail CI closed there) — neither needs this gate's coverage.
 #
 # FROZEN, VERSION-AGNOSTIC EXAMPLE VALUES ARE INTENTIONALLY LEFT ALONE: sample
 # `session_end` / `POSTMORTEM_RESULT` JSONL records and `e.g. "X.Y.Z"`

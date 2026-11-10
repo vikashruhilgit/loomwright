@@ -213,7 +213,7 @@ the **degraded fallback** for a harness without it. A fallback with no existing 
 
 ## 4. Root resolution
 
-`loomwright/scripts/resolve-loomwright-root.sh` is the **one place the harness's install-root variable is read**. It
+`loomwright/scripts/resolve-loomwright-root.sh` is the **one place the core reads the harness's install-root variable**. It
 publishes the vendor-neutral `LOOMWRIGHT_ROOT`. Precedence, summarised from its header (the authority): the harness
 variable, if set; else a pre-set `LOOMWRIGHT_ROOT` (a non-Claude adapter sets the neutral name directly); else the
 dev-checkout location derived from the script's own path. It fails closed and never prints a guessed root.

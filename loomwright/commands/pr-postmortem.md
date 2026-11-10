@@ -1,5 +1,5 @@
 ---
-description: Read-only post-hoc analysis of an existing PR — categorize each review round into one of 6 root-cause classes, attribute it to a flow stage, print a root-cause report, and append one fail-safe trend line to .supervisor/postmortem/results.jsonl
+description: Read-only post-hoc analysis of an existing PR — categorize each evidenced review round into one of 6 root-cause classes, attribute it to a flow stage, print a root-cause report, and append one fail-safe trend line to .supervisor/postmortem/results.jsonl
 ---
 
 > **Execute this workflow inline as the main thread.** Do NOT delegate to any agent via the Task tool — `/pr-postmortem` is a thin, read-only analysis shell that runs entirely inline on the main thread. It spawns no sub-agents and makes no extra model/API calls beyond the main thread's own reasoning. The governing protocol is `${CLAUDE_PLUGIN_ROOT}/skills/pr-postmortem/SKILL.md`.
@@ -8,7 +8,7 @@ description: Read-only post-hoc analysis of an existing PR — categorize each r
 
 ## Purpose
 
-After an agent-generated PR has absorbed several rounds of post-PR review-and-fix, `/pr-postmortem` asks **"why did this PR need back-and-forth?"** It gathers the PR's review/churn signals (read-only), buckets each review round into a reproducible root-cause class, attributes it to a flow stage, prints a human-readable root-cause report, and appends one trend line so the churn becomes a measurable signal instead of anecdote. The trend file is the **seed corpus for a future synthetic eval harness**.
+After an agent-generated PR has absorbed several rounds of post-PR review-and-fix, `/pr-postmortem` asks **"why did this PR need back-and-forth?"** It gathers the PR's review/churn signals (read-only), buckets each evidenced review round into a reproducible root-cause class, attributes it to a flow stage, prints a human-readable root-cause report, and appends one trend line so the churn becomes a measurable signal instead of anecdote. The trend file is the **seed corpus for a future synthetic eval harness**.
 
 ## Usage
 
