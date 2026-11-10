@@ -180,6 +180,8 @@ fi
 if [ -n "${STUB_RESUME_FAIL:-}" ]; then
   for a in "$@"; do [ "$a" = --resume ] && { echo "No conversation found with session ID" >&2; exit 1; }; done
 fi
+# STUB_INIT_DELAY_S (AN23): the init line lands that many seconds late, as it does behind slow SessionStart hooks
+[ -n "${STUB_INIT_DELAY_S:-}" ] && sleep "$STUB_INIT_DELAY_S"
 echo '{"type":"system","subtype":"init","session_id":"sess-123"}'
 case "${STUB_MODE:-ok}" in
   # sleep: a session that stays live until the SUITE ends — while the hold marker exists (cleanup removes it

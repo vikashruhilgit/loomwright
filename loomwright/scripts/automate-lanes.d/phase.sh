@@ -86,7 +86,22 @@ _lanes_phase_last_result() {
   tail -c +"$((off + 1))" "$PH_LOG" 2>/dev/null | grep '^{' | jq -c -R 'fromjson? | select(.type == "result")' 2>/dev/null | tail -1
 }
 
-_lanes_phase_sid() { sed -n 1p "$PH_DIR/session" 2>/dev/null; }
+# _lanes_phase_sid — the phase session's id: the cached `session` file, else (lazily) the `system/init` line
+# written to the stream log since the last spawn's offset, cached once found. The launch-time wait
+# (_lanes_await_init) is bounded, and a session's init line follows its SessionStart hooks, so it can land after
+# that window; reading the log here is what keeps phase-wait's running line from saying `unknown` for the whole
+# phase. Prints nothing while the log holds no init line yet.
+_lanes_phase_sid() {
+  local s off
+  s="$(sed -n 1p "$PH_DIR/session" 2>/dev/null)"
+  if [ -z "$s" ]; then
+    off="$(cat "$PH_DIR/offset" 2>/dev/null)"; case "$off" in ''|*[!0-9]*) off=0 ;; esac
+    s="$(_lanes_scan_init "$PH_LOG" "$off")"; case "$s" in *[!A-Za-z0-9_-]*) s="" ;; esac
+    [ -n "$s" ] && { printf '%s\n' "$s" > "$PH_DIR/session.tmp.$$" && mv "$PH_DIR/session.tmp.$$" "$PH_DIR/session"; } 2>/dev/null
+  fi
+  [ -n "$s" ] && printf '%s\n' "$s"
+  return 0
+}
 
 # _lanes_phase_spawn <prompt|''> <session_id|''> <verb> <label> <coordinator sid> — the detached launch
 # (caller holds the phase launch lock and passed every gate).

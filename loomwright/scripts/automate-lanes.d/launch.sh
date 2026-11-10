@@ -118,16 +118,22 @@ _lanes_claude_flags() {
     --allowedTools "$LANE_ALLOWED_TOOLS" --disallowedTools "$disallow"
     --plugin-dir "$PLUGIN_ROOT" --append-system-prompt "$LANE_SYS")
 }
+# _lanes_scan_init <stream_log> <byte offset> — prints the first `system/init` session id written to the log
+# after <offset> (one read, no wait); prints nothing when none is there yet.
+_lanes_scan_init() {
+  tail -c +"$(($2 + 1))" "$1" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1
+}
 # _lanes_await_init <stream_log> <byte offset> <pid> — prints the `system/init` session id written to the
 # log after <offset>, waiting up to LOOMWRIGHT_LANES_INIT_WAIT_S (default 15) seconds while <pid> lives;
-# prints nothing when none appeared.
+# prints nothing when none appeared. A launch-time convenience only: the init line can land after this window
+# (it follows the SessionStart hooks), so a reader that needs the id re-scans the log (_lanes_phase_sid).
 _lanes_await_init() {
   local log="$1" off="$2" pid="$3" w i=0 s=""
   w="${LOOMWRIGHT_LANES_INIT_WAIT_S:-15}"; case "$w" in ''|*[!0-9]*) w=15 ;; esac
   while [ "$i" -lt $((w * 5)) ]; do
-    s="$(tail -c +"$((off + 1))" "$log" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1)"
+    s="$(_lanes_scan_init "$log" "$off")"
     [ -n "$s" ] && break
-    kill -0 "$pid" 2>/dev/null || { sleep 0.2; s="$(tail -c +"$((off + 1))" "$log" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1)"; break; }
+    kill -0 "$pid" 2>/dev/null || { sleep 0.2; s="$(_lanes_scan_init "$log" "$off")"; break; }
     sleep 0.2; i=$((i + 1))
   done
   printf '%s' "$s"
