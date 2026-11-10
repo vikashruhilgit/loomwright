@@ -1,6 +1,7 @@
 # Dismissed follow-ups 02: Merge gate, close-out, salvage, guards and small CLI validators
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/863
 
 > Bundled 2026-10-27 from the `/automate` dismissed-finding drafts in `.supervisor/requirements/proposed/`, all decided
 > **follow-up** by the owner and never acted on (sweep: `00-sweep-classification.md`; prevention: `01-follow-up-decision-becomes-tracked-work.md`).
@@ -210,3 +211,9 @@ changelog.d/dismissed-followups-02-gate-closeout-and-guard-correctness.md
 - `automate-2026-10-15-163325-L1--25-automate-load-by-mode-60621d--dismissed-summary.md`
 - `automate-2026-10-15-163325-L4--17-prompt-size-ratchet-94542a--dismissed-summary.md`
 - `automate-2026-10-22-123646-L7--39g-leak-gate-and-attention-lines-b536a4--dismissed-summary.md`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-10T02:45:56Z
+- **Brief:** .supervisor/jobs/done/2026-11-09-dismissed-followups-02-gate-closeout.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/863
