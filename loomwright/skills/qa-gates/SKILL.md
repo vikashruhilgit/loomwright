@@ -3,7 +3,7 @@ name: qa-gates
 description: Quality gates, gap analysis tiers, and enforcement checklist for QA Executor. Contains Phase 4.5 (4-tier gap analysis), Phase 4.6 (dry-run), Phase 4.7 (13 quality gates with PASS CRITERIA), and quality checklist.
 allowed-tools: [Read, Glob, Grep, Bash]
 version: "1.0.0"
-lastUpdated: "2026-03"
+lastUpdated: "2026-04"
 ---
 
 # QA Gates Skill
