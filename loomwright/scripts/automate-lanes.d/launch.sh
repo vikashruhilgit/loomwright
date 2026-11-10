@@ -10,7 +10,7 @@ _lanes_regime_ok() {
 
 # _lanes_admission — prints the HELD reason and returns 1 when the launch must hold.
 _lanes_admission() {
-  [ -e "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.memory-pressure" ] && { printf 'memory_pressure'; return 1; }
+  _lanes_trip_live "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.memory-pressure" && { printf 'memory_pressure'; return 1; }
   local cmd="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}" st=unknown
   if [ -f "$cmd" ]; then st="$(bash "$cmd" --json 2>/dev/null | jq -r '.state // "unknown"' 2>/dev/null | head -1)"; fi
   case "$st" in

@@ -134,6 +134,30 @@ touch "$P/.supervisor/automate/$PARENT.memory-pressure"
 out="$(run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
 check "G4 memory trip ⇒ HELD memory_pressure" "$rc:$(printf '%s\n' "$out" | head -1)" "4:lane-launch: HELD — L1 — memory_pressure"
 rm -f "$P/.supervisor/automate/$PARENT.memory-pressure"
+# G4b-G4g: the trip file holds only while the sampler it names is alive — lane-launch's admission and
+# lane-status's memory_pressure both read it through _lanes_trip_live (common.sh), so they never disagree.
+# STUB_LOAD=overloaded keeps every admitted launch from starting a process: a trip that does not hold
+# leaves the next check's `load overloaded` as the HELD reason.
+G4_TRIP="$P/.supervisor/automate/$PARENT.memory-pressure"
+g4_trip() { printf 'tripped_utc: 2026-11-10T00:00:00Z\nsample: x\nsampler_pid: %s\n' "$1" > "$G4_TRIP"; }
+g4_mp() { bash "$S" lane-status "$RF" --json 2>/dev/null | jq -r '.memory_pressure' 2>/dev/null; }
+sleep 0 & G4_DEAD=$!; wait "$G4_DEAD" 2>/dev/null
+g4_trip "$G4_DEAD"
+out="$(STUB_LOAD=overloaded run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+check "G4b a trip naming a dead sampler pid does not hold memory_pressure" "$rc:$(printf '%s\n' "$out" | head -1)" "4:lane-launch: HELD — L1 — load overloaded"
+check "G4c … lane-status --json reads memory_pressure: false" "$(g4_mp)" false
+hasnt "G4d … and lane-status --verbose prints no 'new launches held'" "$(run lane-status "$RF" --verbose)" "new launches held"
+sleep 60 & G4_LIVE=$!; BG_PIDS="$BG_PIDS $G4_LIVE"
+g4_trip "$G4_LIVE"
+out="$(STUB_LOAD=overloaded run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+check "G4e a trip naming a live sampler pid holds memory_pressure" "$rc:$(printf '%s\n' "$out" | head -1)" "4:lane-launch: HELD — L1 — memory_pressure"
+check "G4f … lane-status reads memory_pressure: true and says new launches held" \
+  "$(g4_mp):$(run lane-status "$RF" --verbose | grep -c 'memory_pressure: new launches held' | tr -d ' ')" "true:1"
+kill "$G4_LIVE" 2>/dev/null; wait "$G4_LIVE" 2>/dev/null
+: > "$G4_TRIP"
+out="$(STUB_LOAD=overloaded run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+check "G4g a trip with no sampler_pid: line still holds, and lane-status agrees" "$rc:$(printf '%s\n' "$out" | head -1):$(g4_mp)" "4:lane-launch: HELD — L1 — memory_pressure:true"
+rm -f "$G4_TRIP"
 check "G5 no process while held" "$(claude_calls)" "$n0"
 out="$(LOOMWRIGHT_MACHINE_LOAD_CMD="$T/absent-load.sh" CLAUDECODE=1 CLAUDE_PID=4242 LOOMWRIGHT_HOLDER_PID=4242 run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
 check "G6 unknown load admits" "$rc" 0

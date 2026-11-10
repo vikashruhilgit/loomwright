@@ -26,11 +26,16 @@
 #                                        Every line is a sample — start/stop notes go to stderr, so
 #                                        "the last line" is always the latest reading.
 #                  <id>.memory-pressure  OUTPUT, the memory-guard trip file: line 1 `tripped_utc: <ts>`,
-#                                        line 2 `sample: <the triggering sample line>`. Written when
-#                                        the guard trips, removed when it clears. Its presence is
-#                                        what holds `automate-lanes.sh lane-launch` and every lane
-#                                        resume. A sampler that starts while the file exists adopts
-#                                        it (tripped) and clears it by the same rule.
+#                                        line 2 `sample: <the triggering sample line>`, line 3
+#                                        `sampler_pid: <this sampler's pid>`. Written when the guard
+#                                        trips, removed when it clears, and removed when this sampler
+#                                        is stopped (TERM / INT / HUP) while the file names it. It
+#                                        holds `automate-lanes.sh lane-launch` and every lane resume
+#                                        while its sampler is alive (automate-lanes.d/common.sh
+#                                        _lanes_trip_live: a file naming a dead pid holds nothing; one
+#                                        with no `sampler_pid:` line holds). A sampler that starts
+#                                        while the file exists adopts it (tripped), re-points line 3
+#                                        at itself, and clears it by the same rule.
 # LINE             `<UTC ts> key=value …`, space separated; a value that cannot be read is `unknown`:
 #                  holders waiters        live CI-slot holders / waiters (`ci-slot.sh status`)
 #                  load1 load_state       from machine-load.sh --json (load_state = load1 against its
@@ -251,14 +256,28 @@ parent_alive() {
 write_trip() {   # write_trip <sample line> — atomic, same dir.
   local t="$TRIP.tmp.$$"
   mkdir -p "$(dirname "$TRIP")" 2>/dev/null
-  { printf 'tripped_utc: %s\n' "$(utc)"; printf 'sample: %s\n' "$1"; } > "$t" 2>/dev/null && mv -f "$t" "$TRIP" 2>/dev/null
+  { printf 'tripped_utc: %s\n' "$(utc)"; printf 'sample: %s\n' "$1"; printf 'sampler_pid: %s\n' "$$"; } > "$t" 2>/dev/null && mv -f "$t" "$TRIP" 2>/dev/null
   rm -f "$t" 2>/dev/null
+  return 0
+}
+
+adopt_trip() {   # adopt_trip — an adopted trip file names THIS sampler (its other lines kept); atomic, same dir.
+  local t="$TRIP.tmp.$$"
+  { awk '!/^sampler_pid:/' "$TRIP"; printf 'sampler_pid: %s\n' "$$"; } > "$t" 2>/dev/null && mv -f "$t" "$TRIP" 2>/dev/null
+  rm -f "$t" 2>/dev/null
+  return 0
+}
+
+release_trip() {   # release_trip — on a stop signal, remove the trip file only when it names this sampler.
+  [ -n "${TRIP:-}" ] && [ -f "$TRIP" ] || return 0
+  [ "$(awk '/^sampler_pid:/ { sub(/^sampler_pid:[[:space:]]*/, ""); print; exit }' "$TRIP" 2>/dev/null)" = "$$" ] || return 0
+  rm -f "$TRIP" 2>/dev/null
   return 0
 }
 
 sampler_loop() {
   local n=0 line sw fr ls ka tripped=0 pstreak=0 cstreak=0 prev_sw="" load_level=0 prev_ka="" guard nl
-  [ -f "$TRIP" ] && tripped=1
+  [ -f "$TRIP" ] && { tripped=1; adopt_trip; }
   mkdir -p "$(dirname "$FLEET")" 2>/dev/null
   note "start $(utc) pid=$$ parent=$PARENT_PID log=$FLEET"
   while parent_alive; do
@@ -343,7 +362,8 @@ TRIP="$AD/$RUN_ID.memory-pressure"
 
 TMPD="$(mktemp -d "${TMPDIR:-/tmp}/lane-sampler.XXXXXX" 2>/dev/null)" || { note "cannot create a temp dir — not sampling"; exit 0; }
 trap 'rm -rf "$TMPD"' EXIT
-trap 'exit 0' TERM INT HUP
+# A stopped sampler (reaped, or killed with its coordinator) holds no lane: its trip file goes with it.
+trap 'release_trip; exit 0' TERM INT HUP
 
 if [ "$ONCE" -eq 1 ]; then sampler_line; exit 0; fi
 PARENT_START="$("$PS" -o lstart= -p "$PARENT_PID" 2>/dev/null)"
