@@ -5,7 +5,7 @@ declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${B
 run lane-create "$RF" reqs/a.md 12 --parallel 2 >/dev/null; LZ5="$LR/L12"; RDZ="$LZ5/.supervisor/automate/$PARENT-L12.merge-readiness.md"
 out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
 check "Z-F5a no named repro (empty erows) ⇒ the report IS written" "$rc:$([ -f "$RDZ" ] && echo written || echo missing)" "0:written"
-has "Z-F5b … with the headline-repro n/a line" "$(cat "$RDZ" 2>/dev/null)" "headline-repro: PASS — n/a (the Validation names no repro)"
+has "Z-F5b … with the headline-repro n/a line (not scored)" "$(cat "$RDZ" 2>/dev/null)" "headline-repro: N/A — the Validation names no repro (not scored)"
 hasnt "Z-F5c … and never says unwritable" "$out" "report not written"
 check "Z-F5d no stray temp file left" "$(ls "$LZ5/.supervisor/automate/" | grep -c '\.tmp\.' | tr -d ' ')" 0
 chmod 555 "$LZ5/.supervisor/automate"
@@ -919,7 +919,7 @@ check "AD12f a lane-status --inbox with no lane table is fail-SAFE (exit 0)" "$(
 # ---- AE: lane-convert-ready finalizes a closed-out lane (A1) -----------------------------------------
 # The AB scripts (real closeout / finalize-empty / trail-pr, branch mode on in $SC) on lanes of a fresh
 # parent. Mode on ⇒ ONE `finalize —` line, before the last, and `## Status: done` is pushed; a re-run is a
-# no-op finalize; mode off ⇒ `finalize skipped — metadata mode off` and the lane stays paused.
+# no-op finalize; mode off ⇒ `finalize-empty --no-trail` finalizes the lane (`## Status: done`, no trail).
 PARENT9=automate-2026-10-10-110000; RF9="$P/.supervisor/automate/$PARENT9.md"; LR9="$T/work/primary-lanes/$PARENT9"
 printf '# Automate Run: %s\n\n## Progress\n' "$PARENT9" > "$RF9"; mkdir -p "$T/remote-ae"
 ae() { REMOTE11="$T/remote-ae" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
@@ -953,14 +953,61 @@ out="$(ae lane-remove "$L91")"; rc=$?
 check "AE3 the finalized lane is removable (its metadata is in sync)" "$rc:$([ -d "$L91" ] && echo kept || echo removed)" "0:removed"
 ae_lane "$RF9" "$LR9" 2 ".supervisor/requirements/t/ae2.md" "https://github.com/o/r/pull/92" awaiting_merge; L92="$ABL"; RF92="$ABRF"
 out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ae lane-convert-ready "$L92")"; rc=$?
-check "AE4 mode off: the merged re-run says finalize skipped (it would open a trail PR)" \
-  "$rc:$(printf '%s\n' "$out" | grep -cxF 'lane-convert-ready: finalize skipped — metadata mode off' | tr -d ' ')" "0:1"
-check "AE4b … and the lane stays ## Status: paused at done / awaiting_go" "$(grep -c '^## Status: paused' "$RF92" | tr -d ' '):$(cur_line "$RF92" | sed 's/.*|- //')" "1:pause_reason: awaiting_go|"
+# AE4-AE4d — metadata mode off: the merged re-run finalizes WITHOUT a trail (`finalize-empty --no-trail`:
+# nothing is published, no trail PR opens from the lane clone), so the lane reads `## Status: done` and
+# fleet-closeout can close it out (before, it said `finalize skipped — metadata mode off` and stayed paused).
+check "AE4 mode off: the merged re-run finalizes with --no-trail (ONE finalize line, finalize-empty's own)" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^lane-convert-ready: finalize' | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF "lane-convert-ready: finalize — finalize-empty: finalized $RF92; trail-pr: skipped — --no-trail" | tr -d ' ')" "0:1:1"
+check "AE4b … and the lane reads ## Status: done / pause_reason null, its trail line the --no-trail skip (no trail PR)" \
+  "$(grep -c '^## Status: done' "$RF92" | tr -d ' '):$(cur_line "$RF92" | sed 's/.*|- //'):$(grep -cE '^- [^ ]+ trail-pr: skipped — --no-trail$' "$RF92" | tr -d ' '):$(grep -cE '^- [^ ]+ trail-pr: (opened|pushed|meta-pushed)' "$RF92" | tr -d ' ')" "1:pause_reason: null|:1:0"
+# AE4c the pre-A1 done / awaiting_go state (a lane closed out before this finalize existed) is still reachable
+sed -e 's/^## Status: done$/## Status: paused/' -e 's/^- pause_reason: null$/- pause_reason: awaiting_go/' "$RF92" > "$T/ae4c.rf" && mv "$T/ae4c.rf" "$RF92"
 out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ae lane-convert-ready "$L92")"; rc=$?
 has "AE4c a mode-off re-run on done / awaiting_go names that state (the pre-A1 path, still reachable)" "$out" \
   "already closed out (## Current done / awaiting_go) — retrying the metadata push only"
-check "AE4d … and skips finalize again" "$rc:$(printf '%s\n' "$out" | grep -c 'finalize skipped — metadata mode off' | tr -d ' ')" "0:1"
+check "AE4d … and finalizes it (--no-trail), never 'finalize skipped'" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^lane-convert-ready: finalize — finalize-empty: finalized ' | tr -d ' '):$(printf '%s\n' "$out" | grep -c 'finalize skipped' | tr -d ' '):$(grep -c '^## Status: done' "$RF92" | tr -d ' ')" "0:1:0:1"
 check "AE5 a ## Current done / null lane whose ## Status is NOT done is refused (exit 1, nothing written)" \
-  "$(sed -i.bak 's/^- pause_reason: awaiting_go$/- pause_reason: null/' "$RF92"; S0="$(cksum < "$RF92")"; ae lane-convert-ready "$L92" >/dev/null; echo "$?:$([ "$(cksum < "$RF92")" = "$S0" ] && echo same)")" "1:same"
+  "$(sed -i.bak -e 's/^## Status: done$/## Status: paused/' -e 's/^- pause_reason: awaiting_go$/- pause_reason: null/' "$RF92"; S0="$(cksum < "$RF92")"; ae lane-convert-ready "$L92" >/dev/null; echo "$?:$([ "$(cksum < "$RF92")" = "$S0" ] && echo same)")" "1:same"
 rm -f "$RF92.bak"
 
+
+# ---- AE6-AE7: dismissed follow-ups (close-out leftover marker; the extras commit names its phase) --------
+# On the AE parent (lanes 3 and 4: a lane number is never reused). ae_rf re-parks a lane's run file in
+# ae_lane's own shape.
+ae_rf() { # <runfile> <run_id> <req> <pr> <status>
+  printf '# Automate Run: %s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: %s | pr: %s | branch: feature/ae\n- pause_reason: %s\n\n## Progress\n- 2026-10-10T00:00:00Z drain READY\n' \
+    "$2" "$3" "$3" "$5" "$4" "$5" > "$1"
+}
+# AE6 a close-out leftover (the AB6 shape: the lane clone on another branch ⇒ closeout's sync skipped) is
+# persisted as `<run_id>.closeout-leftover`, line 1 the leftover detail — a re-run never retries it
+# (## Current already reads done); a later closeout that reads complete removes the marker.
+RAE6=".supervisor/requirements/t/ae6.md"; PRAE6="https://github.com/o/r/pull/93"
+ae_lane "$RF9" "$LR9" 3 "$RAE6" "$PRAE6" awaiting_merge; L93="$ABL"; RF93="$ABRF"; LO93="$L93/.supervisor/automate/$PARENT9-L3.closeout-leftover"
+git -C "$L93" checkout -q -b scratch
+out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L93")"; rc=$?
+check "AE6 a closeout leftover ⇒ exit 0 and the marker holds the leftover detail on line 1" "$rc:$(head -1 "$LO93" 2>/dev/null)" \
+  "0:sync — skipped — primary checkout is on scratch (neither main nor the PR head)"
+has "AE6b … the last line still names it" "$(printf '%s\n' "$out" | tail -n1)" "; closeout leftover: sync — skipped — primary checkout is on scratch (neither main nor the PR head)"
+out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L93")"; rc=$?
+check "AE6c a re-run (## Current done: no closeout) leaves the marker in place" "$rc:$([ -f "$LO93" ] && echo kept || echo gone)" "0:kept"
+git -C "$L93" checkout -q main
+ae_rf "$RF93" "$PARENT9-L3" "$RAE6" "$PRAE6" awaiting_merge   # the owner re-parks it once the cause is fixed
+out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L93")"; rc=$?
+check "AE6d a later closeout that reads complete removes the marker" \
+  "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' '):$([ -f "$LO93" ] && echo kept || echo gone)" "0:1:gone"
+# AE7 the extras commit message names the phase: the conversion keeps its message; a merged re-run says
+# `wave-end re-run (closeout, reads <status> / <pause>)`; a retry on a closed-out lane says `(metadata push retry)`.
+RAE7=".supervisor/requirements/t/ae7.md"; PRAE7="https://github.com/o/r/pull/94"
+ae_lane "$RF9" "$LR9" 4 "$RAE7" "$PRAE7" ready_for_release; L94="$ABL"
+# the extras push's message (the trail pushes — finalize-empty's, trail-pr's — carry `<run> trail (<reason>)`)
+ae7_msg() { grep -F " push " "$META_LOG" | grep -F -- "--root $L94 " | grep -v -- "--message chore(supervisor): [^ ]* trail (" | head -1 | sed 's/.* --message //'; }
+: > "$META_LOG"; out="$(STUB_PR_STATE=OPEN ae lane-convert-ready "$L94")"; rc=$?
+check "AE7 the conversion's extras commit keeps 'ready_for_release -> awaiting_merge (wave end)'" "$rc:$(ae7_msg)" \
+  "0:chore(supervisor): $PARENT9-L4 ready_for_release -> awaiting_merge (wave end)"
+: > "$META_LOG"; out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L94")"; rc=$?
+check "AE7b a merged re-run (phase closeout) names it and the state it read back" "$rc:$(ae7_msg)" \
+  "0:chore(supervisor): $PARENT9-L4 wave-end re-run (closeout, reads done / awaiting_go)"
+: > "$META_LOG"; out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L94")"; rc=$?
+check "AE7c a re-run on the closed-out lane (phase closed) says it is a metadata push retry" "$rc:$(ae7_msg)" \
+  "0:chore(supervisor): $PARENT9-L4 wave-end re-run (metadata push retry)"

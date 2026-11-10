@@ -121,7 +121,10 @@ _lanes_fc_finalize() {
 #   1. pull        branch mode: `meta-sync.sh pull --branch <mode branch>`; failure (or mode unknown) ⇒
 #                  `fleet-closeout: pull FAILED — <reason>`, exit 2, nothing else runs. Mode off: skipped.
 #   2. per lane    (lane-status): already `## Status: done` ⇒ closed out. A `.meta-push-failed` marker ⇒
-#                  `human — <lane> meta-push-failed: <reason>`. `merged` (or closeout's `awaiting_go`)
+#                  `human — <lane> meta-push-failed: <reason>`. A `.closeout-leftover` marker (written by
+#                  lane-convert-ready on a close-out leftover — checked before and after the backstop) ⇒
+#                  `human — <lane> closeout leftover: <line 1> — fix it by hand, then remove the marker`,
+#                  never closed out. `merged` (or closeout's `awaiting_go`)
 #                  with no live lane process and no live merge watcher ⇒ BACKSTOP: `lane-convert-ready
 #                  <lane_dir>` — the existing sanctioned coordinator→lane closeout path (closeout
 #                  --no-trail + A1 finalize + pushes), run again once when that call only converted a
@@ -151,19 +154,24 @@ _lanes_fc_finalize() {
 #                  closeout registry: <proc-registry.sh summary line>` just before the sweep line, branch
 #                  mode off `trail-unstage`; `finalize — skipped (already done)` on a re-run, nothing written;
 #                  `finalize FAILED — <reason>`, nothing written, exit unchanged), then — on every finalize
-#                  outcome — `run-lock.sh release --owner "automate-lanes:<run_id>"` ⇒ `wave closed — lock
-#                  released`. A Queue item left (the next wave) ⇒ no finalize, `lock kept — …`.
+#                  outcome — `run-lock.sh release --owner "automate-lanes:<run_id>"` (idempotent: exit 0 on a
+#                  lock it does not own), then `run-lock.sh status`: `UNLOCKED` ⇒ `wave closed — lock
+#                  released`, else `wave closed — lock still held by another owner (<status line>)`. A Queue
+#                  item left (the next wave) ⇒ no finalize, `lock kept — …`.
 # Exit: 0 (done, or waiting — the lines say which) · 1 refused (bad parent run file) · 2 pull failed.
 lanes_fleet_closeout() {
   local rf="${1:-}"
   [ -n "$rf" ] && [ "$#" -le 1 ] || die "usage: fleet-closeout <parent_runfile>"
   _lanes_parent_of "$rf" || { echo "fleet-closeout: refused — $LP_WHY"; return 1; }
   local parent="$LP_PARENT" primary="$LP_PRIMARY" table mb out rc tab doc closed="" n
-  local lane path item run state lrf mk w pid st lpr detail single=0 tk
+  local lane path item run state lrf mk lo w pid st lpr detail single=0 tk
   tab="$(printf '\t')"
   rf="$primary/.supervisor/automate/$parent.md"; table="$primary/.supervisor/automate/$parent.lanes"
   _lanes_single_parent "$rf" && single=1   # `- parallel: 1` ⇒ the per-lane tokens line (step 5)
   _fc() { echo "fleet-closeout: $*"; }
+  # A lane whose close-out left a step undone (lane-convert-ready's `.closeout-leftover` marker) is the
+  # human's: never closed out, checked off or removed while the marker exists.
+  _fc_leftover() { _fc "human — $lane closeout leftover: $(head -1 "$lo" 2>/dev/null | cut -c1-200) — fix it by hand, then remove the marker $lo"; }
   # #618: script events — a fixed code per failure line; `pass` (which closes the open threads of this
   # step) only when this call reported nothing worse. Lane-level lines are lane-remove's own events.
   local fc_bad=0
@@ -183,8 +191,10 @@ lanes_fleet_closeout() {
   while IFS="$tab" read -r lane path item run state; do
     [ -n "$lane" ] || continue
     lrf="$path/.supervisor/automate/$run.md"; mk="$path/.supervisor/automate/$run.meta-push-failed"
+    lo="$path/.supervisor/automate/$run.closeout-leftover"
     case "$state" in removed|abandoned) _fc "lane — $lane $state"; continue ;; esac
     if [ -f "$mk" ]; then _fc "human — $lane meta-push-failed: $(head -1 "$mk" 2>/dev/null | cut -c1-200)"; continue; fi
+    if [ -f "$lo" ]; then _fc_leftover; continue; fi
     if _lanes_rf_done "$lrf"; then
       _fc "lane — $lane closed out (## Status: done)"; closed="$closed$lane$tab$path$tab$item$tab$run
 "; continue
@@ -202,7 +212,8 @@ lanes_fleet_closeout() {
         esac
         detail="$(printf '%s\n' "$out" | grep -E '^lane-convert-ready: (finalize|refused|FAILED)' | head -1)"
         [ -n "$detail" ] || detail="$(printf '%s\n' "$out" | grep '^lane-convert-ready: ' | tail -1)"
-        if _lanes_rf_done "$lrf"; then
+        if [ -f "$lo" ]; then _fc_leftover   # the backstop's own closeout left a step undone
+        elif _lanes_rf_done "$lrf"; then
           _fc "backstop — $lane lane-convert-ready (exit $rc) — ${detail:-no output}; now ## Status: done"
           closed="$closed$lane$tab$path$tab$item$tab$run
 "
@@ -300,7 +311,10 @@ EOF
   [ -z "$fo" ] || printf '%s\n' "$fo"
   case "$fo" in *"finalize FAILED"*) _fc_ev fail finalize_failed ;; esac
   if out="$(bash "$RUN_LOCK" release --owner "automate-lanes:$parent" --root "$primary" 2>&1 </dev/null)"; then
-    _fc "wave closed — lock released"
+    # release exits 0 on a lock it does not own (idempotent), so the lock is read back before the claim.
+    local rl; rl="$(bash "$RUN_LOCK" status --root "$primary" 2>/dev/null </dev/null | head -1)"
+    if [ "$rl" = UNLOCKED ]; then _fc "wave closed — lock released"
+    else _fc "wave closed — lock still held by another owner (${rl:-run-lock status unreadable})"; fi
     [ "$fc_bad" = 1 ] || _fc_ev pass ok
   else
     _fc "lock release FAILED — $(printf '%s\n' "$out" | head -1)"; _fc_ev fail lock_release_failed
@@ -336,6 +350,8 @@ _lanes_wave_resolve() {
   [ -n "$WV_K" ] || WV_K=1
   [ -n "$wb" ] || wb="wave/$WV_PARENT-w$WV_K"
   git check-ref-format --branch "$wb" >/dev/null 2>&1 || { WV_WHY="'$wb' is not a valid branch name"; return 1; }
+  # The plan prints the name into shell commands: a git-legal `$`, `(`, `&`, `;`, quote … is refused too.
+  case "$wb" in *[!A-Za-z0-9._/-]*) WV_WHY="'$wb' holds a character outside [A-Za-z0-9._/-]"; return 1 ;; esac
   WV_WB="$wb"
   if [ -n "$items" ]; then
     WV_SRC="from ## Current"
@@ -444,7 +460,9 @@ EOF
 # `git merge --no-ff <exact head sha> -m "Merge lane <L> (<item>) PR #<n>"` per lane in planner order
 # (an unreadable sha ⇒ `# <lane>: head unreadable — resolve before integrating`, that lane skipped),
 # `bash scripts/ci-local.sh`, the release step (`bash scripts/bump-version.sh` only when the repo has
-# it, else `# run this project's release step`), the push and `gh pr create`, then the conflict rules.
+# it, else `# run this project's release step`), the push and `gh pr create`, then the conflict rules
+# (a generated file's conflict is regenerated by its generator on the merged tree, never hand-resolved).
+# A wave branch name outside [A-Za-z0-9._/-] is refused (the plan prints it into shell commands).
 # Before the conflict rules it prints the same-wave overlap check (_lanes_wave_overlap above) as `# overlap
 # — …` / `# drift — …` comment lines — the files more than one lane of this wave changed, warn-only.
 # Exit 0 printed · 1 refused (bad parent run file, no lane table, bad branch name).
@@ -484,6 +502,8 @@ EOF
   printf '%s\n' "$WO_LINES" | sed '/^$/d; s/^/# /'
   echo "# Conflict rules (Part S):"
   echo "#   - a marker-only conflict is resolved in the merge commit itself"
+  echo "#   - a conflict on a generated file (loomwright/capabilities.json) is regenerated, never hand-resolved:"
+  echo "#     re-run its generator on the merged tree (bash loomwright/scripts/build-capabilities.sh) and commit it"
   echo "#   - anything larger stops the integration: hand it to the owner"
   echo "#   - never rewrite or push a lane branch"
   echo "#   - a lane broken on the wave branch is fixed on its own PR, and its new head is re-merged"

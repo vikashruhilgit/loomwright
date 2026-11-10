@@ -103,14 +103,16 @@
 #       `trail-unstage: skipped — <reason>` (`nothing staged` when clean). Run at
 #       PICK, before RUN: drops the trail entries trail-pr staged so the next
 #       item's branch + commit cannot sweep them.
-#   finalize-empty <runfile>
+#   finalize-empty <runfile> [--no-trail]
 #       `finalize-empty: finalized <runfile>` + the trail-pr (+ trail-unstage)
 #       line, or ONE `finalize-empty: skipped — <reason>` line. Finalizes ONLY a
 #       paused / awaiting_go / remaining-0 / `## Current` status-done run (the
 #       state closeout leaves after the last check-off); SKILL §4 step 1 runs it
 #       through `automate-helpers.sh resume-glob <dir> --finalize`. In a lane
 #       clone (`.supervisor/lane.json` present, parallel-automate/05) any run but
-#       the lane's own ⇒ `skipped — lane clone (not this lane's run)`.
+#       the lane's own ⇒ `skipped — lane clone (not this lane's run)`. --no-trail (any
+#       position) skips only the trail-pr step: its line reads
+#       `trail-pr: skipped — --no-trail`.
 #   closeout-others <automate_dir> [--record <runfile>]
 #       The cross-run close-out (SKILL §4 "Start order"): closeout of every OTHER
 #       run whose ## Current names a not-done item with a merged PR, mode-off

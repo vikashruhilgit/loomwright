@@ -555,6 +555,8 @@ gh pr create --base main --head wave/$PARENT12-w2
 # overlap — NOT-RUN — L2 PR #122 diff unreadable
 # Conflict rules (Part S):
 #   - a marker-only conflict is resolved in the merge commit itself
+#   - a conflict on a generated file (loomwright/capabilities.json) is regenerated, never hand-resolved:
+#     re-run its generator on the merged tree (bash loomwright/scripts/build-capabilities.sh) and commit it
 #   - anything larger stops the integration: hand it to the owner
 #   - never rewrite or push a lane branch
 #   - a lane broken on the wave branch is fixed on its own PR, and its new head is re-merged"
@@ -685,3 +687,76 @@ check "AI9c … one spawn, resuming the deferred session" "$(( $(claude_calls) -
 check "AI10 the opt-out's name never reaches a lane file (lane.json, inbox, settings)" \
   "$(grep -rl 'ALLOW_GATE_CONFIG_EDITS\|gate-optout\|gate_optout' "$L61/.supervisor" "$L63/.supervisor" "$L61/.claude" 2>/dev/null | wc -l | tr -d ' ')" 0
 
+
+# ---- AF15-AF19: dismissed follow-ups (close-out leftover marker, mode-off finalize, lock read-back,
+# wave-branch character class, the regenerate rule) -----------------------------------------------------
+# AF15 a merged lane whose re-run closeout left a step undone (its requirement unwritable ⇒ the done stamp
+# is skipped) is the human's: the marker is written, fleet-closeout never checks it off nor removes it, and
+# lane-remove refuses it; once the owner fixes it by hand and removes the marker, the next call removes it.
+PARENT19=automate-2026-10-12-100000; RF19="$P/.supervisor/automate/$PARENT19.md"; LR19="$T/work/primary-lanes/$PARENT19"
+printf '# Automate Run: %s\n\n## Status: running\n\n## Run Config\n- parallel: 2\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: null | status: null\n- wave: 1 | items: reqs/a.md\n\n## Progress\n' "$PARENT19" > "$RF19"
+bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT19" --root "$P" >/dev/null 2>&1
+PR191="https://github.com/o/r/pull/191"; RQ191=".supervisor/requirements/t/af19.md"
+ae_lane "$RF19" "$LR19" 1 "$RQ191" "$PR191" awaiting_merge; L191="$ABL"
+LO191="$L191/.supervisor/automate/$PARENT19-L1.closeout-leftover"
+chmod 444 "$L191/$RQ191"
+out="$(AF_MERGED="$PR191" af fleet-closeout "$RF19")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+check "AF15 a close-out leftover in the backstop ⇒ the marker exists, line 1 the leftover detail" \
+  "$([ -f "$LO191" ] && head -1 "$LO191")" "stamp — skipped — requirement not writable"
+has "AF15b … fleet-closeout reports it as the human's, naming the marker" "$out" \
+  "fleet-closeout: human — L1 closeout leftover: stamp — skipped — requirement not writable — fix it by hand, then remove the marker $LO191"
+check "AF15c … exit 0, the item NOT checked off, the lane kept, no backstop/closed-out line" \
+  "$rc:$(grep -c '^- \[ \] reqs/a.md$' "$RF19" | tr -d ' '):$([ -d "$L191" ] && echo kept):$(printf '%s\n' "$out" | grep -c 'fleet-closeout: backstop — L1\|check-off — L1\|remove — L1' | tr -d ' ')" "0:1:kept:0"
+out="$(AF_MERGED="$PR191" af fleet-closeout "$RF19")"; rc=$?
+check "AF15d a re-run (the lane now finalized) still reports the marker first and checks nothing off" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^fleet-closeout: human — L1 closeout leftover: stamp — skipped — requirement not writable' | tr -d ' '):$(grep -c '^- \[ \] reqs/a.md$' "$RF19" | tr -d ' '):$([ -d "$L191" ] && echo kept)" "0:1:1:kept"
+out="$(af lane-remove "$L191")"; rc=$?
+check "AF15e lane-remove refuses while the marker exists, naming it" "$rc:$(printf '%s\n' "$out" | head -1):$([ -d "$L191" ] && echo kept)" \
+  "1:lane-remove: refused — L1 — closeout leftover marker is set:kept"
+chmod 644 "$L191/$RQ191"; rm -f "$LO191"   # the owner's hand fix, then the marker removed by hand
+out="$(AF_MERGED="$PR191" af fleet-closeout "$RF19")"; rc=$?
+check "AF15f marker removed by hand ⇒ the next call checks the item off and removes the lane" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^fleet-closeout: remove — L1 removed' | tr -d ' '):$(grep -c '^- \[x\] reqs/a.md$' "$RF19" | tr -d ' '):$([ -d "$L191" ] && echo kept || echo removed)" "0:1:1:removed"
+bash "$HERE/run-lock.sh" release --owner "automate-lanes:$PARENT19" --root "$P" >/dev/null 2>&1
+# AF16 metadata mode off: the merged lane finalizes WITHOUT a trail (finalize-empty --no-trail), so
+# fleet-closeout closes it out, checks the item off and removes it (before, the lane stayed paused and
+# the wave could never close in mode off).
+PARENT20=automate-2026-10-12-110000; RF20="$P/.supervisor/automate/$PARENT20.md"; LR20="$T/work/primary-lanes/$PARENT20"
+printf '# Automate Run: %s\n\n## Status: running\n\n## Run Config\n- parallel: 2\n\n## Queue\n- [ ] reqs/a.md\n- [ ] reqs/next.md\n\n## Current\n- item: null | status: null\n- wave: 1 | items: reqs/a.md\n\n## Progress\n' "$PARENT20" > "$RF20"
+bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT20" --root "$P" >/dev/null 2>&1
+PR201="https://github.com/o/r/pull/201"
+ae_lane "$RF20" "$LR20" 1 ".supervisor/requirements/t/af20.md" "$PR201" awaiting_merge; L201="$ABL"; RF201="$ABRF"
+out="$(STUB_MODE_LINE=off AF_MERGED="$PR201" af fleet-closeout "$RF20")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+has "AF16 mode off: the backstop finalizes the lane (finalize-empty, no trail)" "$out" \
+  "fleet-closeout: backstop — L1 lane-convert-ready (exit 0) — lane-convert-ready: finalize — finalize-empty: finalized"
+has "AF16b … its trail step was skipped (--no-trail)" "$out" "trail-pr: skipped — --no-trail; now ## Status: done"
+check "AF16c … checked off and removed, exit 0, no human line" \
+  "$rc:$(grep -c '^- \[x\] reqs/a.md$' "$RF20" | tr -d ' '):$(printf '%s\n' "$out" | grep -c '^fleet-closeout: remove — L1 removed' | tr -d ' '):$([ -d "$L201" ] && echo kept || echo removed):$(printf '%s\n' "$out" | grep -c 'fleet-closeout: human' | tr -d ' ')" "0:1:1:removed:0"
+bash "$HERE/run-lock.sh" release --owner "automate-lanes:$PARENT20" --root "$P" >/dev/null 2>&1
+# AF17 the wave lock held by ANOTHER owner at wave end: release is idempotent (exit 0 on a not-ours lock),
+# so the lock is read back — the last line says it is still held, and it is never stolen.
+fc_parent automate-2026-10-12-120000; RF21="$FCRF"
+bash "$HERE/run-lock.sh" release --owner "automate-lanes:automate-2026-10-12-120000" --root "$P" >/dev/null 2>&1
+bash "$HERE/run-lock.sh" acquire --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
+out="$(fc fleet-closeout "$RF21")"; rc=$?
+has "AF17 a foreign lock at wave end ⇒ the last line says it is still held, naming the status line" "$(printf '%s\n' "$out" | tail -n1)" \
+  "fleet-closeout: wave closed — lock still held by another owner (LOCKED owner=automate-pick:someone-else "
+check "AF17b … exit 0, and run-lock.sh status still reads LOCKED by its owner" "$rc:$(bash "$HERE/run-lock.sh" status --root "$P" | cut -d' ' -f1-2)" \
+  "0:LOCKED owner=automate-pick:someone-else"
+hasnt "AF17c … and never claims the lock released" "$out" "wave closed — lock released"
+bash "$HERE/run-lock.sh" release --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
+# AF18 a wave branch name with a shell metacharacter is refused (the plan prints it into commands) — git
+# itself accepts `a$(id)b` and `x&&y` as branch names; release/w2 still plans (AG3b)
+for afb in 'a$(id)b' 'x&&y'; do
+  out="$(af wave-plan "$RF12P" --wave-branch "$afb")"; rc=$?
+  check "AF18 --wave-branch '$afb' ⇒ refused naming the character class, ONE line, exit 1" "$rc:$out" \
+    "1:wave-plan: refused — '$afb' holds a character outside [A-Za-z0-9._/-]"
+done
+check "AF18b … git itself accepts both names (the class check is the only refusal)" \
+  "$(git check-ref-format --branch 'a$(id)b' >/dev/null 2>&1 && git check-ref-format --branch 'x&&y' >/dev/null 2>&1 && echo legal)" legal
+has "AF18c --wave-branch release/w2 still plans" "$(af wave-plan "$RF12P" --wave-branch release/w2)" "git checkout -b release/w2 origin/main"
+# AF19 the printed conflict rules carry the regenerate-a-generated-file rule (AG1 pins the whole block)
+has "AF19 wave-plan's conflict rules: a generated file's conflict is regenerated by its generator" "$(af wave-plan "$RF12P")" \
+  "#     re-run its generator on the merged tree (bash loomwright/scripts/build-capabilities.sh) and commit it"

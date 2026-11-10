@@ -1,7 +1,7 @@
 # --------------------------------------------------------------------------- #
 # finalize-empty (SKILL §1.5 / §3 "`done`" / §4 step 1 — `resume-glob --finalize`)
 # --------------------------------------------------------------------------- #
-# finalize-empty <runfile> — the second writer of `## Status: done` (the first is
+# finalize-empty <runfile> [--no-trail] — the second writer of `## Status: done` (the first is
 # the §6 "Termination" exit of a live loop). `closeout` never writes `done`, even
 # when it checks off the last Queue item: it leaves `## Status: paused`,
 # `pause_reason: awaiting_go`, `## Current` item `status: done` (§3 "After a
@@ -63,7 +63,17 @@ _lane_run_id() {
 }
 
 finalize_empty() {
-  local runfile="${1:-}" S="finalize-empty: skipped —"
+  # --no-trail (any position, like closeout's): every step runs exactly as above except
+  # `trail-pr --reason done`, whose line reads `trail-pr: skipped — --no-trail` (printed and
+  # appended where the trail's line goes) — for a caller that publishes nothing, a metadata-mode-off
+  # lane's lane-convert-ready re-run (its run history stays in the lane's salvage).
+  local runfile="" no_trail=0 a S="finalize-empty: skipped —"
+  for a in "$@"; do
+    case "$a" in
+      --no-trail) no_trail=1 ;;
+      *) [ -n "$runfile" ] || runfile="$a" ;;
+    esac
+  done
   if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$S run file not found"; return 0; fi
   local rf_dir rf_abs root rf_rel run_id why
   # Eligibility first (read-only): an ineligible run is a plain skip whatever the
@@ -131,8 +141,12 @@ finalize_empty() {
   # the recovery is a hand `automate-helpers.sh trail-pr <runfile> --reason done` (idempotent).
   # The §6 "Termination" exit of a live loop has the same order and the same recovery.
   local l
-  l="$(bash "$HLP" trail-pr "$rf_abs" --reason done 2>/dev/null | tail -n1)"
-  [ -n "$l" ] || l="trail-pr: skipped — no output"
+  if [ "$no_trail" -eq 1 ]; then
+    l="trail-pr: skipped — --no-trail"
+  else
+    l="$(bash "$HLP" trail-pr "$rf_abs" --reason done 2>/dev/null | tail -n1)"
+    [ -n "$l" ] || l="trail-pr: skipped — no output"
+  fi
   echo "$l"
   bash "$HLP" progress-append "$rf_rel" "$ts $l" >/dev/null 2>&1
   # af/39g: ONE `<ts> process registry: <summary>` line (proc-registry.sh summary —

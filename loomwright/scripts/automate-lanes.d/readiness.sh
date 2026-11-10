@@ -1,6 +1,7 @@
 # ==================================================================================================
 # lane-readiness <lane_dir|L<n>> — writes <lane>/.supervisor/automate/<run_id>.merge-readiness.md
-# (advisory, never a merge executor). Five checks, each PASS / FAIL / NOT-RUN with its evidence:
+# (advisory, never a merge executor). Five checks, each PASS / FAIL / NOT-RUN with its evidence (headline-repro
+# alone may read N/A — not scored):
 #   validation     each `## Validation` entry of the item: PASS only with pasted output (a fenced block)
 #                  in the PR body's matching section, or — for a step the body leaves NOT-RUN — a declared
 #                  `Verdict: PASS for Validation <n>` line + fenced output in a docs/evidence/*.md file the
@@ -11,7 +12,8 @@
 #                  whether drift collides with another lane of the same wave is wave-plan / wave-build's
 #                  overlap check (wave.sh _lanes_wave_overlap), not this per-lane report
 #   gates          required checks on the current head, dismissed-finding decisions, children-settled
-#   headline-repro the Validation entry naming a mutation / repro (PASS n/a when none is named)
+#   headline-repro the Validation entry naming a mutation / repro; when none is named the row reads
+#                  `N/A — the Validation names no repro (not scored)` and the score's total is 4, not 5
 # Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`,
 # which also covers a lane already closed out — `done` — so a report written before a fix is repairable).
 # _lanes_rd_section <n> <title> <body_file> [nv] [<others>] [<tm>] — the PR body's lines for Validation
@@ -23,7 +25,9 @@
 # not run" / "could not run" are already "not run"; any such heading text is a "not run" heading) — each
 # as a whole phrase, never inside a longer word ("not running hot" is not "not run"); else nothing —
 # the same match, so the not-run tests can never drift from the evidence test. Fenced lines never raise
-# NL (pasted output that says "skipped" is output, not the PR's statement). <others> is the item's
+# NL (pasted output that says "skipped" is output, not the PR's statement), and neither does a
+# count-prefixed "skipped" (`2 skipped`, `40 passed, 2 skipped` — a result tally, not a not-run
+# statement); a bare "skipped" and every heading rule still do (fail-closed stays the default). <others> is the item's
 # entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's title
 # contains is not unique — that entry needs its own "validation <n>"). Titles are read through
 # ENVIRON (awk -v would rewrite a backslash). Fence-aware: a line inside a ``` / ~~~ block (shell
@@ -58,7 +62,13 @@ _lanes_rd_section() {
     function nrv(s) { return ph(s, "not verified") || ph(s, "not run") || ph(s, "not yet run") ||
       ph(s, "wasn\047t run") || ph(s, "wasn\342\200\231t run") || ph(s, "couldn\047t run") ||
       ph(s, "couldn\342\200\231t run") || ph(s, "could not get to") || ph(s, "not tested") || ph(s, "untested") }
-    function nrl(s) { return nrv(s) || ph(s, "skipped") }
+    function skp(s,  st, i, j) { st = 1   # a whole-phrase "skipped" NOT preceded by a count (`2 skipped`)
+      while ((i = index(substr(s, st), "skipped")) > 0) { j = st + i - 1
+        if ((j == 1 || substr(s, j - 1, 1) !~ /[a-z0-9]/) && substr(s, j + 7, 1) !~ /[a-z0-9]/ &&
+            substr(s, 1, j - 1) !~ /[0-9][ \t]*$/) return 1
+        st = j + 1 }
+      return 0 }
+    function nrl(s) { return nrv(s) || skp(s) }
     function oth(s,  i) { for (i = 1; i <= no; i++) if (ot[i] != "" && !index(t, ot[i]) && index(s, ot[i])) return 1; return 0 }
     { l = tolower($0); wasin = inf; fl = 0; hd = 0 }
     l ~ /^[ \t]*(```|~~~)/ {
@@ -66,7 +76,7 @@ _lanes_rd_section() {
       if (!inf) { inf = 1; fc = c } else if (c == fc) inf = 0
     }
     !wasin && !fl && l ~ /^#+[ \t]/ && match(l, /[^#]/) - 1 <= 6 { lv = RSTART - 1; hd = 1 }
-    !wasin && !fl && !hd && l ~ /^[ \t]*\*\*.*\*\*[ \t]*:?[ \t]*$/ && nrl(l) { lv = 7; hd = 1 }
+    !wasin && !fl && !hd && l ~ /^[ \t]*\*\*.*\*\*[ \t]*:?[ \t]*$/ && (nrv(l) || ph(l, "skipped")) { lv = 7; hd = 1 }
     hd { h[lv] = l; for (k = lv + 1; k <= 7; k++) delete h[k]; top = lv }
     { li = (l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/) }
     on && !wasin && !fl && (hd || (l ~ /validation[ #]*[0-9]/ && l !~ vn) ||
@@ -338,7 +348,7 @@ lanes_readiness() {
   local vline eline
   if [ ! -s "$tmp/val" ]; then vworst=NOT-RUN; vlabel=validation; vline="validation: NOT-RUN — no ## Validation section in $item"
   else vline="validation: $vworst — $(printf '%s' "$vrows" | grep -c ' PASS ' | tr -d ' ') of $(printf '%s' "$vrows" | grep -c '^  - ' | tr -d ' ') entr(ies) evidenced"; fi
-  if [ -z "$erows" ]; then eworst=PASS; eline="headline-repro: PASS — n/a (the Validation names no repro)"
+  if [ -z "$erows" ]; then eworst=N/A; eline="headline-repro: N/A — the Validation names no repro (not scored)"
   else eline="headline-repro: $eworst — the Validation's named repro"; fi
   # ---- b: carried Plan Review notes
   local cline crows="" nc
@@ -401,8 +411,11 @@ lanes_readiness() {
   gline="gates: $gworst"
   # ---- score
   local pass=0 total=5 bad="" w lbl
+  # An n/a headline-repro (no repro named) is not scored: it neither passes nor counts in the total.
+  if [ "$eworst" = N/A ]; then total=4; fi
   for w in "validation:$vworst" "carried-notes:$cworst" "scope-fence:$fworst" "gates:$gworst" "headline-repro:$eworst"; do
     lbl="${w%%:*}"; st="${w#*:}"
+    [ "$st" = N/A ] && continue
     if [ "$st" = PASS ]; then pass=$((pass + 1)); else
       [ "$lbl" = validation ] && lbl="${vlabel:-validation}"
       bad="$bad${bad:+, }$lbl $st"

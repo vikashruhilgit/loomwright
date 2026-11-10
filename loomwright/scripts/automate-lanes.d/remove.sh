@@ -54,6 +54,7 @@ _lanes_remove_event() {
   case "$1" in
     "metadata not pushed"*) c=metadata_not_pushed ;;
     "meta-push failure marker"*) c=meta_push_failed ;;
+    "closeout leftover marker"*) c=closeout_leftover ;;
     "dirty working tree"*) c=dirty_tree ;;
     "branch "*" commit(s) not on origin"*) c=unpushed_commits ;;
     "metadata mode unknown"*|"metadata status unreadable"*|*"unreadable"*) c=status_unreadable ;;
@@ -116,6 +117,9 @@ _lanes_remove_refusals() {
     _lanes_abandon_meta || return 1
   fi
   [ -e "$LN_DIR/.supervisor/automate/$LN_RUN.meta-push-failed" ] && { _refuse "meta-push failure marker is set"; return 1; }
+  # lane-convert-ready's close-out leftover marker: a skipped step (e.g. the done stamp) that no re-run
+  # retries — a human fixes it, then removes the marker (fleet-closeout's `human —` line names it).
+  [ -e "$LN_DIR/.supervisor/automate/$LN_RUN.closeout-leftover" ] && { _refuse "closeout leftover marker is set"; return 1; }
   if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _refuse "metadata mode unknown (cannot prove the metadata was pushed)"; return 1; fi
   if [ -n "$mb" ]; then
     # --paths: the refusal names what is unpushed, so fleet-closeout's `waiting — <lane> …` line says
@@ -356,8 +360,8 @@ _lanes_abandon_meta() {
 # `pr:` in `## Current` ⇒ closeout is not run. Already closed out (`done` / `awaiting_go` — a re-run
 # after the merged re-run's push failed) ⇒ neither runs again; a lane finalize-empty already finalized
 # (`## Status: done`, ## Current `done` / `null`) is accepted the same way. Whenever ## Current then reads
-# `done`, branch mode runs `finalize-empty` inside the lane before the pushes (A1, parallel-automate/21 —
-# see the comment at its call). Each then runs the pushes, so a re-run is idempotent. Branch mode (`on <Y>`) then
+# `done`, `finalize-empty` runs inside the lane before the pushes (A1, parallel-automate/21; mode off
+# with `--no-trail`, so nothing is published — see the comment at its call). Each then runs the pushes, so a re-run is idempotent. Branch mode (`on <Y>`) then
 # pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
 # merge-readiness report, its dismissed-decisions ledger, its kept brief draft, its task plans, the
 # requirement drafts it filed under proposed/) and (2) everything else through trail-pr's
@@ -366,8 +370,11 @@ _lanes_abandon_meta() {
 # `local_ahead` and lane-remove keeps refusing — after the owner merges, the re-run's closeout writes
 # the stamp and its pushes carry it; if the PR closes unmerged, `lane-remove --abandon` records it
 # (F11). Mode `off` has no metadata
-# branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry). The
-# last line names the state the lane reads afterwards: `converted <lane> to awaiting_merge` on the
+# branch to push. The extras commit names the phase: the conversion (`ready_for_release -> awaiting_merge
+# (wave end)`), a merged re-run (`wave-end re-run (closeout, reads <status> / <pause>)`) or a retry on
+# a closed-out lane (`wave-end re-run (metadata push retry)`). A close-out leftover on a lane whose ## Current
+# then reads done is persisted as `<run_id>.closeout-leftover` (removed by a later complete closeout). A failed push ⇒
+# `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry). The last line names the state the lane reads afterwards: `converted <lane> to awaiting_merge` on the
 # conversion, `<lane> reads <status> / <pause_reason> (a re-run converts nothing)` on a re-run.
 _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
@@ -390,7 +397,7 @@ lanes_convert_ready() {
   local dir="${1:-}"
   [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
   _lane_ctx "$dir" || die "lane-convert-ready: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv gw cs="" did fdid
+  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv gw cs="" did fdid lo_detail=""
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   _cr_refuse() { _lanes_launch_unlock; echo "lane-convert-ready: refused — $L — $1"; return 1; }
   _lanes_launch_lock || { echo "lane-convert-ready: refused — $L — launch lock busy (a launch or resume of this lane is in flight)"; return 1; }
@@ -443,6 +450,11 @@ lanes_convert_ready() {
             cs="; closeout deferred: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "run_lock_held" { printf "%s%s", (n++ ? ", " : ""), $6 }') — re-run lane-convert-ready once it is released"
           else cs="; closeout leftover: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "leftover" { printf "%s%s — %s", (n++ ? ", " : ""), $5, $6 }')"
           fi
+          # A later closeout that reads complete removes a close-out leftover marker (written below).
+          case "$cs" in
+            "; closeout leftover: "*) lo_detail="${cs#; closeout leftover: }" ;;
+            "; closeout complete") rm -f "$LN_DIR/.supervisor/automate/$LN_RUN.closeout-leftover" 2>/dev/null ;;
+          esac
         fi ;;
     esac
   fi
@@ -453,19 +465,36 @@ lanes_convert_ready() {
     IFS="$(printf '\t')" read -r status pause _ <<<"$(_lanes_runfile_fields "$rf")"
     fdid="reads ${status:--} / ${pause:--} (a re-run converts nothing)"; did="$L $fdid"
   fi
+  # A close-out leftover on a lane closeout reconciled to ## Current `done` is never retried (closeout
+  # returns early on an already-done ## Current, and phase `closed` runs no closeout), so it is persisted:
+  # `<run_id>.closeout-leftover`, line 1 the leftover detail. fleet-closeout reports it `human —` and
+  # never closes the lane out; lane-remove refuses while it exists. A leftover that left ## Current short
+  # of done needs no marker: the next re-run's closeout retries it.
+  if [ -n "$lo_detail" ] && [ "$status" = done ]; then
+    printf '%s\n' "$lo_detail" > "$LN_DIR/.supervisor/automate/$LN_RUN.closeout-leftover" 2>/dev/null \
+      || cs="$cs (the closeout-leftover marker could not be written)"
+  fi
   # A1 (parallel-automate/21): a re-run whose ## Current reads `done` (closeout's done / awaiting_go, or an
   # already-finalized lane) runs `finalize-empty <the lane's run file>` INSIDE the lane, under the launch
   # lock and BEFORE the pushes — so the pushes carry its `## Status: done` and the Progress lines it
   # appends after its own trail push. finalize-empty decides eligibility itself (already `## Status: done`
   # ⇒ `finalize-empty: skipped — not paused`). Its `trail-pr --reason done` runs through the evidence gate
-  # with this script's meta-sync (LOOMWRIGHT_META_SYNC_BIN, as _lanes_meta_trail). Branch mode only: with
-  # mode off — or when finalize's own mode reader does not say `on <mb>` too — finalize is NOT run (its
-  # trail-pr would open a trail PR). One `lane-convert-ready: finalize …` line, printed before the last.
+  # with this script's meta-sync (LOOMWRIGHT_META_SYNC_BIN, as _lanes_meta_trail). Mode off ⇒
+  # `finalize-empty <rf> --no-trail` (no trail PR from a lane clone). Branch mode whose finalize mode
+  # reader does not say `on <mb>` too ⇒ finalize is NOT run (its trail-pr would open a trail PR).
+  # One `lane-convert-ready: finalize …` line, printed before the last.
   # The last line keeps naming the state closeout left (`reads done / awaiting_go`) — the finalize line
   # above it names what finalize-empty did to it.
   local fin="" fe fm
   if [ "$phase" != convert ] && [ "$status" = done ]; then
-    if [ -z "$mb" ]; then fin="lane-convert-ready: finalize skipped — metadata mode off"
+    if [ -z "$mb" ]; then
+      # Mode off: nothing is published (there is no metadata branch, and a trail PR from a lane clone
+      # must never open), so finalize-empty runs with --no-trail — every step but the trail — and the
+      # lane reads `## Status: done`; its run history and done stamp stay in the lane's salvage.
+      fe="$(cd "$LN_DIR" && _lanes_no_host_identity LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" \
+        bash "$HELPERS" finalize-empty "$rf" --no-trail 2>/dev/null)"
+      fe="$(printf '%s\n' "$fe" | sed '/^$/d' | awk '{ printf "%s%s", (NR > 1 ? "; " : ""), $0 }')"
+      fin="lane-convert-ready: finalize — ${fe:-finalize-empty printed nothing}"
     else
       fm="$(bash "$(dirname "$HELPERS")/setup-memory.sh" --root "$LN_DIR" mode 2>/dev/null | head -1)"
       if [ "$fm" != "on $mb" ]; then
@@ -486,7 +515,15 @@ lanes_convert_ready() {
     return 0
   fi
   if [ -n "$fin" ]; then echo "$fin"; fi
-  rc=0; out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)")" || rc=$?
+  # The extras commit names what this call did: the conversion, a merged re-run's closeout (and the
+  # state it read back), or a push retry on an already closed-out lane.
+  local emsg
+  case "$phase" in
+    convert) emsg="chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)" ;;
+    closeout) emsg="chore(supervisor): $LN_RUN wave-end re-run (closeout, reads ${status:--} / ${pause:--})" ;;
+    *) emsg="chore(supervisor): $LN_RUN wave-end re-run (metadata push retry)" ;;
+  esac
+  rc=0; out="$(_lanes_meta_extras "$mb" "$emsg")" || rc=$?
   if [ "$rc" != 0 ]; then
     _lanes_launch_unlock
     echo "lane-convert-ready: FAILED — $L — $fdid, but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR$cs"
