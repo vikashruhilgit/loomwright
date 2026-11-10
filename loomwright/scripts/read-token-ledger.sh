@@ -62,7 +62,7 @@
 #     NOT include the main thread's own tokens, any CI-side (GitHub Actions
 #     `claude-review`) spend, or a `--parallel` coordinator's own run; output
 #     tokens of a message whose final transcript line is absent are
-#     under-counted (parallel-automate/24 F8, emit-token-ledger.sh header).
+#     under-counted (see read_transcript's docstring in emit-token-ledger.sh).
 #     TOTAL includes cache-read tokens.
 #   - `--run-id` sums only the sessions the run file NAMED. A session whose
 #     `session_id <id>` line was written but whose log file is missing is

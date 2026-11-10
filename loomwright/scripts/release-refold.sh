@@ -18,8 +18,8 @@
 #      project's script of the same name) ⇒ `release-refold: skipped — …`, exit 0. It never runs a
 #      script it does not recognise.
 #   2. runs `bash scripts/bump-version.sh --refold`. That is a no-op unless the branch already
-#      carries a bump AND a fragment is pending, so a fragments-only branch (a parallel lane — the
-#      wave release lane bumps once, later) is left exactly as it is. A refusal (the existing bump
+#      carries a bump AND a fragment is pending, so a fragments-only branch (a parallel lane —
+#      `automate-wave.sh wave-build`'s release step bumps once, later) is left exactly as it is. A refusal (the existing bump
 #      is not reproducible: a hand edit) ⇒ exit 1 with its reason — do not push.
 #   3. when it re-folded, commits exactly the paths it printed on its `refold-touched:` line (other
 #      staged or unstaged work is never swept in): `chore(release): re-fold changelog fragments

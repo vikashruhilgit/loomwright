@@ -4,7 +4,7 @@ Base commit: `051553e` (the brief's `142540b` measurements were superseded by it
 Branch: `feature/as19-split-lanes-and-trail-scripts` (subtask 1 `9560281`, subtask 2 `0f19075`, the integration commit `5d3c348`, then the three consumer setup fixes `d588537`, §8).
 All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a clean `git worktree` detached at `051553e`, run earlier in the same session by the previous integration attempt (logs kept in its scratchpad). "Branch" numbers come from the committed tree at `d588537` (integration plus the §8 fixes), re-run after the Phase 3 adjudication.
 
-**Pre-merge vs. merged tree.** The merge `efb349d` brought in `origin/main` `e232771` (PRs #572, #574), which edited `automate-lanes.sh` and `test-automate-lanes.sh`. §2 and §7 are regenerated on the merged tree (`ef57b60`). §1, §5 and §6 stay as measured on `d588537` before the merge; each figure the merge changed is labelled "pre-merge" there and its merged value is given beside it or in §9.
+**Pre-merge vs. merged tree.** The merge `efb349d` brought in `origin/main` `e232771` (PRs #572, #574), which edited `automate-lanes.sh` and `test-automate-lanes.sh`. §2 and §7 are regenerated on the merged tree (`ef57b60`). §1, §5 and §6 stay as measured on `d588537` before the merge; each figure the merge changed is labelled "pre-merge" there and its merged value is given beside it or in §9. A second merge re-based the branch onto `087b9e4` (PRs #578, #579, #580); §10 records it, re-measures the gates there and supersedes §9's base pin.
 
 ## 1. Test and gate totals (AC5 to AC10), pre-merge (`051553e` vs `d588537`)
 
@@ -76,7 +76,7 @@ Test parts (line counts, merged tree): lanes runner 220; `test-automate-lanes.d/
 
 ## 3. Non-move hunks (AC3 and AC5)
 
-As reported by subtask workers 1 and 2. AC3's byte-equality (the bundle, with loader and markers stripped, equals `git show 051553e:<path>`) is asserted by the AC3 legs of the two `*-modules.sh` tests (56/56 and 24/24 above).
+As reported by subtask workers 1 and 2. AC3's byte-equality (the bundle, with loader and markers stripped, equals `git show 051553e:<path>`) is asserted by the AC3 legs of the two `*-modules.sh` tests (56/56 and 24/24 above). `051553e` was the pin when this section was measured; the current pin is `087b9e4` (`BASE_SHA` in `test-automate-lanes-modules.sh`, `BASE` in `test-automate-trail-modules.sh`), moved by the re-bases in §9 and §10.
 
 **`automate-lanes.sh` (AC3)**
 - The `# Modules (sourced in this order from automate-lanes.d/):` map, after base line 208 (AC13). It is stripped by AC3's comparison.

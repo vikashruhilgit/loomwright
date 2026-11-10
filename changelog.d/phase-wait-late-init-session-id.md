@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-phase-wait names the phase session even when its init line arrives late
-`phase-launch` waits a bounded 15 s for a phase session's `system/init` line, and in a real session that line follows the SessionStart hooks, so it could land after the window. The session file was then never written and every `phase-wait: running` line said `session unknown` for the whole phase. `_lanes_phase_sid` now falls back to reading the init line from the stream log after the spawn offset and caches it, so the running line (and the answer/done fallbacks) name the id as soon as the log holds it. The scan is one shared helper, `_lanes_scan_init`, used by the launch-time wait as well. Regression leg AN23 in the lanes suite, with a mutation control.

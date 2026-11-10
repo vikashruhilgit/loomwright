@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/meta.golden.
-#:  meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
+#:  meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing itself; the meta-sync pull it runs may update managed .supervisor/automate/ files; always exits 0
 #:  meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
 
 # --------------------------------------------------------------------------- #
@@ -29,8 +29,8 @@ _meta_root() {
 #   meta-entry: failed — <reason>                mode on, pull exited non-zero (meta-sync's own text:
 #                                                no_remote_branch / conflict <path> / fetch_failed …)
 #   meta-entry: failed — mode unknown (<reason>) `setup-memory.sh mode` said unknown
-# It creates and writes NOTHING under .supervisor/automate/ (meta-sync's pull writes only the
-# managed run-history files it syncs). The SKILL maps `failed` to ABORT (no run file targeted) or a
+# It writes nothing itself; the meta-sync pull it runs may update the managed .supervisor/automate/
+# run-history files it syncs. The SKILL maps `failed` to ABORT (no run file targeted) or a
 # `meta_unreachable` park (an existing local run file targeted by --resume <id>).
 meta_entry() {
   local root="" here mode branch out rc reason ms

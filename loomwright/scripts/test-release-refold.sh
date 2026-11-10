@@ -5,8 +5,8 @@
 # scripts/bump-version.sh (validators injected through its BUMP_VERSION_VALIDATORS seam), with
 # refs/remotes/origin/main at the fork point so the merge base is real:
 #   R1 no scripts/bump-version.sh ⇒ skipped · R2 a foreign script of that name (no --refold) is
-#   never executed · R3 a fragments-only branch (a parallel lane) is left byte-identical, so the
-#   wave release lane still owns the one bump · R4 a fragment a heal fix added after the bump is
+#   never executed · R3 a fragments-only branch (a parallel lane) is left byte-identical, so
+#   `automate-wave.sh wave-build`'s release step still owns the one bump · R4 a fragment a heal fix added after the bump is
 #   re-folded into the ONE bump and committed, touching only the release paths (other staged and
 #   unstaged work stays out of the commit) · R5 a current bump ⇒ no commit · R6 a hand-edited
 #   CHANGELOG.md ⇒ exit 1 (check failed), no commit · R7 a hand-edited bump + a pending fragment ⇒
@@ -83,7 +83,7 @@ run_rr "$D"; rc=$?
 D="$TMP/r3"; make_repo "$D"; h="$(head_of "$D")"; before="$(tree_sum "$D")"
 run_rr "$D"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(head_of "$D")" = "$h" ] && [ "$(tree_sum "$D")" = "$before" ] && [ -f "$D/changelog.d/a.md" ]
-check $? "R3 a fragments-only branch (a lane) is left byte-identical — the wave release lane keeps the bump"
+check $? "R3 a fragments-only branch (a lane) is left byte-identical — wave-build's release step keeps the bump"
 
 D="$TMP/r4"; make_repo "$D"; bumped "$D"
 printf 'Late heal fragment\n' > "$D/changelog.d/b.md"; echo "heal" >> "$D/feature.txt"; g "$D" add -A && g "$D" commit -q -m "fix: heal adds a fragment"
