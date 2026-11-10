@@ -333,6 +333,35 @@ sw_line "$out" "sweep: removed worktree $WT_PAIR" && sw_line "$out" "sweep: remo
   && [ "$(sw_pair_reads)" = 1 ] && ok "(SW8) --apply: the pair is removed (worktree, then branch) on ONE gh pr list read" \
   || no "(SW8) --apply: $(sw_pair_reads) gh reads for wpair; $(printf '%s\n' "$out" | grep wpair | tr '\n' '|')"
 
+# ---- --apply re-reads liveness right before each removal -------------------
+# Two removable worktrees; the lsof stand-in reports a live cwd in the SECOND one only from its
+# second call on (a process that cd'd in after the first read). --apply removes the first and
+# keeps the second; the dry run still reads lsof exactly once.
+cat > "$SWBIN/lsof-late" <<'STUB'
+#!/usr/bin/env bash
+n=$(cat "$SWGH/lsof-late.n" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$SWGH/lsof-late.n"
+printf 'p1\nfcwd\nn/\n'
+[ "$n" -ge 2 ] && printf 'p4848\nfcwd\nn%s\n' "$(cat "$SWGH/lsof-late.live")"
+exit 0
+STUB
+chmod +x "$SWBIN/lsof-late"
+sw_late_fixture() { # <n> — WT_LA, WT_LB: two clean merged plugin worktrees; the late live cwd is WT_LB
+  sw_repo "$1"; WT_LA="$SWFX/proj-late-a"; sw_wt "$WT_LA" wlatea; sw_merged wlatea 96
+  WT_LB="$SWFX/proj-late-b"; sw_wt "$WT_LB" wlateb; sw_merged wlateb 97
+  printf '%s\n' "$WT_LB" > "$SWGH/lsof-late.live"; rm -f "$SWGH/lsof-late.n"
+}
+sw_late_fixture 19
+out="$(SW_LSOF="$SWBIN/lsof-late" sw_run)"
+[ "$(cat "$SWGH/lsof-late.n" 2>/dev/null)" = 1 ] && sw_line "$out" "sweep: would-remove worktree $WT_LA" && sw_line "$out" "sweep: would-remove worktree $WT_LB" \
+  && ok "(SW9) dry run: ONE lsof read for two removable worktrees (both would-remove)" \
+  || no "(SW9) dry run: $(cat "$SWGH/lsof-late.n" 2>/dev/null) lsof reads; $(printf '%s\n' "$out" | grep proj-late | tr '\n' '|')"
+rm -f "$SWGH/lsof-late.n"
+out="$(SW_LSOF="$SWBIN/lsof-late" sw_run --apply)"
+sw_line "$out" "sweep: removed worktree $WT_LA" && [ ! -d "$WT_LA" ] \
+  && sw_line "$out" "sweep: kept worktree $WT_LB — live process 4848 has its cwd here" && [ -d "$WT_LB" ] && sw_has wlateb \
+  && ok "(SW9) --apply re-reads liveness before each removal: the first worktree is removed, the second (a live cwd since the first read) is kept" \
+  || no "(SW9) --apply: $(printf '%s\n' "$out" | grep proj-late | tr '\n' '|')"
+
 # ---- closeout step 3a: the same --ignored gate (AC4's closeout half) ---------
 closeout_fixture 240
 mkdir -p "$FX/wt-pr/.supervisor/logs"; printf '{"event":"x"}\n' > "$FX/wt-pr/.supervisor/logs/x.jsonl"
@@ -431,6 +460,11 @@ if sw_mutant prcache '/SW_PR_CACHE="\$SW_PR_CACHE\$b/d'; then
   [ "$(sw_pair_reads)" = 2 ] && ok "(SWM) control: without the per-run gh memo the removable pair costs 2 pr list reads (the SW8 leg is red)" || no "(SWM) prcache mutant did not discriminate: $(sw_pair_reads) reads"
   sw_line "$out" "sweep: would-remove worktree $WT_PAIR" && sw_line "$out" "sweep: would-remove branch wpair" \
     && ok "(SWM) control: the memo changes no verdict (the uncached sweep reads the same would-remove pair)" || no "(SWM) prcache verdicts: $(printf '%s\n' "$out" | grep wpair | tr '\n' '|')"
+fi
+if sw_mutant liveread 's/^      SW_LIVE_STATE=""; _sw_live_read$/      _sw_live_read/'; then
+  sw_late_fixture 20
+  out="$(SW_LSOF="$SWBIN/lsof-late" SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
+  [ ! -d "$WT_LB" ] && ok "(SWM) control: without the re-read before the removal --apply removes the worktree a process moved into (the SW9 leg is red)" || no "(SWM) liveread mutant did not discriminate: $(printf '%s\n' "$out" | grep proj-late | tr '\n' '|')"
 fi
 if [ "$SW_ROOT_UID" = 0 ] && sw_mutant coverdict 's/case "\$co_verdict" in "ignored: ok "\*) co_ign=ok ;; esac/co_ign=ok/'; then
   sw_co_unread 242 "$SW_MD"
