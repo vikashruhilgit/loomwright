@@ -36,7 +36,8 @@ restores every file and exits 1. Preview with `--dry-run`.
 - **Sequential run / single PR** (the default): the PR's author, worker or human, writes a fragment, commits it,
   and runs `bash scripts/bump-version.sh`. Later commits may follow the bump. Phase 4.5 heal commits and
   `/review-pr` drain commits always do (#367, #512).
-- **Parallel wave:** lanes write fragments only. The release lane runs the bump once for the whole wave.
+- **Parallel wave:** lanes write fragments only. `automate-wave.sh wave-build`'s release step runs
+  `scripts/bump-version.sh` once for the whole wave and commits the fold as the wave branch's last commit.
 - **An unfolded fragment merged without a bump is legal.** The next bump folds it.
 
 **The rule is about content, not commit position.** At every commit, compared with `git merge-base HEAD origin/main`,

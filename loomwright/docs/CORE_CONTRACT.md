@@ -108,7 +108,7 @@ header does not state it in one line. Read the header before relying on that col
 | Role | Script | argv | stdin | stdout | exit | Mode |
 |---|---|---|---|---|---|---|
 | State / run file | `automate-helpers.sh` | `<subcommand> …`; the usage list is assembled from the header's `#:` lines (`--help`) | per subcommand (`relay-hook` reads hook JSON) | per subcommand, see the `--help` list (e.g. `gate-eval` ⇒ `MERGE` / `PARK …`; `lane-status` one line per lane plus a `backlog:` pointer line; `dismissed-drafts` TSV `draft` rows plus a summary line) | per subcommand, see the `--help` list: typically 0; 1 = usage error or a refusal (`init-check`, `pick-guard`, `lane-info` outside a lane, `lane-convert-ready`, `wave-build`); 2 = a subcommand-specific failure (`lane-wait` usage error, `wave-build` STOPPED, `fleet-closeout` pull failure, `lane-convert-ready` failed push); `lane-launch` 3 = `BLOCKED`, 4 = `HELD` | helpers SAFE; `gate-eval` CLOSED (any failed / unreadable condition ⇒ PARK) |
-| State / run file | `run-lock.sh` | `acquire --owner <label> [--session-id <id>] [--root <dir>] [--force-unlock]` · `release --owner <label> \| --session-id <id> [--root <dir>]` · `status [--root <dir>]` | see header | acquire: nothing, or `run_lock_reentrant …`; held: `run_lock_held owner=… pid=… age=…`; status: `LOCKED …` / `UNLOCKED` | acquire 0 ok / 1 held; release is an idempotent 0; usage 1 | CLOSED (a held lock never proceeds) |
+| State / run file | `run-lock.sh` | `acquire --owner <label> [--session-id <id>] [--root <dir>] [--force-unlock]` · `release --owner <label> \| --session-id <id> [--root <dir>] [--force-unlock]` · `status [--root <dir>]` | see header | acquire: nothing, or `run_lock_reentrant …`; held: `run_lock_held owner=… pid=… age=…`; status: `LOCKED …` / `UNLOCKED` | acquire 0 ok / 1 held; release is an idempotent 0; usage 1 | CLOSED (a held lock never proceeds) |
 | Result parsing | `result_block_parser.py` | library imported by the validators; `--raw` = stdin is the agent's output text with no JSON envelope | the stop-event hook payload (or raw text) | `{}` = allow, `{"decision": "block", "reason": "…"}` = re-prompt the agent | always 0 (one exit point, `emit`) | the verdict blocks through the host's decision; unparseable stdin ⇒ allow |
 | Result validation | `validate-*-result.py` | `[--raw]`; the code-review validator also takes `--main-session` | as above | as above | always 0 | as above |
 | Progress / state | `emit-progress-event.sh` | see header | the stop-event hook payload | none; appends one `subtask_complete` line to the session log, then runs `build-state.sh` | always 0 | SAFE |
@@ -120,7 +120,7 @@ header does not state it in one line. Read the header before relying on that col
 | Gate | `classify-risk.sh` | `<base_ref> <head_ref> [--root <dir>]` · `--kind-table` | see header | one JSON object (`high_risk` true / false / null + `reasons`) | always 0 | emitter SAFE; consumers fail CLOSED on anything but an explicit `false` |
 | Gate | `guard-test-integrity.sh` | none (hook leaf); armed by the companion `guard-arm.sh` | the pre-tool hook payload | the host's deny JSON on a deny | 0 allow / 2 deny | CLOSED; no `\|\| true` |
 | Gate | `guard-finalize-publish.sh` | none (hook leaf) · `write-marker [--skip-children-check] [--expect-id <id>]…` | the pre-tool hook payload (guard mode) | guard: the host's deny JSON on a deny; `write-marker`: one JSON line (the marker written, or `{"status":"refused",…}`) | guard 0 allow / 2 deny; `write-marker` 0 written / 1 refused | CLOSED; no `\|\| true` |
-| Gate | `verify-provides.sh` | `[--verbose] <brief> <subtask-id> [--root <dir>]` · `--parse-only` · `--kind-table` | see header | one summary line; `--verbose`: one JSON object (`outputs_verified`, `outputs_gap`, status) | always 0 | emitter SAFE; consumers fail CLOSED on `missing` / `unverifiable` |
+| Gate | `verify-provides.sh` | `[--verbose] <brief> <subtask-id> [--root <dir>]` · `--parse-only` · `--kind-table` | see header | one summary line; `--verbose`: one JSON object (`outputs_verified`, `outputs_gap`, status) | always 0 | emitter SAFE; consumers fail CLOSED on `missing`, while `unverifiable` routes per `agents/supervisor.md` Single-Agent step 3 (some reasons fall back to the worker's self-report) |
 | Reader | `read-rules.sh` | `[touched paths …]` (route `applies_to`) | see header | an advisory markdown block, subordinate to `CLAUDE.md` | always 0 | SAFE |
 | Reader | `read-lessons.sh` | none | see header | verified, fresh lessons grouped by category | always 0 | SAFE |
 | Reader | `read-postmortem.sh` | `[paths …]`; arguments take precedence | newline-separated paths, read only when no arguments are given | advisory matches | always 0 | SAFE |
@@ -290,6 +290,8 @@ frontmatter, stays UNVERIFIED until a real run on that harness is observed (§5.
   - Whether Cursor or Codex loads a Claude Code **plugin** as installed (plugin-distributed `hooks.json`, a plugin's
     `skills/` directory). Cursor's third-party page names settings-file locations only [S2].
   - Codex subagent-level isolation.
+  - Codex run-in-background. The 2026-08-22 row's wording is not available to compare, and the §5.1 matrix marks
+    a primitive that detaches one subagent while the parent keeps working UNVERIFIED.
   - Whether Cursor reads `CLAUDE.md`.
   - Whether either loader tolerates our extra skill frontmatter keys (`version`, `lastUpdated`).
   - Every behavioural question in §5.3.
@@ -305,8 +307,10 @@ payload's `cwd`, and the code-review validator reads its `agent_type`.
   `description`, `summary`, `duration_ms`, `message_count`, `tool_call_count`, `loop_count`, `modified_files` and a
   subagent transcript path. The common input carries `workspace_roots` and `transcript_path`. Neither carries `cwd`
   or `agent_type`. None of the ladder's inline keys is documented (Cursor's `summary` is not in the
-  ladder), so on the documented schema the validators fall through to the transcript path. That transcript's format
-  is not documented. A Claude-format block decision is honoured as an automatic follow-up, only when `status` is
+  ladder), so on the documented schema the validators fall through to the transcript keys. The common input's
+  `transcript_path` matches a ladder key in `PAYLOAD_TRANSCRIPT_KEYS`; the cited docs do not give the subagent
+  transcript field's name, so whether it matches the ladder's subagent-scoped key is UNVERIFIED. That transcript's
+  format is not documented. A Claude-format block decision is honoured as an automatic follow-up, only when `status` is
   `completed`, and Claude-format hooks default to no loop limit. **Behaviour: UNVERIFIED.** On the documented schema
   alone, the validators would not find an inline report.
 - **Codex [S8].** The documented subagent-stop input carries the inline final-message field and the subagent

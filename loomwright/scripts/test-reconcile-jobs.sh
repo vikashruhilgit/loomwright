@@ -2,10 +2,12 @@
 # test-reconcile-jobs.sh — self-tests for reconcile-jobs.sh (the job-lifecycle
 # reconciler) plus the two defects it ships alongside:
 #
-#   * automate-helpers.sh is_done() vs the format the completion tail STAMPS
-#     (cases 11a-11e). Before this change the contract stamped `## Status` with
-#     the value in a `- **Status:**` bullet while is_done() read only the
-#     heading, so a successfully closed-out requirement stayed re-enqueueable
+#   * automate-helpers.sh is_done() checked against the format the live writers
+#     stamp (closeout, automate-trail.d/closeout.sh; the owner-abandon heading,
+#     automate-helpers.d/reconcile-status.sh) (cases 11a-11f). Before this
+#     change the contract stamped `## Status` with the value in a
+#     `- **Status:**` bullet while is_done() read only the heading, so a
+#     successfully closed-out requirement stayed re-enqueueable
 #     forever. It had never fired in anger (zero requirements carried the
 #     sentinel), which is exactly why only an executed assertion catches it.
 #   * session-resume.sh Section 1 asserting "Supervisor was mid-run" for a brief

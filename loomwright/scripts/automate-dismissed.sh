@@ -454,8 +454,8 @@ def meta(e):
 # finding only, so a named file appearing or vanishing between passes rewrites the body of an
 # undecided draft under the SAME name and never touches a decision.
 # Grammar copy 2 of 3, sharing no code: the authority is the PW_TOUCHES_GRAMMAR line in
-# automate-helpers.sh (_pw_touches); copy 3 is vt_touches in propose-from-verify.sh. Change all three
-# together — test-automate-helpers.sh §X7 fails when they accept/reject a token differently.
+# automate-helpers.d/plan-waves.sh (_pw_touches); copy 3 is vt_touches in propose-from-verify.sh.
+# Change all three together — test-automate-helpers.sh §X7 fails when they accept/reject a token differently.
 # Containment is an EXTRACTOR-only rule shared by copies 2 and 3 (the planner's --lint judges a
 # token's grammar, never the filesystem), so X7 does not cover it; test-automate-dismissed.sh and
 # test-propose-from-verify.sh each pin it with the same symlink / `.git` fixtures.
