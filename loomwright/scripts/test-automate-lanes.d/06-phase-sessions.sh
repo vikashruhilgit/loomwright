@@ -251,6 +251,30 @@ if [ "$ps_count" = 1 ] && [ -s "$T/psreg-mut/automate-lanes.sh" ] && ! cmp -s "$
     "$(phase_entries "$T/procs-psess-mut" | jq length):$(phase_sessions "$T/procs-psess-mut" | jq length)" "1:0"
 else bad "AN22f session-registration mutant not built (session registration lines in the bundle: $ps_count)"; fi
 
+# AN23: the init line lands AFTER phase-launch's bounded init wait (it follows the SessionStart hooks in a real
+# session). phase-launch then has no id, but phase-wait's running line must still name the session — read lazily
+# from the log after the spawn offset and cached — never `unknown` for the whole phase. The mutant reverts
+# _lanes_phase_sid to the session-file-only read and must say `unknown`.
+an23_launch() { # <script> — a sleeping drain whose init line arrives 2 s late against a 1 s init wait
+  STUB_MODE=sleep STUB_INIT_DELAY_S=2 LOOMWRIGHT_LANES_INIT_WAIT_S=1 bash "$1" phase-launch "$RFL" drain --owner-command "$PHOWN" --coordinator-session sess-coord -- '/loomwright:review-pr x' 2>&1
+}
+an23_settle() { local i=0; while ! grep -q '"subtype":"init"' "$PHDR/stream.log" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+out="$(an23_launch "$S")"
+check "AN23 fixture: the init line missed phase-launch's wait (session unknown, no session file)" \
+  "$(printf '%s' "$out" | grep -c 'session unknown' | tr -d ' '):$([ -e "$PHDR/session" ] && echo file || echo none)" "1:none"
+an23_settle
+out="$(run phase-wait "$RFL" drain --timeout 1)"; rc=$?
+check "AN23b phase-wait's running line names the late session id (exit 3)" "$rc:$out" "3:phase-wait: running — session sess-123"
+check "AN23c … and caches it in the phase dir's session file" "$(sed -n 1p "$PHDR/session" 2>/dev/null)" sess-123
+kill -TERM "$(cut -f1 "$PHDR/pid")" 2>/dev/null; wait_gone "$L91"
+grep -v '_lanes_scan_init "$PH_LOG" "$off"' "$SB" > "$MUT/automate-lanes.sh"
+if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$SB" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then
+  an23_launch "$MUT/automate-lanes.sh" >/dev/null; an23_settle
+  check "AN23d mutation (no lazy log read) ⇒ the running line says unknown" \
+    "$(bash "$MUT/automate-lanes.sh" phase-wait "$RFL" drain --timeout 1 2>&1)" "phase-wait: running — session unknown"
+  kill -TERM "$(cut -f1 "$PHDR/pid")" 2>/dev/null; wait_gone "$L91"
+else bad "AN23d mutant not built"; fi
+
 # AN-z: nothing this part started outlives it (AA-F12z closed part 05, before these launches)
 for p in $(tal_pgrep "$T" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done
 i=0; while tal_pgrep "$T" "_lane-run " >/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
