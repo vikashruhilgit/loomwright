@@ -669,3 +669,58 @@ else
   no "mutation control (xvii-b): could not build the optional-colon mutant — control inconclusive"
 fi
 
+echo "== 91. forge-slug owners behind orgs/, users/, sponsors/ and an all-dot repo are still checked =="
+# owner_scrub_leg — one clone, the suite's allowlist (owner/repo, owner/repo-old). Planted: an
+# orgs/ URL, a sponsors/ URL and a users/ URL naming evilcorp, and an evilcorp/.../pull placeholder
+# URL (each its own file); a clean file names owner behind orgs/ and users/, an owner/.../pull
+# placeholder, a settings/ page and a .../pull placeholder. 0 = scrub exits 2 with exactly one
+# forge_slug hit per evilcorp file and none for the clean one. Detail in OS_DETAIL.
+owner_scrub_leg() {
+  local exp got
+  mkworld; clone B
+  put B "$RQ/o-orgs.md" "see https://github.com/orgs/evilcorp/repos"
+  put B "$RQ/o-sponsors.md" "fund https://github.com/sponsors/evilcorp"
+  put B "$RQ/o-users.md" "board https://github.com/users/evilcorp/projects/2"
+  put B "$RQ/o-dots.md" "see https://github.com/evilcorp/.../pull/3"
+  put B "$RQ/o-clean.md" "$(printf '%s\n' 'https://github.com/orgs/owner/projects/1 and https://github.com/users/owner/projects/4' \
+    'https://github.com/owner/.../pull/2, https://github.com/settings/tokens and github.com/.../pull')"
+  printf '%s\n' "$RQ/o-orgs.md" "$RQ/o-sponsors.md" "$RQ/o-users.md" "$RQ/o-dots.md" "$RQ/o-clean.md" > "$W/owner.list"
+  OUT="$(bash "$SCRIPT" scrub --paths-from "$W/owner.list" --root "$W/B" 2>&1)"; RC=$?
+  exp="$(printf '%s\n' "meta_sync: scrub-hit $RQ/o-dots.md:-: forge_slug" "meta_sync: scrub-hit $RQ/o-orgs.md:-: forge_slug" \
+    "meta_sync: scrub-hit $RQ/o-sponsors.md:-: forge_slug" "meta_sync: scrub-hit $RQ/o-users.md:-: forge_slug" | env LC_ALL=C sort)"
+  got="$(printf '%s\n' "$OUT" | grep '^meta_sync: scrub-hit ' | env LC_ALL=C sort)"
+  OS_DETAIL="rc=$RC hits=$(printf '%s' "$got" | tr '\n' '|')"
+  [ "$RC" -eq 2 ] && [ "$got" = "$exp" ]
+}
+owner_scrub_leg
+check $? "orgs/ users/ sponsors/ evilcorp and evilcorp/.../pull are forge_slug hits; owner behind orgs/ users/ and owner/.../pull (owner/repo allowlisted) are not ($OS_DETAIL)"
+
+echo "== 92. mutation controls: the lease, the owner read and the dead-holder hint are each load-bearing =="
+MUT_LEASE="$TROOT/mutant-lease"
+if build_mutant "$MUT_LEASE" 's/g push -q --force-with-lease="refs\/heads\/\$BRANCH:\$R" origin/g push -q origin/' 'if g push -q origin "$commit:refs/heads/$BRANCH"'; then
+  SCRIPT="$MUT_LEASE/meta-sync.sh"
+  if lease_leg; then no "mutation control (lease) REFUTED: a plain refspec push left the deleted branch absent — leg 89 is not load-bearing ($LS_DETAIL)"
+  else ok "mutation control (lease): a plain refspec push re-creates the deleted branch, so leg 89 turns red ($LS_DETAIL)"; fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (lease): could not build the plain-push mutant — control inconclusive"
+fi
+MUT_OWNER="$TROOT/mutant-owner"
+if build_mutant "$MUT_OWNER" 's/orgs|users|sponsors) owner="\$rest"; rest="" ;;/orgs|users|sponsors) continue ;;/' 'orgs|users|sponsors) continue ;;'; then
+  SCRIPT="$MUT_OWNER/meta-sync.sh"
+  if owner_scrub_leg; then no "mutation control (owner) REFUTED: skipping orgs/ users/ sponsors/ kept leg 91 green ($OS_DETAIL)"
+  else ok "mutation control (owner): skipping orgs/ users/ sponsors/ drops their hits, so leg 91 turns red ($OS_DETAIL)"; fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (owner): could not build the reserved-skip mutant — control inconclusive"
+fi
+MUT_HINT="$TROOT/mutant-hint"
+if build_mutant "$MUT_HINT" 's/^      hint=".*the holder is not running: .*$/      hint=""  # mutant (hint)/' 'hint=""  # mutant (hint)'; then
+  SCRIPT="$MUT_HINT/meta-sync.sh"
+  if deep_lock_leg; then no "mutation control (hint) REFUTED: without the hint leg 90 stayed green ($DL_DETAIL)"
+  else ok "mutation control (hint): without the hint the locked message names no hand fix, so leg 90 turns red ($DL_DETAIL)"; fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (hint): could not build the hint-less mutant — control inconclusive"
+fi
+

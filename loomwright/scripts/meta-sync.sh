@@ -365,9 +365,12 @@
 #                        wrapped in double, single or back quotes (repo: a/b, "Repo": "a/b",
 #                        'repo': 'a/b'). A bare `a/b` is deliberately NOT a slug (every relative path would
 #                        match) — that is a stated limit of this scrub, not complete coverage. URL
-#                        first segments that are forge-reserved words (apps, orgs, settings, …)
-#                        are not owners and are skipped, as is an all-dot placeholder segment
-#                        (github.com/.../pull). An EMPTY allowlist makes every slug a hit.
+#                        first segments that are forge-reserved words (apps, settings, …) are not
+#                        owners and are skipped, except orgs/, users/ and sponsors/, whose NEXT
+#                        segment is the owner; an all-dot owner is a placeholder and is skipped
+#                        (github.com/.../pull). An owner with no repo (orgs/<owner>, or an all-dot
+#                        repo as in <owner>/.../pull) passes only when some allowlisted slug starts
+#                        with <owner>/. An EMPTY allowlist makes every slug a hit.
 #   Project extension: TRACKED file `.agent/meta-sync-deny.txt` — one extra POSIX ERE per line
 #   (blank and `#` lines ignored). It is DATA handed to `grep -E -e`, never executed or eval'd; an
 #   invalid pattern is itself a hit (fail closed). Rule name: `deny_pattern:<line>`.

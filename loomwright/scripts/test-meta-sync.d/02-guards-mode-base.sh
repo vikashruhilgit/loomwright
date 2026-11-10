@@ -201,9 +201,12 @@ check $? "exhausted retries -> exit 1 'push_failed — rejected $PX_N times; not
 [ "$(br_tip)" = "$PX_TIP" ]; check $? "exhausted retries -> the branch tip on origin is unchanged"
 cmp -s "$W/px-base.before" "$W/B/.git/meta-base"; check $? "exhausted retries -> B's meta-base is byte-unchanged"
 [ "$(px_hooks)" = "$PX_N" ]; check $? "the origin's pre-receive ran exactly MAX_ATTEMPTS=$PX_N times (hook log: $(px_hooks))"
+# The lease pinned on the fetched tip (`--force-with-lease=refs/heads/<branch>:<40-hex>`, leg 89)
+# only adds a refusal, so that exact token is masked first; any other --force*, -f or +refspec hits.
 { [ "$(px_pushes)" = "$PX_N" ] \
-  && ! grep -qE '\[(--force[^]]*|-[A-Za-z]*f[A-Za-z]*|\+[^]]*)\]' "$W/px-push.log"; }
-check $? "the git shim logged exactly $PX_N push argvs (got $(px_pushes)), none with --force*, -f or a +refspec (log: $(tr '\n' '|' < "$W/px-push.log"))"
+  && ! sed -E "s#\[--force-with-lease=refs/heads/$BR:[0-9a-f]{40}\] ##g" "$W/px-push.log" \
+       | grep -E '\[(--force[^]]*|-[A-Za-z]*f[A-Za-z]*|\+[^]]*)\]' >/dev/null; }
+check $? "the git shim logged exactly $PX_N push argvs (got $(px_pushes)), none with --force*, -f or a +refspec beyond the lease pinned on the fetched tip (log: $(tr '\n' '|' < "$W/px-push.log"))"
 
 echo "== 35. meta-base object missing from the object store -> no-base (history-aware) derivation =="
 # Fixed fixture: a well-formed but NONEXISTENT tree sha in <gitdir>/meta-base. (Deleting the gc
