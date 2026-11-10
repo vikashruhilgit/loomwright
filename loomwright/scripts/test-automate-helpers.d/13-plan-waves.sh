@@ -497,6 +497,15 @@ x_rc "X1 explain: wave <w> runs <item> alone (Touches unknown)" 0 'wave 1: q/01-
 rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md '02' 'a/x'
 w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 1 --explain
 x_rc "X1 explain: every reason across earlier waves, each once" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nwave 3: q/03-c.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 2):\n  wave 1 full (--max 1)\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 3):\n  depends on q/02-b.md\n  small (1 files): run right-size q/03-c.md for merge candidates'
+# X1f / X1g a decision with two reasons records both where it is made: an item held out of a full wave
+#     also names its Touches conflict with a wave member; an item held by an unmet dependency also names
+#     its unknown Touches. (The X1 fixtures above have no such co-existing reason, so they stay exact.)
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a/'; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'a/x.sh'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 2 --explain
+x_rc "X1f explain: a full-wave item also names its conflict with a wave member" 0 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 1):\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 2):\n  wave 1 full (--max 2)\n  conflicts with q/01-a.md on a/x.sh (declared)\n  small (1 files): run right-size q/03-c.md for merge candidates'
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md '01' -
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1g explain: an item with an unmet dependency also names its missing Touches" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 2):\n  depends on q/01-a.md\n  runs alone: Touches unknown (missing)'
 
 # X1s the small note (parallel-automate/18b): only a small item carries it, counted by right-size's own
 #     _rsz_count on the planner's own expanded set, with right-size's threshold reader.

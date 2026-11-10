@@ -16,7 +16,12 @@
 #        the triggering sample, one notification), clears after N calm samples (file removed); a
 #        new sampler adopts an existing trip file and clears it; unreadable swap is neutral
 #        MUTATION CONTROL: drop the swap-growth condition ⇒ low free alone trips (the leg fails)
-#   (X)  crossings notify exactly once each: busy, overloaded (latched until ok), keep-awake lost
+#   (GT) the trip file names its sampler: line 3 `sampler_pid: <pid>`; an adopting sampler re-points
+#        it at itself (lines 1-2 kept); TERM while tripped removes the trip file; TERM never removes
+#        a trip file that names another sampler
+#        MUTATION CONTROLS: drop the sampler_pid printf ⇒ line 3 missing; drop the release from the
+#        trap ⇒ the trip outlives a TERM'd sampler; drop the owner check ⇒ another sampler's trip goes
+#   (X) crossings notify exactly once each: busy, overloaded (latched until ok), keep-awake lost
 #        (never at start)
 #   (P)  the loop stops when the parent dies, and when the parent pid's start time changes, and
 #        when the parent is an unreaped zombie (ps stat Z — `kill -0` alone still succeeds)
@@ -248,6 +253,80 @@ else
   if [ -f "$TRIP" ]; then ok "(G) MUTATION CONTROL: without the swap-growth condition the flat-swap leg fails"
   else no "(G) MUTATION CONTROL: mutant did not trip"; fi
 fi
+
+# ---- (GT) the trip file names its sampler, and dies with it ---------------------------------------
+# gt_trip_series — a pressured series (free low, swap growing every sample for 30 samples).
+gt_trip_series() {
+  reset_fx; : > "$FX/ps"; rm -f "$FX/free" "$FX/swap"
+  awk 'BEGIN { for (i = 0; i < 30; i++) print 100 }' > "$FX/free.series"
+  awk 'BEGIN { for (i = 0; i < 30; i++) printf "%dM\n", 1000 + 100 * i }' > "$FX/swap.series"
+}
+# gt_bg <sampler> <interval> <max> — a backgrounded loop; GT_PID is its pid (= its own $$).
+gt_bg() { bash "$1" --parent-run-id "$RID" --parent-pid "$$" --root "$ROOT" --interval "$2" --max-samples "$3" 2>/dev/null & GT_PID=$!; }
+gt_wait_file() { local i=0; while [ ! -f "$1" ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i + 1)); done; [ -f "$1" ]; }
+gt_wait_gone() { local i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i + 1)); done; ! kill -0 "$1" 2>/dev/null; }
+# gt_term_leg <sampler> — trip, then TERM while tripped; prints `<trip file present after exit>` (yes|no).
+gt_term_leg() {
+  gt_trip_series; gt_bg "$1" 1 0
+  if gt_wait_file "$TRIP"; then
+    kill -TERM "$GT_PID" 2>/dev/null; gt_wait_gone "$GT_PID" || kill -KILL "$GT_PID" 2>/dev/null
+    wait "$GT_PID" 2>/dev/null
+    [ -f "$TRIP" ] && echo yes || echo no
+  else kill -KILL "$GT_PID" 2>/dev/null; wait "$GT_PID" 2>/dev/null; echo never-tripped; fi
+}
+gt_trip_series; gt_bg "$SUT" 0 5; wait "$GT_PID" 2>/dev/null
+check "(GT) trip file line 3 = sampler_pid: <the sampler's pid>" "$(sed -n 3p "$TRIP" 2>/dev/null)" "sampler_pid: $GT_PID"
+check "(GT) lines 1-2 unchanged by the new line" "$(sed -n 1p "$TRIP" | cut -d' ' -f1):$(sed -n 2p "$TRIP" | cut -d' ' -f1)" "tripped_utc::sample:"
+# adoption: a new sampler re-points line 3 at itself, keeping lines 1-2 byte-for-byte.
+gt_l12="$(sed -n 1,2p "$TRIP")"
+reset_fx; : > "$FX/ps"
+{ printf '%s\n' "$gt_l12"; echo "sampler_pid: 999999"; } > "$TRIP"
+gt_bg "$SUT" 0 1; wait "$GT_PID" 2>/dev/null
+check "(GT) an adopting sampler re-points sampler_pid: at itself, lines 1-2 kept" "$(sed -n 1,2p "$TRIP")|$(sed -n 3p "$TRIP")|$(wc -l < "$TRIP" | tr -d ' ')" "$gt_l12|sampler_pid: $GT_PID|3"
+check "(GT) TERM while tripped removes the trip file" "$(gt_term_leg "$SUT")" no
+# a TERM never removes a trip file another sampler owns: a --once run held in its load read (a slow
+# load stub) is TERM'd while a trip file names a live other pid.
+cat > "$ST/slowload" <<'EOF'
+#!/bin/sh
+sleep 2; exec "$ST/load"
+EOF
+chmod +x "$ST/slowload"
+# gt_owner_leg <sampler> — prints the trip file's line 3 after the TERM'd --once run exits.
+gt_owner_leg() {
+  local other
+  reset_fx; : > "$FX/ps"
+  sleep 60 & other=$!
+  printf 'tripped_utc: 2026-11-10T00:00:00Z\nsample: x\nsampler_pid: %s\n' "$other" > "$TRIP"
+  LOOMWRIGHT_MACHINE_LOAD_CMD="$ST/slowload" bash "$1" --once --parent-run-id "$RID" --root "$ROOT" >/dev/null 2>&1 & GT_PID=$!
+  sleep 1; kill -TERM "$GT_PID" 2>/dev/null; wait "$GT_PID" 2>/dev/null
+  if [ "$(sed -n 3p "$TRIP" 2>/dev/null)" = "sampler_pid: $other" ]; then echo kept; else echo removed; fi
+  kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+}
+check "(GT) a TERM never removes a trip file that names another sampler" "$(gt_owner_leg "$SUT")" kept
+# MUTATION CONTROLS (scratch copies of the sampler; fixed-string edits through ENVIRON, no escapes).
+gt_mut() { # <out> <fixed a> <fixed b> — every line holding <a> gets it replaced by <b>
+  GT_A="$2" GT_B="$3" awk '{ a = ENVIRON["GT_A"]; i = index($0, a); if (i) $0 = substr($0, 1, i - 1) ENVIRON["GT_B"] substr($0, i + length(a)); print }' "$SUT" > "$1"
+}
+MUT="$tmp/mutant-trip-pid.sh"; gt_mut "$MUT" "; printf 'sampler_pid: %s\\n' \"\$\$\"; }" "; }"
+if cmp -s "$SUT" "$MUT"; then no "(GT) mutation control applied (sampler_pid printf not found)"
+else
+  gt_trip_series; gt_bg "$MUT" 0 5; wait "$GT_PID" 2>/dev/null
+  if [ "$(sed -n 3p "$TRIP" 2>/dev/null)" != "sampler_pid: $GT_PID" ]; then ok "(GT) MUTATION CONTROL: without the sampler_pid printf the line-3 leg fails"
+  else no "(GT) MUTATION CONTROL: mutant still wrote line 3"; fi
+fi
+MUT="$tmp/mutant-release.sh"; gt_mut "$MUT" "trap 'release_trip; exit 0' TERM INT HUP" "trap 'exit 0' TERM INT HUP"
+if cmp -s "$SUT" "$MUT"; then no "(GT) mutation control applied (release trap not found)"
+else
+  if [ "$(gt_term_leg "$MUT")" = yes ]; then ok "(GT) MUTATION CONTROL: without the release in the trap the trip outlives a TERM'd sampler"
+  else no "(GT) MUTATION CONTROL: mutant still removed the trip file on TERM"; fi
+fi
+MUT="$tmp/mutant-owner.sh"; gt_mut "$MUT" '2>/dev/null)" = "$$" ] || return 0' '2>/dev/null)" = "$$" ] || :'
+if cmp -s "$SUT" "$MUT"; then no "(GT) mutation control applied (owner check not found)"
+else
+  if [ "$(gt_owner_leg "$MUT")" = removed ]; then ok "(GT) MUTATION CONTROL: without the owner check a TERM'd --once run removes another sampler's trip"
+  else no "(GT) MUTATION CONTROL: mutant still kept the other sampler's trip"; fi
+fi
+rm -f "$TRIP"
 
 # ---- (X) crossings ----------------------------------------------------------------------------
 reset_fx; : > "$FX/ps"

@@ -884,6 +884,7 @@ jr_act() {
       --root) [ "$#" -ge 1 ] && [ -n "$1" ] || { echo "$JR_ME: act — --root needs a value" >&2; return 2; }; root="$1"; shift ;;
       -h|--help) jr_usage; return 0 ;;
       -*) echo "$JR_ME: act — unknown option $a" >&2; jr_usage >&2; return 2 ;;
+      '') echo "$JR_ME: act — empty row id" >&2; return 2 ;;   # never a blank appended to the id list
       *) case "$a" in *[!A-Za-z0-9-]*) echo "$JR_ME: act — malformed row id $a" >&2; return 2 ;; esac
          ids="$ids $a" ;;
     esac

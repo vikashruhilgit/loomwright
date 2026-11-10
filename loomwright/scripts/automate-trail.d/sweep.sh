@@ -115,7 +115,10 @@ SWREC
 # _sw_live_read — reads every process's cwd ONCE per sweep, lazily (only a
 # removable candidate needs it), in the CURRENT shell so the cache survives.
 # lsof absent, failing or printing nothing ⇒ SW_LIVE_STATE=fail (liveness
-# unverifiable ⇒ every candidate is kept).
+# unverifiable ⇒ every candidate is kept). A dry run reads once; `--apply` clears
+# the cache and reads again right before each `git worktree remove`, so a process
+# that moved into a candidate after the first read still keeps it (later
+# candidates then judge against that newer read).
 _sw_live_read() {
   [ -z "$SW_LIVE_STATE" ] || return 0
   SW_LIVE_STATE=fail
@@ -150,6 +153,19 @@ _sw_live() {
            if (n == a || n == b || index(n, a "/") == 1 || index(n, b "/") == 1) { print pid; exit } }')"
   [ -n "$pid" ] || return 1
   printf '%s' "$pid"
+  return 0
+}
+
+# _sw_live_keep <path> <canonical> — the caller's keep reason `v` from _sw_live: set
+# when a live process has its cwd there or liveness is unverifiable, left as is when
+# not live. Call _sw_live_read first.
+_sw_live_keep() {
+  local pid lrc
+  pid="$(_sw_live "$1" "$2")"; lrc=$?
+  if [ "$lrc" -eq 0 ]; then v="live process $pid has its cwd here"
+  elif [ "$lrc" -eq 2 ]; then v="liveness unverifiable (lsof absent or failing)"
+  elif [ "$lrc" -eq 3 ]; then v="liveness unverifiable (the path holds a byte lsof escapes — non-ASCII or a backslash)"
+  fi
   return 0
 }
 
@@ -201,18 +217,20 @@ sweep_run() {
   cur="$(git -C "$SW_PRI" symbolic-ref -q --short HEAD 2>/dev/null)"
 
   # ---- worktrees (judged first) -----------------------------------------------
+  # Every record is listed, the first one too: the primary is skipped by the explicit
+  # check in the loop, never by its position in git's output.
   local wts
   wts="$(git -C "$SW_PRI" worktree list --porcelain 2>/dev/null | awk '
-    function flush() { if (n > 1 && path != "") printf "%s\037%s\037%s\037%s\n", path, head, br, fl
+    function flush() { if (path != "") printf "%s\037%s\037%s\037%s\n", path, head, br, fl
                        path = ""; head = ""; br = ""; fl = "" }
-    /^worktree / { flush(); n++; path = substr($0, 10); next }
+    /^worktree / { flush(); path = substr($0, 10); next }
     /^HEAD /     { head = substr($0, 6); next }
     /^branch /   { br = substr($0, 8); sub(/^refs\/heads\//, "", br); next }
     /^detached/  { fl = fl "detached,"; next }
     /^locked/    { fl = fl "locked,"; next }
     /^prunable/  { fl = fl "prunable,"; next }
     END { flush() }')"
-  local nwt=0 nbr=0 held="" p head br fl cp kind v salv sw_verdict dirty pid lrc ic
+  local nwt=0 nbr=0 held="" p head br fl cp kind v salv sw_verdict dirty ic
   while IFS=$'\037' read -r p head br fl; do
     [ -n "$p" ] || continue
     cp="$(cd "$p" 2>/dev/null && pwd -P)"; [ -n "$cp" ] || cp="$p"
@@ -272,11 +290,7 @@ sweep_run() {
     fi
     if [ -z "$v" ]; then
       _sw_live_read
-      pid="$(_sw_live "$p" "$cp")"; lrc=$?
-      if [ "$lrc" -eq 0 ]; then v="live process $pid has its cwd here"
-      elif [ "$lrc" -eq 2 ]; then v="liveness unverifiable (lsof absent or failing)"
-      elif [ "$lrc" -eq 3 ]; then v="liveness unverifiable (the path holds a byte lsof escapes — non-ASCII or a backslash)"
-      fi
+      _sw_live_keep "$p" "$cp"
     fi
     if [ -n "$v" ]; then
       _sw_line kept "$kind" "$p" "$v"
@@ -294,6 +308,12 @@ sweep_run() {
     dirty="$(git -C "$p" status --porcelain 2>/dev/null)" || dirty="(git status failed)"
     case "$sw_verdict" in "ignored: ok "*) ;; *) v="gitignored salvage not verified: ${sw_verdict:-no verdict}" ;; esac
     [ -n "$v" ] || [ -z "$dirty" ] || v="still dirty after salvage"
+    # Re-read every process's cwd right before the removal: the first read can be older than a
+    # process that cd'd in since (the salvage alone takes a while).
+    if [ -z "$v" ]; then
+      SW_LIVE_STATE=""; _sw_live_read
+      _sw_live_keep "$p" "$cp"
+    fi
     if [ -z "$v" ] && git -C "$SW_PRI" worktree remove "$p" >/dev/null 2>&1; then
       _sw_line act worktree "$p" "branch $br: $SW_WHY; gitignored salvage verified (${sw_verdict})${salv:+, salvaged to $salv}"
     else

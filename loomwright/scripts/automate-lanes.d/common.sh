@@ -133,6 +133,22 @@ lanes_proc_alive() {
   return 1
 }
 
+# _lanes_trip_live <trip file> — 0 when the memory-guard trip file (lane-sampler.sh) holds new launches:
+# it exists AND either carries no `sampler_pid:` line (hand-written, or written before the line existed)
+# or names a pid that `kill -0` finds alive; a malformed pid holds too (fail-closed). 1 otherwise — a
+# sampler that was reaped or stopped holds no lane. The ONE reader of the trip file: lane-launch's
+# admission (_lanes_admission) and lane-status's `memory_pressure` both call it, so the two never disagree.
+# A bare `kill -0`, not lanes_proc_alive: the trip file records no start time, so a reused pid reads
+# alive and holds (the safe side) until a sampler clears the file.
+_lanes_trip_live() {
+  local f="${1:-}" pid
+  [ -e "$f" ] || return 1
+  pid="$(awk '/^sampler_pid:/ { sub(/^sampler_pid:[[:space:]]*/, ""); sub(/[[:space:]]+$/, ""); print; exit }' "$f" 2>/dev/null)"
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  kill -0 "$pid" 2>/dev/null && return 0
+  return 1
+}
+
 # _lanes_clip <n> — stdin (one line) clipped to at most <n> characters on a whitespace boundary and
 # marked ` …`; a line that fits is unchanged, and a line with no whitespace to cut at is kept whole.
 # Never `cut -c` alone: a cut inside a PR URL leaves a partial `owner/repo` slug, which meta-sync's

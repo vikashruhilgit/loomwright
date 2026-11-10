@@ -637,7 +637,7 @@ _lanes_status_doc() {
   local tz; tz="$(date +%z 2>/dev/null)"
   case "$tz" in [+-][0-9][0-9][0-9][0-9]) tz="$(( (10#${tz:1:2} * 3600 + 10#${tz:3:2} * 60) * (${tz:0:1}1) ))" ;; *) tz=null ;; esac
   printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" --arg rs "$rs" --argjson tz "$tz" --argjson wv "$wv" \
-    --arg hint "$hint" --arg mp "$([ -e "$primary/.supervisor/automate/$parent.memory-pressure" ] && echo true || echo false)" \
+    --arg hint "$hint" --arg mp "$(_lanes_trip_live "$primary/.supervisor/automate/$parent.memory-pressure" && echo true || echo false)" \
     --arg single "$(_lanes_single_parent "$prf" && echo true || echo false)" \
     '. as $L
      | def landed: .state == "merged" or .state == "done" or .outcome == "done";

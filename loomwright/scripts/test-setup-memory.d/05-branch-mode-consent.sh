@@ -409,6 +409,18 @@ VB_ERR="$(bash "$MEM" --root "$Vb" valid-branch 2>&1 >/dev/null)"; VB_RC=$?
 [ "$VB_RC" -eq 1 ] && ok "(vb) a missing name is refused (exit 1)" || no "(vb) missing name ⇒ rc=$VB_RC ($VB_ERR)"
 VB_ERR="$(bash "$MEM" --root "$Vb" valid-branch loomwright-meta --branch-mode loomwright-meta 2>&1 >/dev/null)"; VB_RC=$?
 if [ "$VB_RC" -eq 1 ] && hasF 'valid-branch takes only a name' "$VB_ERR"; then ok "(vb) a flag it could only ignore (--branch-mode) is refused (exit 1)"; else no "(vb) valid-branch + --branch-mode ⇒ rc=$VB_RC ($VB_ERR)"; fi
+# An extra positional after the name is refused, never ignored: a split name (`my branch`) must not be
+# judged as its first word. ONE stderr line, the exact refusal.
+VB_ERR="$(cd "$Vb" && bash "$MEM" --root "$Vb" valid-branch loomwright-meta extra 2>&1 >/dev/null)"; VB_RC=$?
+if [ "$VB_RC" -eq 1 ] && [ "$VB_ERR" = "setup-memory: valid-branch takes only a name (got an extra argument 'extra'); nothing was judged" ]; then
+  ok "(vb) an extra argument after the name is refused: exit 1, ONE exact stderr line"
+else no "(vb) valid-branch loomwright-meta extra ⇒ rc=$VB_RC err='$VB_ERR'"; fi
+VB_ERR="$(cd "$Vb" && bash "$MEM" --root "$Vb" valid-branch my branch 2>&1 >/dev/null)"; VB_RC=$?
+if [ "$VB_RC" -eq 1 ] && [ "$VB_ERR" = "setup-memory: valid-branch takes only a name (got an extra argument 'branch'); nothing was judged" ]; then
+  ok "(vb) a split name (my branch) is refused, never judged as 'my'"
+else no "(vb) valid-branch my branch ⇒ rc=$VB_RC err='$VB_ERR'"; fi
+vb_run loomwright-meta
+if [ "$VB_RC" -eq 0 ] && [ -z "$VB_ERR" ]; then ok "(vb) control: the bare name alone is still accepted (exit 0, silent)"; else no "(vb) control: valid-branch loomwright-meta ⇒ rc=$VB_RC err='$VB_ERR'"; fi
 [ "$(vb_snap "$Vb")" = "$vb_before" ] && ok "(vb) no file changed: every fixture file, git status and HEAD byte-identical" || no "(vb) valid-branch changed the fixture"
 if [ ! -e "$Vb/.supervisor/config.json" ] && [ -z "$(ls "$Vb"/.gitignore.backup.* 2>/dev/null)" ]; then ok "(vb) no .supervisor/config.json and no .gitignore.backup.* were created"; else no "(vb) valid-branch left a config or a backup"; fi
 # Parity with the writer: for the names apply's predicate judges, valid-branch's verdict equals
