@@ -912,3 +912,26 @@ grep -q '^  closeout .*\[--no-trail\]' <<<"$nt_help" && ok "(NT6) --help closeou
 grep -q '^  lane-convert-ready .*closeout --no-trail' <<<"$nt_help" && ok "(NT6) --help lane-convert-ready row names closeout --no-trail" || no "(NT6) --help lane-convert-ready row"
 grep -qF 'closeout --no-trail' "$HERE/../commands/automate.md" && ok "(NT6) commands/automate.md SYNC points at closeout --no-trail" || no "(NT6) command SYNC pointer"
 
+
+# (FNT) finalize-empty --no-trail (any position): every step runs except trail-pr --reason done, whose
+# line reads `trail-pr: skipped — --no-trail` — the call a metadata-mode-off lane's lane-convert-ready
+# re-run makes (it publishes nothing). Without the flag the same fixture still calls trail-pr (control).
+for fnt_pos in after before; do
+  fnt_id="automate-fnt-$fnt_pos"; fe_rf "$fnt_id" paused awaiting_go x done; spy_reset
+  if [ "$fnt_pos" = after ]; then fnt_out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" finalize-empty "$AUTD/$fnt_id.md" --no-trail 2>&1)"
+  else fnt_out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" finalize-empty --no-trail "$AUTD/$fnt_id.md" 2>&1)"; fi
+  { grep -qxF -- "## Status: done" "$P/$AUTD/$fnt_id.md" && grep -qxF -- "- pause_reason: null" "$P/$AUTD/$fnt_id.md"; } \
+    && ok "(FNT) finalize-empty --no-trail ($fnt_pos the run file): ## Status: done + pause_reason: null" \
+    || no "(FNT) --no-trail ($fnt_pos) state: $(grep -E '^## Status|^- pause_reason' "$P/$AUTD/$fnt_id.md" | tr '\n' '|')"
+  { printf '%s\n' "$fnt_out" | grep -qxF "finalize-empty: finalized $AUTD/$fnt_id.md" && printf '%s\n' "$fnt_out" | grep -qxF 'trail-pr: skipped — --no-trail'; } \
+    && ok "(FNT) … prints the finalized line and 'trail-pr: skipped — --no-trail' ($fnt_pos)" || no "(FNT) --no-trail ($fnt_pos) output: $(printf '%s' "$fnt_out" | tr '\n' '|')"
+  grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null && no "(FNT) --no-trail ($fnt_pos) still called trail-pr: $(grep '^trail-pr ' "$SPYLOG" | tr '\n' '|')" \
+    || ok "(FNT) … and calls no trail-pr ($fnt_pos)"
+  grep -qE '^- [^ ]+ trail-pr: skipped — --no-trail$' "$P/$AUTD/$fnt_id.md" && ok "(FNT) … its trail line is appended to ## Progress ($fnt_pos)" \
+    || no "(FNT) --no-trail ($fnt_pos): no '<ts> trail-pr: skipped — --no-trail' Progress line"
+  [ ! -d "$P/.supervisor/run.lock" ] && ok "(FNT) … run lock released ($fnt_pos)" || no "(FNT) run lock leaked ($fnt_pos)"
+done
+fe_rf automate-fnt-control paused awaiting_go x done; spy_reset
+(cd "$P" && bash "$SPYD/automate-helpers.sh" finalize-empty "$AUTD/automate-fnt-control.md" >/dev/null 2>&1)
+grep -qE "^trail-pr $P/$AUTD/automate-fnt-control.md --reason done\$" "$SPYLOG" 2>/dev/null \
+  && ok "(FNT) control: without --no-trail the same fixture calls trail-pr --reason done" || no "(FNT) control: $(tr '\n' '|' < "$SPYLOG" 2>/dev/null)"
