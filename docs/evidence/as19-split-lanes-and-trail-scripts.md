@@ -124,7 +124,7 @@ The first three bullets are the pre-merge state (`d588537`); the last bullet giv
 
 ## 6. Running-system check (AC11)
 
-Run on `d588537`, before the merge; not re-run on the merged tree, although the merge added 7 hunks to `status-read.sh` (§9). The base-vs-branch byte-identity below holds for the pre-merge pair only.
+Run on `d588537`, before the merge. The merge added 7 hunks to `status-read.sh` (§9), so the check was re-run on the merged tree; that result was recorded only in PR #577's body at the time and is copied into §"Merged-tree re-run" at the end of this section. The base-vs-branch byte-identity in the results below holds for the pre-merge pair.
 
 Input: the real parent run file `.supervisor/automate/automate-2026-10-14-041009.md` in the primary checkout (2 lanes, 1 merged wave). All runs use that checkout as cwd, back to back. Script: `ac11b.sh` in the session scratchpad.
 
@@ -162,6 +162,19 @@ machine: state=busy load1=14.60 cpus=12 mem_pressure=busy
 keep-awake: held (Claude app — only while a Code session works)
 keep-awake suggestion (run it yourself, or lane-status --keep-awake): caffeinate -i -w 15476 — a closed lid still sleeps
 rc=0
+```
+
+### Merged-tree re-run
+
+Copied verbatim from PR #577's body (`gh pr view 577 --json body`, read 2026-11-10; the PR merged as `e05f022`). The branch side is `ef57b60` and its successors on the PR branch (`ef57b60+`); the base side is a worktree at `e232771`, the `origin/main` that §9 merged in.
+
+> Re-run on the merged tree (branch ef57b60+ vs base worktree at e232771, after the merge that brought in PRs #572/#574), same run file, back to back:
+
+```
+base1 rc=0  br1 rc=0  base2 rc=0  br2 rc=0
+TEXT identical after normalising the line-1 clock and load1= (2793 bytes)
+JSON identical with generated_at, machine.load1, machine.keep_awake_holders removed
+raw diff base1 vs br1: line 1 clock only (08:18:37Z vs 08:18:38Z)
 ```
 
 ## 7. Prose citations of moved code (AC12, AC13)

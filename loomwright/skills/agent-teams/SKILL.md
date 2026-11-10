@@ -3,7 +3,7 @@ name: agent-teams
 description: Agent Teams patterns for parallel coordination using Claude Code native teams feature. Use when coordinating multiple agents on cross-layer changes, competing hypotheses, or research tasks.
 allowed-tools: [Read, Bash]
 version: "1.1.0"
-lastUpdated: "2026-05-10"
+lastUpdated: "2026-10-23"
 ---
 
 # Agent Teams Skill

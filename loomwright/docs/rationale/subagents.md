@@ -1,6 +1,6 @@
 # Rationale — Subagents
 
-Stories, history, examples and explanations moved out of the runtime prompts of the four most-spawned subagents (`agents/code-reviewer.md`, `agents/plan-reviewer.md`, `agents/execute-manager.md`, `agents/worker.md`) by automate-speed/26. Nothing here is read at runtime and nothing here is a rule: every rule stayed in a runtime prompt (`kept-as-one-line` — condensed, never dropped) or now lives in the script, hook or on-demand skill Read named as its home. Each agent section has one table row per removed line, with its home as `script:<file>` (under `loomwright/scripts/`), `hook:<hooks.json leaf>`, `on-demand:<skill path> at <step>`, or `kept-as-one-line`; moved stories follow under `###` headings, verbatim from the pre-diet prompt; and `### Preload decisions` records each original frontmatter `skills:` entry. A removed line that still reads like a rule but sits under a story heading is a duplicate of a rule the prompt kept.
+Stories, history, examples and explanations moved out of the runtime prompts of the four most-spawned subagents (`agents/code-reviewer.md`, `agents/plan-reviewer.md`, `agents/execute-manager.md`, `agents/worker.md`) by automate-speed/26. Nothing here is read at runtime and nothing here is a rule: every rule stayed in a runtime prompt (`kept-as-one-line` — condensed, never dropped) or now lives in the script, hook or on-demand skill Read named as its home. Each agent section has one table row per removed line, with its home as `script:<file>` (under `loomwright/scripts/`), `hook:<hooks.json leaf>`, `on-demand:<skill path> at <step>`, `kept-as-one-line`, or `removed — <where that content is now>` for a line no condensed copy of which survives in the prompt; moved stories follow under `###` headings, verbatim from the pre-diet prompt; and `### Preload decisions` records each original frontmatter `skills:` entry. A removed line that still reads like a rule but sits under a story heading is a duplicate of a rule the prompt kept.
 
 ## code-reviewer
 
@@ -55,7 +55,7 @@ Stories, history, examples and explanations moved out of the runtime prompts of 
 | §Agent Guidelines: - When Beads is active: create bug issues (BD-XX) with `blocks=BD-[review]`; review blocke… | kept-as-one-line |
 | §Agent Guidelines: - When Beads is not active: record issues in CODE_REVIEW_RESULT; callers must inspect and … | kept-as-one-line |
 | §Agent Guidelines: - Human decides the open design question; callers like `/review-pr` map NEEDS_HUMAN to ESC… | kept-as-one-line |
-| §Agent Guidelines: **Standard Output Format:** See `skills/agent-output/SKILL.md` | kept-as-one-line |
+| §Agent Guidelines: **Standard Output Format:** See `skills/agent-output/SKILL.md` | removed — the result structure is the Shared Agent Contract's **Output:** line at the top of `agents/code-reviewer.md`; no `skills/agent-output` pointer remains there |
 | §Agent Guidelines: - Context Read → Current State → Plan → Work/Results → Risks & Next Steps | kept-as-one-line |
 | §Agent Guidelines: - Scope: Only code from current task (Beads task when active; invocation argument otherwis… | kept-as-one-line |
 | §Agent Guidelines: - Output channels: CODE_REVIEW_RESULT block (always) + Beads comment (when active) — Decis… | kept-as-one-line |
@@ -1155,13 +1155,13 @@ integrated Phase 4.5 review (Supervisor, post-FINALIZE) is the sole LLM gate for
 | §Inline Execution Mode: - Everything else works the same | kept-as-one-line |
 | §Inline Execution Mode: - Output the same WORKER_RESULT format | kept-as-one-line |
 | §Inline Execution Mode: - Write `.worker-summary.md` at `{worktree_path}/.worker-summary.md` (parallel mode) or `.… | kept-as-one-line |
-| §Inline Execution Mode: Workers receive skill references from the Supervisor. Common skills: | kept-as-one-line |
-| §Inline Execution Mode: \| Skill \| When Referenced \| | kept-as-one-line |
-| §Inline Execution Mode: \|-------\|----------------\| | kept-as-one-line |
-| §Inline Execution Mode: \| `skills/quality-checklist/SKILL.md` \| Pre-completion checks \| | kept-as-one-line |
-| §Inline Execution Mode: \| `skills/unit-testing/SKILL.md` \| Test writing and structure \| | kept-as-one-line |
-| §Inline Execution Mode: \| `skills/error-handling/SKILL.md` \| Error paths and exceptions \| | kept-as-one-line |
-| §Inline Execution Mode: \| `skills/{domain}/SKILL.md` \| Framework/stack patterns (e.g., stackpack@atelier NestJS/Ne… | kept-as-one-line |
+| §Inline Execution Mode: Workers receive skill references from the Supervisor. Common skills: | removed — the worker's skill list is its spawn prompt's **Skill references** input (`agents/worker.md` §Inputs), taken from the brief's `## Skill References` table |
+| §Inline Execution Mode: \| Skill \| When Referenced \| | removed — see the "Common skills" row above |
+| §Inline Execution Mode: \|-------\|----------------\| | removed — see the "Common skills" row above |
+| §Inline Execution Mode: \| `skills/quality-checklist/SKILL.md` \| Pre-completion checks \| | removed — `agents/worker.md` Step 5 item 5 (`checklist`) names `skills/quality-checklist/SKILL.md` |
+| §Inline Execution Mode: \| `skills/unit-testing/SKILL.md` \| Test writing and structure \| | removed — see the "Common skills" row above |
+| §Inline Execution Mode: \| `skills/error-handling/SKILL.md` \| Error paths and exceptions \| | removed — see the "Common skills" row above |
+| §Inline Execution Mode: \| `skills/{domain}/SKILL.md` \| Framework/stack patterns (e.g., stackpack@atelier NestJS/Ne… | removed — see the "Common skills" row above |
 | §Error Handling: Before outputting WORKER_RESULT: | kept-as-one-line |
 | §Error Handling: - [ ] All acceptance criteria addressed | kept-as-one-line |
 | §Error Handling: - [ ] `self_review` carries all four parts (Step 5 item 5), unless `status: failed` or `no… | hook:SubagentStop[loomwright:worker] validate-worker-result.py |
