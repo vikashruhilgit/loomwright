@@ -1029,7 +1029,7 @@ fi
 rm -rf "$PS" 2>/dev/null
 
 echo "== 20. the Phase 4.5 status decision tests WITHHELD before it tests checked =="
-# WHAT THIS CAN AND CANNOT DO, stated up front. self-heal-advisory/SKILL.md is agent-followed
+# WHAT THIS CAN AND CANNOT DO, stated up front. self-heal-advisory/completion-tail.md is agent-followed
 # pseudocode, not executable, so no fixture can run it — section 19 pins the per-subsystem
 # discriminator the rule CONSUMES, and nothing can pin the agent's behaviour. What IS mechanically
 # checkable is the rule's STRUCTURE, and the structure is exactly what went wrong: nesting the
@@ -1040,7 +1040,7 @@ echo "== 20. the Phase 4.5 status decision tests WITHHELD before it tests checke
 # stronger than nothing.
 SK="$(cd "$HERE/../.." && pwd)/loomwright/skills/self-heal-advisory/completion-tail.md"   # automate-speed/15 split
 if [ ! -r "$SK" ]; then
-  no "(20) self-heal-advisory/SKILL.md not readable at $SK — this section would assert nothing"
+  no "(20) self-heal-advisory/completion-tail.md not readable at $SK — this section would assert nothing"
 else
   ln_withheld="$(grep -n '^if twin_store_status == "dark" or touched_contract_withheld:' "$SK" | head -1 | cut -d: -f1)"
   ln_checked="$( grep -n '^elif not contract_conformance.checked:'                        "$SK" | head -1 | cut -d: -f1)"

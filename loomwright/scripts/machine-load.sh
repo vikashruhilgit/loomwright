@@ -4,7 +4,8 @@
 #
 # usage: machine-load.sh [--json]
 #          plain: five `key=value` lines — load1, cpus, load_per_cpu, mem_pressure, state (plus
-#          mem_source, the raw memory reading). --json: one object with the same keys; a value that
+#          mem_source, the raw memory reading). --json: one object with the same keys plus busy_at
+#          and overloaded_at (the load1 thresholds, BUSY / OVERLOADED x CPUs; --json only); a value that
 #          could not be read is `null` (state is then a string as always). ALWAYS exit 0 on a
 #          reading, even an unreadable one; exit 2 only on a usage error.
 #        machine-load.sh --help   this header
