@@ -189,6 +189,8 @@ The item segment of a run file starts at its first `picked <item>` line and ends
 
 </details>
 
+**Note on `not recorded (run file, brief: no Plan Review N/M)` cells** (in this table and the post table above: #222, #455 and every other row that carries it). The extractor reads only `N/M` forms (`Plan Review … N/M`, `attempt N/M`; see `## How each column is derived`). Cap-less `Plan Review attempt N` text was not read, so such a cell means "no `N/M` form found", not "no Plan Review ran". The run files are not in this checkout: `.supervisor/` is gitignored and they travel on the `loomwright-meta` branch. Whether each one holds cap-less text was therefore not checked here. The cells and the `## Before/after comparison` counts stay as the extractor printed them, so block 3's re-run check still matches.
+
 ## Before/after comparison
 
 <!-- share -->

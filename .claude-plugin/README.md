@@ -440,7 +440,7 @@ loomwright/                            # Marketplace wrapper repo
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md
     │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md
-    ├── commands/                            # Slash commands
+    ├── commands/                            # Slash commands — excerpt; full list: loomwright/commands/
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
     │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md, verify.md
     │   ├── telemetry.md, dreaming.md, autonomous.md, automate.md, capability-check.md, insights.md, obsidian.md, pr-postmortem.md

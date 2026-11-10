@@ -1,7 +1,10 @@
 # Evidence — af39b: the run lock records a live holder under any harness
 
 Captured 2026-10-14 on macOS (Darwin 25.6.0; `bash` on PATH is GNU bash 5.3.20), from inside a Claude Code
-session, against this branch's `loomwright/scripts/run-lock.sh`.
+session, against `loomwright/scripts/run-lock.sh` as of the pre-fix commit `463dc37` (this file has not been
+re-captured since). The `pid_start` values below are therefore in local time (IST, +0530): they were captured
+before `4cf6a58` pinned the fingerprint to `env TZ=UTC0 LC_ALL=C ps -o lstart=`, so the shipped script
+records the same field in UTC. No captured value below has been altered.
 Scratch paths are shown as `<scratch>`.
 
 ## Validation 2 (AC 14) — a degraded acquire and a pinned acquire
