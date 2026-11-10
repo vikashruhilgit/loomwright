@@ -26,7 +26,7 @@
 - wave: <k> | items: <i1>, <i2>     # present ONLY on a --parallel N>1 parent run; written only by `current-wave` (§14)
 - owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED|died|superseded_by_merge | suppressed_default_dispatch: true     # each value's meaning: docs/result-schemas/automate-run.md §"`## Current` fields" (`sub_floor_converged` READY is NOT merge-eligible, §10 cond 1)
 - escalation_cause: check_pending|check_red_unrelated|check_red|findings|validation_unrun|other | check: <c|null> | run_id: <id|null> | attempt: <n|null> | sha: <sha|null>     # present ONLY at an `escalated` park; written only by `current-escalation`
-- pending_decisions: <n> | fix_now_reentered: <true|false>     # present ONLY when this item produced dismissed-finding drafts (§6 "Dismissed-findings decision step (before the park)")
+- pending_decisions: <n> | fix_now_reentered: <true|false>     # present ONLY when this item produced dismissed-finding drafts (§6 "Dismissed-findings decision step")
 - ready_sha: <sha> | ready_at: <ISO-8601 Z> | termination_reason: <tr>     # present ONLY after a READY drain whose report carried ready_sha; read by --merge-parked (§4 "Merging one parked item")
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>

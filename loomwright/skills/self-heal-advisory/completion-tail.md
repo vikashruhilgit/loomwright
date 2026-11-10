@@ -169,7 +169,7 @@ gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path>
 #   GROUND_TRUTH_JSON: {...}    — the runner's own record; the FLAT session_end fields read it.
 ground_truth = <the GROUND_TRUTH_NESTED value, copied VERBATIM>   # never add, rename or drop a key
 # No GROUND_TRUTH_NESTED line (runner failed / not run) → ground_truth = {checked: false, status: unverified}.
-# /automate refuses a RUN report whose ground_truth has any other key set (exit 2, nothing written).
+# /automate refuses a RUN report whose ground_truth has any other key set (exit 2, nothing written to the run file).
 # Flat fields (Hard-signal dual emission below): ground_truth_status/_checks_total/_checks_passed from
 # either line; ground_truth_pass_rate = GROUND_TRUTH_JSON's pass_rate — FLAT ONLY.
 

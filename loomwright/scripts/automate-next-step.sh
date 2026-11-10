@@ -123,7 +123,7 @@
 #               stderr (never an ask or a park); a draft whose `--auto` was refused stays undecided and
 #               is the only one asked — AUT-PENDING (per-finding, ≤ 4 a call) / AUT-SUMMARY (one summary
 #               a call), each answer a `dismissed-decide`. The rule: per-item-loop.md §"Dismissed-findings
-#               decision step (before the park)"
+#               decision step"
 #   reconcile   the stranded config-backup restore; a skip/abandon check-off of ## Current ⇒ `trail-pr`;
 #               no PR: an owner's `no_pr_stop` on an unchanged requirement parks again, otherwise PICK re-picks;
 #               the `drain_died` marker park; `reconcile-item`: merged ⇒ (superseded drain lines) +
@@ -172,7 +172,7 @@
 #   decide      the decisions on the drafts (before the park, or after it — park-first): below-MEDIUM
 #               drafts, and every draft when no fix-now re-drain is available, followed up `--auto`
 #               with no question; the rest in ONE batched AUT-DISMISS ask (per-item-loop.md §"Dismissed-
-#               findings decision step (before the park)" — the rule, written once there)
+#               findings decision step" — the rule, written once there)
 #   fix-now     the post-park fix-now hand-off (D3) and the fix-now re-drain `spawn` (its DRAIN report
 #               goes through drain-result: the pinned fix-now re-drain lines are the driver's)
 #   park        the park writes + watcher / notify / run-lock release
@@ -2925,7 +2925,7 @@ ns_dismissed() {
 # ================================================================================================
 # step: decide — the owner's decisions (decide-then-park before the park; park-first after it)
 # The rule (severity class, silent follow-up, the one batched ask, can't-ask, park report) is written once in
-# skills/automate-loop/per-item-loop.md §"Dismissed-findings decision step (before the park)"
+# skills/automate-loop/per-item-loop.md §"Dismissed-findings decision step"
 # ================================================================================================
 ns_undecided() { # "<finding|summary>\t<path>" per undecided draft of this item, per-finding first
   local f it
