@@ -122,7 +122,7 @@ RUN_ID="$(basename "$RUN_DIR_ABS")"
 # never turn the existence test into a probe of a path outside the checkout (an in-repo symlinked
 # DIRECTORY resolving inside the root is accepted as written; a symlinked FILE is always rejected).
 # Grammar copy 3 of 3, sharing no code: the authority is the PW_TOUCHES_GRAMMAR line in
-# automate-helpers.sh (_pw_touches); copy 2 is PATH_TOK / BAD_SEG beside touches_of in
+# automate-helpers.d/plan-waves.sh (_pw_touches); copy 2 is PATH_TOK / BAD_SEG beside touches_of in
 # automate-dismissed.sh. Change all three together — test-automate-helpers.sh §X7 fails on drift.
 # Containment is an EXTRACTOR-only rule shared with touches_of (the planner's --lint judges grammar,
 # never the filesystem), so X7 does not cover it; test-propose-from-verify.sh and
