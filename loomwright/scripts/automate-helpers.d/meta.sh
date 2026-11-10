@@ -29,8 +29,8 @@ _meta_root() {
 #   meta-entry: failed — <reason>                mode on, pull exited non-zero (meta-sync's own text:
 #                                                no_remote_branch / conflict <path> / fetch_failed …)
 #   meta-entry: failed — mode unknown (<reason>) `setup-memory.sh mode` said unknown
-# It creates and writes NOTHING under .supervisor/automate/ (meta-sync's pull writes only the
-# managed run-history files it syncs). The SKILL maps `failed` to ABORT (no run file targeted) or a
+# It writes nothing itself; the meta-sync pull it runs may update the managed .supervisor/automate/
+# run-history files it syncs. The SKILL maps `failed` to ABORT (no run file targeted) or a
 # `meta_unreachable` park (an existing local run file targeted by --resume <id>).
 meta_entry() {
   local root="" here mode branch out rc reason ms
