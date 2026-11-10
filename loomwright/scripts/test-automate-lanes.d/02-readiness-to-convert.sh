@@ -560,3 +560,58 @@ out="$(conv "$LR/nope")"; check "Y11 not a lane ⇒ exit 1" "$?" 1
 out="$(bash "$HERE/automate-helpers.sh" lane-convert-ready 2>&1)"; rc=$?
 check "Y12 automate-helpers.sh dispatches lane-convert-ready (no lane ⇒ not-a-lane refusal)" "$rc:$(printf '%s' "$out" | grep -c 'lane-convert-ready: not a lane' | tr -d ' ')" "1:1"
 
+
+# ---- U16-U17: dismissed follow-ups (an n/a headline-repro is not scored; a count-prefixed `skipped`) ----
+# U16 a Validation that names no repro: the headline-repro row is N/A and NOT scored (total 4, not 5); a
+# named repro keeps the total at 5 (U8's fixture, re-run below).
+cp "$L3/reqs/a.md" "$T/U16-req.bak"
+cat > "$L3/reqs/a.md" <<'REQ'
+# a
+## Touches
+reqs/a.md
+src/
+## Validation (must pass before merge)
+1. **Baseline:** full loop on base and branch.
+2. **Running system:** run it for real and paste the output.
+## Notes
+REQ
+LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3" >/dev/null
+has "U16 no repro named ⇒ the headline-repro row reads N/A (not scored)" "$(cat "$RD")" \
+  "- headline-repro: N/A — the Validation names no repro (not scored)"
+has "U16b … and the score's total is 4 (the n/a row neither passes nor counts)" "$(cat "$RD")" \
+  "- score: 1/4 | summary: ready (1/4: running-system NOT-RUN, carried-notes NOT-RUN, scope-fence FAIL)"
+cp "$T/U16-req.bak" "$L3/reqs/a.md"
+LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3" >/dev/null
+check "U16c a named repro keeps the total at 5" "$(sed -n 's/^- score: \([0-9]*\/[0-9]*\).*/\1/p' "$RD")" "2/5"
+# U17 a matched, non-fenced line carrying a count-prefixed `skipped` (a test tally) is a result, not a
+# not-run statement; a bare `skipped` on such a line still is (fail-closed stays the default).
+u17() { printf '%b' "$1" > "$T/u17.body"; ( eval "$(awk '/^_lanes_rd_section\(\) \{$/,/^}$/' "$SB")"; _lanes_rd_section 1 "Baseline" "$T/u17.body" nv ); }
+check "U17 'tests: 40 passed, 2 skipped' ⇒ not NOT-RUN (nothing printed)" "$(u17 'Validation 1 baseline\ntests: 40 passed, 2 skipped\n```\nok\n```\n')" ""
+check "U17b '2 skipped' on the step's own line ⇒ nothing printed" "$(u17 'Validation 1 baseline: 2 skipped\n```\nok\n```\n')" ""
+check "U17c a bare 'skipped' on such a line still reads NL" "$(u17 'Validation 1 baseline\ntests: skipped\n```\nok\n```\n')" "NL"
+check "U17d a count elsewhere does not excuse a bare 'skipped' ('40 passed, skipped on CI')" "$(u17 'Validation 1 baseline\n40 passed, skipped on CI\n')" "NL"
+check "U17e a not-run heading over the step still reads NV (heading rules unchanged)" "$(u17 '## Not run\nValidation 1 baseline\n2 skipped\n')" "NV"
+# U17f-i the digits before `skipped` that NAME the step are an identifier, not a tally ⇒ still NL.
+check "U17f 'Validation 1 skipped' + fence ⇒ NL (the step number is not a count)" "$(u17 '- Validation 1 skipped — no simulator on this machine; unit output instead:\n```\nok\n```\n')" "NL"
+check "U17g 'step 3 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nstep 3 skipped\n')" "NL"
+check "U17h 'V2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nV2 skipped\n')" "NL"
+check "U17i 'Validation #1 skipped' ⇒ NL" "$(u17 'Validation #1 skipped\n```\nok\n```\n')" "NL"
+# U17j-o the tally exemption is an allow-list (count at line start / after a bullet, `:`, `(` or a result
+# word); every other digit-prefixed form names a step and stays NL (fail-closed).
+check "U17j 'Validation 1 and 2 skipped' + fence ⇒ NL" "$(u17 'Validation 1 and 2 skipped — no simulator on this machine:\n```\nok\n```\n')" "NL"
+check "U17k 'Validation 1, 2 skipped' + fence ⇒ NL" "$(u17 'Validation 1, 2 skipped\n```\nok\n```\n')" "NL"
+check "U17l 'Validation 1.2 skipped' + fence ⇒ NL" "$(u17 'Validation 1.2 skipped\n```\nok\n```\n')" "NL"
+check "U17m 'AC3 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nAC3 skipped\n')" "NL"
+check "U17n 'check 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\ncheck 2 skipped\n')" "NL"
+check "U17o a bulleted '- 2 skipped' tally ⇒ nothing printed" "$(u17 'Validation 1 baseline\n- 2 skipped\n```\nok\n```\n')" ""
+# U17p-x a count is a tally only when its context is itself a counted result: a result word with no count
+# of its own, a step number before ':', an unbulleted line-start count or a '(' are not that context ⇒ NL.
+check "U17p 'pass 2 skipped' ⇒ NL (the result word carries no count)" "$(u17 'Validation 1 baseline\npass 2 skipped\n```\nok\n```\n')" "NL"
+check "U17q 'Validation 1 baseline: pass 2 skipped' + fence ⇒ NL" "$(u17 'Validation 1 baseline: pass 2 skipped\n```\nok\n```\n')" "NL"
+check "U17r 'ok 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nok 2 skipped\n')" "NL"
+check "U17s 'Validation 1:2 skipped' + fence ⇒ NL (a step number before ':' is no label)" "$(u17 'Validation 1:2 skipped\n```\nok\n```\n')" "NL"
+check "U17t 'fail 2 skipped' ⇒ NL" "$(u17 'Validation 1 baseline\nfail 2 skipped\n')" "NL"
+check "U17u an undotted list's '2 skipped' ⇒ NL (a bare line-start count may be an item number)" "$(u17 'Validation 1 baseline\n1 ran\n2 skipped\n')" "NL"
+check "U17v 'Validation 1 passed, 2 skipped' ⇒ NL (the step number is not a count)" "$(u17 'Validation 1 passed, 2 skipped\n```\nok\n```\n')" "NL"
+check "U17w '(40 passed, 2 skipped)' stays a tally" "$(u17 'Validation 1 baseline\n(40 passed, 2 skipped)\n```\nok\n```\n')" ""
+check "U17x 'Validation 1: 40 passed, 1 failed, 2 skipped' stays a tally" "$(u17 'Validation 1: 40 passed, 1 failed, 2 skipped\n```\nok\n```\n')" ""

@@ -308,8 +308,13 @@ ms B push; ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip) on $BR
 ms B push; grep -q 'meta_sync: no_changes' < <(printf '%s' "$OUT"); check $? "push with nothing to send -> meta_sync: no_changes, exit 0 (rc=$RC)"
 
 echo "== 19. static: forbidden forms absent from meta-sync.sh =="
-! grep -nE 'git (checkout|switch|merge)|push .*--force|add -f [^"$]*/( |$)' "$SUTB"
-check $? "no branch switching, no forced push, no directory add (requirement grep returns nothing)"
+# The ONE exempt token is the push's lease pinned on R (leg 89): it only adds a refusal (the
+# commit's parent is R), so it is masked before the grep; any other --force form still matches.
+! sed 's#--force-with-lease="refs/heads/\$BRANCH:\$R"#LEASE_ON_R#g' "$SUTB" \
+  | grep -nE 'git (checkout|switch|merge)|push .*--force|add -f [^"$]*/( |$)'
+check $? "no branch switching, no forced push, no directory add (requirement grep returns nothing; the lease on R is the one masked token)"
+grep -qF 'push -q --force-with-lease="refs/heads/$BRANCH:$R" origin "$commit:refs/heads/$BRANCH"' "$SUTB"
+check $? "the publish push carries the lease pinned on R (refs/heads/\$BRANCH:\$R), so the mask above exempts exactly that form"
 
 echo "== 22. same-root concurrency: a status racing a push =="
 REAL_GIT="$(command -v git)"
@@ -612,4 +617,83 @@ done
 rm -f "$CHURN_ON"; wait "$churn_pid" 2>/dev/null
 { [ "$churn_bad" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x churn 6" ] && [ "$(br_show "$RQ/y.md")" = "y churn 6" ]; }
 check $? "a folder tree churning under .supervisor/worktrees never blocks a pull or push (rcs:$churn_rcs)"
+
+echo "== 89. a branch deleted between the fetch and the push is never re-created (the push is leased on R) =="
+# lease_world — synced pair; B holds one local change, and B's origin is reached through a
+# receive-pack wrapper (remote.origin.receivepack) that deletes refs/heads/$BR in origin.git
+# BEFORE receive-pack advertises its refs. The deletion therefore lands after the SUT's fetch and
+# before its push sees the remote — the window in which a plain refspec push creates the branch
+# afresh. (A pre-push hook fires after the advertisement, where receive-pack's own old-value check
+# already refuses the update, so it cannot reach this window.) Fetches and ls-remote go through
+# upload-pack and are untouched.
+lease_world() {
+  synced_pair
+  put B "$RQ/y.md" "y v2 (pushed into a deleted branch)"
+  cp "$W/B/.git/meta-base" "$W/ls-base.before"
+  : > "$W/ls-rp.log"
+  cat > "$W/ls-rp.sh" <<RP
+#!/bin/sh
+echo invoked >> "$W/ls-rp.log"
+"$REAL_GIT" --git-dir="$W/origin.git" update-ref -d "refs/heads/$BR"
+exec "$REAL_GIT" receive-pack "\$@"
+RP
+  chmod +x "$W/ls-rp.sh"
+  git -C "$W/B" config remote.origin.receivepack "$W/ls-rp.sh"
+}
+# lease_leg — 0 when the push is refused, ends no_remote_branch after its one re-fetch, the branch
+# is still ABSENT on origin and B's meta-base is byte-unchanged. Detail in LS_DETAIL.
+lease_leg() {
+  lease_world
+  ms B push
+  LS_DETAIL="rc=$RC receive-pack runs=$(wc -l < "$W/ls-rp.log" | tr -d ' ') out=$(printf '%s' "$OUT" | tr '\n' '|')"
+  [ -z "$(br_tip)" ] || { LS_DETAIL="$LS_DETAIL; branch RE-CREATED at $(br_tip)"; return 1; }
+  cmp -s "$W/ls-base.before" "$W/B/.git/meta-base" || { LS_DETAIL="$LS_DETAIL; meta-base changed"; return 1; }
+  [ "$RC" -eq 1 ] && [ -s "$W/ls-rp.log" ] \
+    && grep -q 'rejected (attempt 1/' < <(printf '%s\n' "$OUT") \
+    && grep -q 'meta_sync: no_remote_branch' < <(printf '%s\n' "$OUT")
+}
+lease_leg
+check $? "a branch deleted after the fetch: the push is refused, the re-fetch ends no_remote_branch, the branch stays absent and meta-base is untouched ($LS_DETAIL)"
+
+echo "== 90. a dead holder under a reclaim-marker chain past the depth bound: 'locked' names the hand fix =="
+# deep_lock_world — synced pair; A's gitdir holds meta-sync.lock (dead pid P0) and a chain of five
+# reclaim markers, each holding a dead pid (lock.reclaim.P0 -> P1, lock.reclaim.P0.reclaim.P1 ->
+# P2, …): one level more than reclaim_lock's depth bound walks, so the lock can never be
+# reclaimed and waiting cannot help. A has one change to push.
+deep_lock_world() {
+  local i p d
+  synced_pair
+  DL_LOCK="$W/A/.git/meta-sync.lock"; d="$DL_LOCK"
+  for i in 0 1 2 3 4 5; do
+    ( exit 0 ) & p=$!; wait "$p" 2>/dev/null
+    mkdir "$d" && printf '%s\n' "$p" > "$d/pid"
+    d="$d.reclaim.$p"
+  done
+  put A "$RQ/x.md" "x behind a deep marker chain"
+  DL_TIP="$(br_tip)"; cp "$W/A/.git/meta-base" "$W/dl-base.before"
+  DL_CHAIN="$(cd "$W/A/.git" && find . -path './meta-sync.lock*' | env LC_ALL=C sort | cksum)"
+}
+DL_HINT_RE='the holder is not running: remove [^ ]*/meta-sync\.lock \(and any [^ ]*/meta-sync\.lock\.reclaim\.\* markers\) by hand'
+# deep_lock_leg — 0 when the push exits 1 `locked` carrying the hand-fix hint and nothing changed:
+# branch tip, meta-base and the whole lock + marker chain. Detail in DL_DETAIL.
+deep_lock_leg() {
+  deep_lock_world
+  OUT="$(META_SYNC_LOCK_WAIT_SECS=1 bash "$SCRIPT" push --root "$W/A" 2>&1)"; RC=$?
+  DL_DETAIL="rc=$RC out=$(printf '%s' "$OUT" | tr '\n' '|')"
+  [ "$RC" -eq 1 ] && grep -q 'meta_sync: locked' < <(printf '%s\n' "$OUT") \
+    && grep -qE "$DL_HINT_RE" < <(printf '%s\n' "$OUT") \
+    && [ "$(br_tip)" = "$DL_TIP" ] && cmp -s "$W/dl-base.before" "$W/A/.git/meta-base" \
+    && [ "$(cd "$W/A/.git" && find . -path './meta-sync.lock*' | env LC_ALL=C sort | cksum)" = "$DL_CHAIN" ]
+}
+deep_lock_leg
+check $? "a dead holder behind a 5-deep dead marker chain -> exit 1 'locked … the holder is not running: remove … by hand', nothing changed ($DL_DETAIL)"
+# A LIVE holder's message carries no such hint: waiting for it is the right advice.
+synced_pair
+sleep 60 & dl_live=$!
+mkdir "$W/A/.git/meta-sync.lock"; printf '%s\n' "$dl_live" > "$W/A/.git/meta-sync.lock/pid"
+put A "$RQ/x.md" "x while a live holder holds the lock"
+OUT="$(META_SYNC_LOCK_WAIT_SECS=1 bash "$SCRIPT" push --root "$W/A" 2>&1)"; RC=$?
+kill "$dl_live" 2>/dev/null; wait "$dl_live" 2>/dev/null
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: locked' < <(printf '%s\n' "$OUT") && ! grep -q 'holder is not running' < <(printf '%s\n' "$OUT"); }
+check $? "a live holder -> exit 1 'locked' with no hand-fix hint (rc=$RC: $OUT)"
 

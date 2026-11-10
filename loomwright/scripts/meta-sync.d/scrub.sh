@@ -84,7 +84,7 @@ EOF
   # extractions are case-INSENSITIVE (a host or key in any case is the same context) and the output
   # is lowercased BEFORE the sed strip, so the strip patterns only ever see lowercase. The repo key
   # and its value may be bare or wrapped in double, single or back quotes.
-  local slugs="$WORK/slugs" s owner bad=0 q="[\"'\`]?"
+  local slugs="$WORK/slugs" s owner rest bad=0 q="[\"'\`]?"
   {
     env LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
       | tr 'A-Z' 'a-z' | sed -E 's#^[^/:]+[/:]##; s#^repos/##'
@@ -93,12 +93,22 @@ EOF
   } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | env LC_ALL=C sort -u > "$slugs"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
-    owner="${s%%/*}"
-    case "$RESERVED_OWNERS" in *" $owner "*) continue ;; esac
-    # an all-dot segment is a placeholder ellipsis (github.com/.../pull), never an owner or repo
+    owner="${s%%/*}"; rest="${s#*/}"
+    # orgs/<owner>, users/<owner> and sponsors/<owner> name an owner in their NEXT segment; the
+    # other reserved first segments are forge pages, never an owner.
+    case "$RESERVED_OWNERS" in
+      *" $owner "*)
+        case "$owner" in orgs|users|sponsors) owner="$rest"; rest="" ;; *) continue ;; esac ;;
+    esac
+    # an all-dot (or empty) owner is a placeholder ellipsis (github.com/.../pull), never an owner
     case "$owner" in *[!.]*) : ;; *) continue ;; esac
-    case "${s#*/}" in *[!.]*) : ;; *) continue ;; esac
-    grep -F -x -q -e "$s" "$ALLOW_FILE" 2>/dev/null || { bad=1; break; }
+    case "$rest" in
+      *[!.]*) grep -F -x -q -e "$s" "$ALLOW_FILE" 2>/dev/null || { bad=1; break; } ;;
+      # no repo named (a reserved-segment owner, or an all-dot placeholder repo): the owner alone
+      # passes only when some allowlisted slug starts with <owner>/.
+      *) awk -v o="$owner/" 'index($0, o) == 1 { f = 1; exit } END { exit !f }' "$ALLOW_FILE" 2>/dev/null \
+           || { bad=1; break; } ;;
+    esac
   done < "$slugs"
   [ "$bad" -eq 1 ] && { scrub_report "$p" forge_slug - "$wl"; hits=1; }
   # project deny patterns — tracked DATA, handed to grep -E, never executed.

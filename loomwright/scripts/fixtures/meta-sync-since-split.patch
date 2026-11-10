@@ -13,7 +13,23 @@
  # removes the lock only if it still carries that dead pid. A waiter never renames a lock aside, so
  # it can never move a live holder's lock and let a second process in. A live holder is waited for
  # up to META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. A live
-@@ -606,8 +606,8 @@
+@@ -365,9 +365,12 @@
+ #                        wrapped in double, single or back quotes (repo: a/b, "Repo": "a/b",
+ #                        'repo': 'a/b'). A bare `a/b` is deliberately NOT a slug (every relative path would
+ #                        match) — that is a stated limit of this scrub, not complete coverage. URL
+-#                        first segments that are forge-reserved words (apps, orgs, settings, …)
+-#                        are not owners and are skipped, as is an all-dot placeholder segment
+-#                        (github.com/.../pull). An EMPTY allowlist makes every slug a hit.
++#                        first segments that are forge-reserved words (apps, settings, …) are not
++#                        owners and are skipped, except orgs/, users/ and sponsors/, whose NEXT
++#                        segment is the owner; an all-dot owner is a placeholder and is skipped
++#                        (github.com/.../pull). An owner with no repo (orgs/<owner>, or an all-dot
++#                        repo as in <owner>/.../pull) passes only when some allowlisted slug starts
++#                        with <owner>/. An EMPTY allowlist makes every slug a hit.
+ #   Project extension: TRACKED file `.agent/meta-sync-deny.txt` — one extra POSIX ERE per line
+ #   (blank and `#` lines ignored). It is DATA handed to `grep -E -e`, never executed or eval'd; an
+ #   invalid pattern is itself a hit (fail closed). Rule name: `deny_pattern:<line>`.
+@@ -606,8 +609,8 @@
    ps -p "$1" >/dev/null 2>&1
  }
  # lock_is_stale <dir> <token> — 0 when <dir>, carrying <token> (the pid read from <dir>/pid), is
@@ -24,7 +40,7 @@
  lock_is_stale() {
    [ -d "$1" ] || return 1
    if [ -n "$2" ]; then
-@@ -617,8 +617,10 @@
+@@ -617,8 +620,10 @@
    [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
  }
  # reclaim_lock <dir> <token> <depth> — remove <dir> iff it STILL carries <token> and is STILL stale.
@@ -37,7 +53,7 @@
  # only be removed by it (its holder is dead; every other reclaimer re-checks a DIFFERENT token or
  # waits on this marker), so the re-check-then-rm below cannot hit a live lock: a lock re-acquired
  # in between carries another token and is left alone. Nothing is ever renamed aside and put back,
-@@ -628,10 +630,10 @@
+@@ -628,10 +633,10 @@
    local d="$1" t="$2" depth="$3" m w
    m="$1.reclaim.${2:-nopid}"
    [ "$depth" -le 4 ] || return 0
@@ -51,8 +67,12 @@
        rm -rf "$d" && [ "$depth" -eq 0 ] && RECLAIMED=1
      fi
      rm -rf "$m"; RECLAIM_MARK=""
-@@ -645,10 +647,11 @@
-   local start holder
+@@ -642,18 +647,20 @@
+   return 0
+ }
+ acquire_lock() {
+-  local start holder
++  local start holder hint
    start="$(date +%s)"
    while :; do
 -    # LOCK_HELD is set BEFORE the mkdir so a signal between the mkdir and the pid write still runs
@@ -65,7 +85,26 @@
        if printf '%s\n' "$$" > "$LOCK_DIR/pid"; then return 0; fi
        rm -rf "$LOCK_DIR"; LOCK_HELD=0; die "could not write the lock holder pid into $LOCK_DIR"
      fi
-@@ -759,7 +762,7 @@
+     LOCK_HELD=0
+     holder="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
++    hint=""
+     if lock_is_stale "$LOCK_DIR" "$holder"; then
+       RECLAIMED=0
+       reclaim_lock "$LOCK_DIR" "$holder" 0
+@@ -661,9 +668,11 @@
+         warn "reclaimed a stale lock left by pid ${holder:-unknown}"
+         continue
+       fi
++      # Stale but not reclaimed (a reclaim-marker chain past the depth bound): waiting cannot help.
++      hint=" — the holder is not running: remove $LOCK_DIR (and any $LOCK_DIR.reclaim.* markers) by hand"
+     fi
+     if [ $(( $(date +%s) - start )) -ge "$LOCK_WAIT" ]; then
+-      die "locked — another meta-sync (pid ${holder:-unknown}) holds $LOCK_DIR; waited ${LOCK_WAIT}s, nothing was changed"
++      die "locked — another meta-sync (pid ${holder:-unknown}) holds $LOCK_DIR; waited ${LOCK_WAIT}s, nothing was changed$hint"
+     fi
+     sleep 1
+   done
+@@ -759,7 +768,7 @@
    out="$(g ls-remote --exit-code origin "refs/heads/$BRANCH" 2>/dev/null)"; rc=$?
    REMOTE_SHA=""
    case "$rc" in
@@ -74,3 +113,52 @@
         [ -n "$REMOTE_SHA" ] || REMOTE_STATE="unreachable" ;;
      2) REMOTE_STATE="absent" ;;
      *) REMOTE_STATE="unreachable" ;;
+@@ -1238,7 +1247,7 @@
+   # extractions are case-INSENSITIVE (a host or key in any case is the same context) and the output
+   # is lowercased BEFORE the sed strip, so the strip patterns only ever see lowercase. The repo key
+   # and its value may be bare or wrapped in double, single or back quotes.
+-  local slugs="$WORK/slugs" s owner bad=0 q="[\"'\`]?"
++  local slugs="$WORK/slugs" s owner rest bad=0 q="[\"'\`]?"
+   {
+     env LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
+       | tr 'A-Z' 'a-z' | sed -E 's#^[^/:]+[/:]##; s#^repos/##'
+@@ -1247,12 +1256,22 @@
+   } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | env LC_ALL=C sort -u > "$slugs"
+   while IFS= read -r s; do
+     [ -n "$s" ] || continue
+-    owner="${s%%/*}"
+-    case "$RESERVED_OWNERS" in *" $owner "*) continue ;; esac
+-    # an all-dot segment is a placeholder ellipsis (github.com/.../pull), never an owner or repo
++    owner="${s%%/*}"; rest="${s#*/}"
++    # orgs/<owner>, users/<owner> and sponsors/<owner> name an owner in their NEXT segment; the
++    # other reserved first segments are forge pages, never an owner.
++    case "$RESERVED_OWNERS" in
++      *" $owner "*)
++        case "$owner" in orgs|users|sponsors) owner="$rest"; rest="" ;; *) continue ;; esac ;;
++    esac
++    # an all-dot (or empty) owner is a placeholder ellipsis (github.com/.../pull), never an owner
+     case "$owner" in *[!.]*) : ;; *) continue ;; esac
+-    case "${s#*/}" in *[!.]*) : ;; *) continue ;; esac
+-    grep -F -x -q -e "$s" "$ALLOW_FILE" 2>/dev/null || { bad=1; break; }
++    case "$rest" in
++      *[!.]*) grep -F -x -q -e "$s" "$ALLOW_FILE" 2>/dev/null || { bad=1; break; } ;;
++      # no repo named (a reserved-segment owner, or an all-dot placeholder repo): the owner alone
++      # passes only when some allowlisted slug starts with <owner>/.
++      *) awk -v o="$owner/" 'index($0, o) == 1 { f = 1; exit } END { exit !f }' "$ALLOW_FILE" 2>/dev/null \
++           || { bad=1; break; } ;;
++    esac
+   done < "$slugs"
+   [ "$bad" -eq 1 ] && { scrub_report "$p" forge_slug - "$wl"; hits=1; }
+   # project deny patterns — tracked DATA, handed to grep -E, never executed.
+@@ -1643,7 +1662,10 @@
+     fi
+     commit="$(printf '%s\n' "$MESSAGE" | g commit-tree "$newtree" -p "$R")" \
+       || die "commit-tree failed (is user.name / user.email configured?)"
+-    if g push -q origin "$commit:refs/heads/$BRANCH" 2>"$WORK/push.err"; then
++    # The lease expects R, the tip this plan was built on: the commit's parent is R, so the lease
++    # only ever adds a refusal — a branch deleted or moved since the fetch is rejected (the retry
++    # re-fetches) and is never re-created here; init stays the only creator.
++    if g push -q --force-with-lease="refs/heads/$BRANCH:$R" origin "$commit:refs/heads/$BRANCH" 2>"$WORK/push.err"; then
+       nb="$(build_agreed_base)" || die "pushed $commit but could not build the agreed-state base tree; meta-base untouched"
+       write_base_file "$nb" || die "pushed $commit but could not write meta-base"
+       say "pushed $commit ($changed path(s))"

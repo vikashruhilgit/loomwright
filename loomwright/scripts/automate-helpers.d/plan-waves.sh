@@ -64,7 +64,10 @@
 # pair; companion when either side's entry came from a companion rule), `depends on <item>`,
 # `runs alone: Touches unknown (missing)` / `(unparsable line <N>: "<text>")` / `(declared unknown)`,
 # `runs alone: Depends on missing ⇒ depends on every earlier item`, `wave <w> full (--max <N>)`,
-# `wave <w> runs <item> alone (Touches unknown)`. A blocked item's reason is its `blocked` line.
+# `wave <w> runs <item> alone (Touches unknown)`. A decision that has two reasons records both: an
+# item held out of a full wave also names each conflict it has with that wave's members, and an
+# item held by an unmet dependency also names its unknown Touches. A blocked item's reason is its
+# `blocked` line.
 # --lint (parallel-automate/10) — `<item|dir|runfile|item-list> --lint`: a directory ⇒
 # resolve_folder's output; a run file ⇒ its unchecked Queue rows; any other `*.md` ⇒ that ONE item;
 # any other file ⇒ an item list. `--max` is not needed (ignored when given). Per item ONE line
@@ -585,6 +588,14 @@ plan_waves() {
               printf 'wave %s runs %s alone (Touches unknown)\n' "$k" "${DISP[alonei]}" >> "$_PW_TMP/why.$i"
             else
               printf 'wave %s full (--max %s)\n' "$k" "$max" >> "$_PW_TMP/why.$i"
+              # a full wave can hide a co-existing Touches conflict with one of its members: name it too
+              if [ "${TS[i]}" = known ]; then
+                for m in $members; do
+                  _pw_conflicts "$_PW_TMP/s.$i.why" "$_PW_TMP/s.$m.why" | while IFS="$tab" read -r p a; do
+                    printf 'conflicts with %s on %s (%s)\n' "${DISP[m]}" "$p" "$a"
+                  done >> "$_PW_TMP/why.$i"
+                done
+              fi
             fi
           elif [ "${TS[i]}" != known ]; then
             if [ "$cnt" -eq 0 ]; then
@@ -607,6 +618,10 @@ plan_waves() {
             printf 'runs alone: Depends on missing ⇒ depends on every earlier item\n' >> "$_PW_TMP/why.$i"
           else
             for j in $waitj; do printf 'depends on %s\n' "${DISP[j]}" >> "$_PW_TMP/why.$i"; done
+          fi
+          # an unmet dependency can hide a co-existing unknown Touches: name it too
+          if [ "${TS[i]}" != known ]; then
+            printf 'runs alone: Touches unknown (%s)\n' "$(_pw_touches_why "$_PW_TMP/tdiag.$i")" >> "$_PW_TMP/why.$i"
           fi
         fi
       fi

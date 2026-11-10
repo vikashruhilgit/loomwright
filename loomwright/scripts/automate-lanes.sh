@@ -113,23 +113,16 @@
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
 #                                       configs, the intake `lane-backlog.md`, and the relay-hook entries
 #                                       merged into `<lane>/.claude/settings.local.json`). After launch the
-#                                       coordinator never writes into the lane again, EXCEPT (1) the answer
-#                                       file of the inbox protocol (`lane-answer`, below), (2) the
-#                                       wave-end `lane-convert-ready` run-file conversion and its metadata
-#                                       push (trail-pr's failure marker / Progress line included) — on a
-#                                       merged lane's re-run also `closeout --no-trail`'s requirement
-#                                       stamp, check-off and `## Current` reconcile, and (branch mode)
-#                                       finalize-empty's `## Status: done` + its Progress lines — and
-#                                       (3) `lane-remove --abandon` on a `gone` lane: the ABANDONED stamp,
-#                                       the done/ → failed/ brief move and the same push, just before the
-#                                       lane is salvaged and deleted, and (4) `lane-scope-decide` on a lane held
-#                                       `scope_hold`: its release / serialize lines, its brief's widening line,
-#                                       serialize's fetch of another lane's exact PR head (the merge is printed, never
-#                                       run), defer's and drop's removal, drop's parent Queue check-off.
+#                                       coordinator writes into the lane only the exceptions listed in
+#                                       docs/ARCHITECTURE_CONTRACTS.md §"Lanes", row `Single write`
+#                                       (the one list — never restated here).
 #                                       lane.json carries `policy`: lane-policy.sh `resolve`'s object, run in
 #                                       the PRIMARY at lane-create (the rules stamp is per clone), or null;
 #                                       and `"single_lane": true` (appended last) ONLY from an explicit
 #                                       `--parallel 1` — absent otherwise, never inferred from `parallel`.
+#   <lane>/.supervisor/automate/<run_id>.closeout-leftover   lane-convert-ready's close-out leftover marker
+#                                       (line 1: the leftover); fleet-closeout reports it `human —`, lane-remove
+#                                       refuses while it exists; removed by a later complete closeout or by hand
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
 #   <lane>/.supervisor/inbox/questions/superseded/<tool_use_id>.json   an abandoned question, moved there by
 #                                       relay-hook when the lane asks a newer one (+ `superseded_by`,
