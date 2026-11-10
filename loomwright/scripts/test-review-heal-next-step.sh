@@ -29,7 +29,8 @@
 #   E   CLOSED ENUMS. Every printed instruction's `do` is spawn|done (the driver's subset of item 06's
 #       closed spawn|ask|park|done), every `what` is in WHAT_ENUM, every `step` is a driver `case` arm.
 #   D   DOC MIRROR. The schema doc's `what` table equals WHAT_ENUM and its step table equals the driver's
-#       `case` arms; RESULT_SCHEMAS.md points at the schema doc.
+#       `case` arms; the driver header's `STEPS` names equal the `case` arms too, in order (mutation
+#       control: a scratch copy with one extra `STEPS` row); RESULT_SCHEMAS.md points at the schema doc.
 #   R   REPORT VALIDATION. Malformed reports (an unknown / missing id, a bad verdict, `clean` in a fallback
 #       review report, a multi-line finding,
 #       confirmed without auto_fixable, a fix report without a self_review line ⇒ `self_review_missing`,
@@ -381,8 +382,34 @@ if [ -f "$SCHEMA_DOC" ]; then
   doc_steps="$(sed -n '/<!-- steps:begin -->/,/<!-- steps:end -->/p' "$SCHEMA_DOC" | sed -n 's/^| `\([a-z-]*\)` |.*/\1/p')"
   [ "$doc_steps" = "$ARMS" ] && ok "D: the doc's step table equals the driver's case arms, in order" \
     || no "D: the doc's step table differs from the case arms"
+  grep -qF 'test-review-heal-next-step.sh' "$SCHEMA_DOC" && grep -qF '`STEPS` index' "$SCHEMA_DOC" \
+    && ok "D: the doc names the driver header's STEPS index and the suite that holds it equal" \
+    || no "D: the doc does not name the header's STEPS index and its pinning suite"
   grep -qF -- 'fallback_already_spawned' "$SCHEMA_DOC" && ok "D: the doc names fallback_already_spawned" || no "D: the doc does not name fallback_already_spawned"
 else no "D: $SCHEMA_DOC missing"; fi
+# header_steps <driver> — the step names of the header's STEPS block: the `#   <name>  …` rows from
+# `# STEPS — …` to the comment block's next blank `#` line (continuation rows are indented further).
+header_steps() {
+  awk '/^# STEPS — / { on = 1; next } on && /^#$/ { exit } on' "$1" | sed -n 's/^#   \([a-z][a-z-]*\)  .*/\1/p'
+}
+hdr_steps="$(header_steps "$DRIVER")"
+if [ -n "$hdr_steps" ] && [ "$hdr_steps" = "$ARMS" ]; then
+  ok "D: the driver header's STEPS names equal the driver's case arms, in order"
+else
+  no "D: the driver header's STEPS names ($(printf '%s' "$hdr_steps" | tr '\n' ',')) differ from the case arms ($(printf '%s' "$ARMS" | tr '\n' ','))"
+fi
+# MUTATION CONTROL: a scratch driver copy with one extra STEPS row must turn the leg RED — and the
+# extractor must read exactly that row as one more name (else the control would pass on any noise).
+HDR_MUT="$(mktemp -d "$WORK/hdr-steps.XXXXXX")/review-heal-next-step.sh"
+awk '{ print } /^#   finish  / { print "#   bogus       x" }' "$DRIVER" > "$HDR_MUT"
+hdr_mut_steps="$(header_steps "$HDR_MUT")"
+if [ "$(grep -c '^#   bogus  ' "$HDR_MUT")" = 1 ] && [ "$hdr_mut_steps" != "$ARMS" ] \
+   && [ "$hdr_mut_steps" = "$(printf '%s\nbogus' "$ARMS")" ]; then
+  ok "MUTATION CONTROL: an extra '#   bogus' STEPS row turns the header-STEPS leg RED"
+else
+  no "MUTATION CONTROL: the extra-STEPS-row mutant was not built or the leg stayed green"
+fi
+rm -rf "${HDR_MUT%/*}"
 grep -qF 'See [result-schemas/review-heal-next-step.md](result-schemas/review-heal-next-step.md).' "$REPO/loomwright/docs/RESULT_SCHEMAS.md" \
   && ok "D: RESULT_SCHEMAS.md points at the schema doc" || no "D: RESULT_SCHEMAS.md has no pointer to the schema doc"
 

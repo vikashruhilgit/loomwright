@@ -13,7 +13,12 @@
 #        ci-slot.sh release --pid <holder-pid> | --slot <k>
 #          frees that holder's slot and its queued ticket; idempotent — exit 0 when it holds nothing.
 #        ci-slot.sh status [--json]   holders (slot, pid, checkout, name, started) + waiters in order
-#        ci-slot.sh dir               print the repo-keyed state dir (mkdir -p only), for callers that
+#                                     (a held waiter with its hold reason), then the machine view:
+#                                     machine holders and the last load reading. --json keys: dir,
+#                                     cpus, slots, jobs, holders, waiters (each also `slots`, its N,
+#                                     and `held`, its hold reason or null), machine {dir, holders,
+#                                     last_reading {at, state, load1} or null}
+#        ci-slot.sh dir              print the repo-keyed state dir (mkdir -p only), for callers that
 #                                     keep their own files next to the slots (e.g. a pass cache)
 #        ci-slot.sh --help            this header
 #
@@ -27,7 +32,8 @@
 #                  stripped, trailing `.git` and `/` removed. The host stays in, so two hosts never
 #                  collide. No `origin` ⇒ a hash of the absolute git-common-dir path (per-repo only).
 #                  Layout: slots/<k>/info, tickets/<n>, counter, mutex.lnk — info holds four lines:
-#                  pid, checkout path, name, start epoch; a ticket adds a fifth, the waiter's N.
+#                  pid, checkout path, name, start epoch; a ticket adds a fifth, the waiter's N,
+#                  and while it is held a sixth, its hold reason (`status` reads it).
 # ORIGIN ASSUMPTION  sharing assumes every checkout's `origin` is the same remote URL (lane-create
 #                  sets it so). A clone whose `origin` is a local filesystem path keys separately and
 #                  does NOT share; equality across URL forms (ssh vs https) is best-effort only.

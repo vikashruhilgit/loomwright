@@ -1290,7 +1290,7 @@ fi
 REQ_DIR=".supervisor/requirements"
 BACKLOG_READER=""
 [ -n "$SELF_DIR" ] && BACKLOG_READER="$SELF_DIR/automate-helpers.sh"
-backlog_basis="one item per requirement *.md under $REQ_DIR, each item's state read by automate-helpers.sh backlog --json --offline (the board's own classifier, never re-derived here); github lookups skipped (offline), so an item whose only merge evidence is a merged PR reads unknown, not merged_unstamped"
+backlog_basis="one item per requirement *.md under $REQ_DIR, each item's state read by automate-helpers.sh backlog --json --offline (the board's own classifier, never re-derived here); github lookups skipped (offline), so an item whose only merge evidence is a merged PR reads unknown or its open-path state, not merged_unstamped"
 if [ ! -d "$REQ_DIR" ]; then
   add_note "backlog omitted: input directory $REQ_DIR is not present"
   add_surface "backlog" "$REQ_DIR" "$backlog_basis" "absent" "" "input directory $REQ_DIR is not present"

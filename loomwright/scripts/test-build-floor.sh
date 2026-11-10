@@ -22,8 +22,9 @@
 #       --json --offline`), copied never re-derived: counted with `merged_unstamped == 1` and
 #       that item in `needs_decision`, zero gh calls (a logging gh stub on PATH), absent with no
 #       requirements tree, and `unverified` + no count + one note for an absent / failing /
-#       non-JSON / wrong-shape reader; two mutation controls (the counted call deleted, the
-#       failure branch turned into a counted 0)
+#       non-JSON / wrong-shape reader; the basis names `unknown or its open-path state`;
+#       mutation controls (the counted call deleted, the failure branch turned into a counted 0,
+#       --offline dropped, the basis tail reverted to `reads unknown`)
 #   (c) session segmentation by cc_session_id, never by filename (committed fixture:
 #       3 ids / 7 lines + 1 field-less line), with the field-less line accounted explicitly
 #   (c2) blank / whitespace-only log lines - a SEPARATE seeded fixture carrying both shapes, so
@@ -575,6 +576,29 @@ if [ -n "$BLM3" ]; then
   : > "$BL_GH_LOG"
 else
   no "could not build the no---offline mutant - control inconclusive"
+fi
+
+# The basis names what an offline-unseen merged PR reads: the board's step 5 `open` collapses to
+# `unknown`, but its earlier steps can still read such an item in_flight / brief_shipped offline,
+# so the basis says `unknown or its open-path state` (the floor-projection.md wording), never
+# `unknown` alone.
+BL_OPEN_PATH='unknown or its open-path state'
+grep -qF "$BL_OPEN_PATH" < <(jq -r '.surfaces.backlog.basis' "$JA" 2>/dev/null) \
+  && ok "the backlog basis says an offline-unseen merged PR reads '$BL_OPEN_PATH', not merged_unstamped" \
+  || no "the backlog basis does not name '$BL_OPEN_PATH': $(jq -r '.surfaces.backlog.basis' "$JA" 2>/dev/null)"
+BL_BASIS_LINE="$(grep -F 'backlog_basis="one item per requirement' "$BUILD")"
+BLM4="$(bl_mutant 'backlog_basis="one item per requirement' "${BL_BASIS_LINE/reads unknown or its open-path state, not/reads unknown, not}")"
+if [ -n "$BLM4" ]; then
+  # The mutant's basis must still be read (it names `offline`), so a build that wrote nothing
+  # cannot pass this control vacuously.
+  bm4="$(jq -r '.surfaces.backlog.basis // ""' "$(bl_copy_run "$BL_PASS" "$BLM4")" 2>/dev/null)"
+  if grep -qF 'offline' <<<"$bm4" && ! grep -qF "$BL_OPEN_PATH" <<<"$bm4"; then
+    ok "MUTATION CONTROL: a basis tail of 'reads unknown, not merged_unstamped' turns the open-path assertion RED"
+  else
+    no "the basis-tail mutant did not read as an offline basis without '$BL_OPEN_PATH': '$bm4'"
+  fi
+else
+  no "could not build the basis-tail mutant - control inconclusive"
 fi
 
 # ============================================================================
