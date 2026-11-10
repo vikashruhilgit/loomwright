@@ -168,7 +168,8 @@
 # commands/setup.md); this helper never asks.
 #
 # Exit: 0 in every normal path — EXCEPT `valid-branch`, a predicate whose exit code IS its answer:
-# 0 accepted, 1 refused (one reason line on stderr; also for a missing name or an extra flag).
+# 0 accepted, 1 refused (one reason line on stderr; also for a missing name, an extra flag or an
+# extra argument after the name).
 
 # Modules (sourced in this order from setup-memory.d/):
 # - probes.sh: the probe paths (INTENDED_PATHS, LEDGER_INTENDED_PATH, UNINTENDED_PATHS) and the
@@ -238,6 +239,8 @@ ALLOW_FLAGS=""     # newline-separated (bash-3.2-safe: no arrays needed downstre
 BRANCH_MODE_SET=0  # 1 when --branch-mode was given (its value is REQUIRED: <branch> | off)
 BRANCH_MODE_VAL=""
 VB_NAME=""         # valid-branch: the name to judge (the argument right after the subcommand)
+VB_EXTRA_SET=0     # valid-branch: 1 once a further positional followed the name (VB_EXTRA = the first)
+VB_EXTRA=""
 CONSENT_ACTION=""  # consent: grant | decline | status (the argument right after the subcommand)
 
 # reject_option_value <flag> <noun> <value> — an EMPTY or option-shaped (`-…`) value is the NEXT
@@ -317,7 +320,15 @@ while [ $# -gt 0 ]; do
       esac
       BRANCH_MODE_SET=1; BRANCH_MODE_VAL="$2"; shift 2 ;;
     -h|--help) usage ;;
-    *) echo "setup-memory: unknown arg '$1' (try --help)" >&2; shift ;;
+    *)
+      # After `valid-branch <name>`, a further non-option argument is refused below (a split name like
+      # `my branch` must never be judged as `my`), not warned about and ignored.
+      if [ "$SUBCMD" = "valid-branch" ] && case "$1" in -*) false ;; *) true ;; esac; then
+        [ "$VB_EXTRA_SET" = 1 ] || { VB_EXTRA_SET=1; VB_EXTRA="$1"; }
+      else
+        echo "setup-memory: unknown arg '$1' (try --help)" >&2
+      fi
+      shift ;;
   esac
 done
 
@@ -325,10 +336,15 @@ done
 
 # ---- valid-branch: the predicate alone (before root resolution — it reads and writes nothing) ----
 # Exit 0 iff valid_branch_name accepts the name; 1 otherwise, with ONE reason line on stderr. A flag
-# that could only be silently ignored here (--branch-mode, --ledger, --allow) is refused too.
+# that could only be silently ignored here (--branch-mode, --ledger, --allow) is refused too, and so is
+# a further non-option argument after the name.
 if [ "$SUBCMD" = "valid-branch" ]; then
   if [ "$BRANCH_MODE_SET" = 1 ] || [ -n "$LEDGER" ] || [ -n "$ALLOW_FLAGS" ]; then
     echo "setup-memory: valid-branch takes only a name (got --branch-mode / --ledger / --allow); nothing was judged" >&2
+    exit 1
+  fi
+  if [ "$VB_EXTRA_SET" = 1 ]; then
+    echo "setup-memory: valid-branch takes only a name (got an extra argument '$VB_EXTRA'); nothing was judged" >&2
     exit 1
   fi
   if valid_branch_name "$VB_NAME"; then exit 0; fi
