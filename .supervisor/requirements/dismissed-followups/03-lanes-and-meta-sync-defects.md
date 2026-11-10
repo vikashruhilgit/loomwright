@@ -1,6 +1,7 @@
 # Dismissed follow-ups 03: Lanes, fleet close-out, meta-sync, plan-waves, janitor and sweep
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/865
 
 > Bundled 2026-10-27 from the `/automate` dismissed-finding drafts in `.supervisor/requirements/proposed/`, all decided
 > **follow-up** by the owner and never acted on (sweep: `00-sweep-classification.md`; prevention: `01-follow-up-decision-becomes-tracked-work.md`).
@@ -199,3 +200,9 @@ changelog.d/dismissed-followups-03-lanes-and-meta-sync-defects.md
 - `automate-2026-10-15-163325-L21--10-coordinator-model-ab-e20828--dismissed-summary.md`
 - `automate-2026-10-22-123646-L7--39g-leak-gate-and-attention-lines-b536a4--dismissed-summary.md`
 - `automate-2026-10-22-123646-L8--39f-janitor-command-fd1e55--dismissed-summary.md`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-10T08:59:17Z
+- **Brief:** .supervisor/jobs/done/2026-11-10-dismissed-followups-03-lanes-meta-sync.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/865
