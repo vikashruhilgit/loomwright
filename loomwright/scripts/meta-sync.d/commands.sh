@@ -180,7 +180,10 @@ cmd_push() {
     fi
     commit="$(printf '%s\n' "$MESSAGE" | g commit-tree "$newtree" -p "$R")" \
       || die "commit-tree failed (is user.name / user.email configured?)"
-    if g push -q origin "$commit:refs/heads/$BRANCH" 2>"$WORK/push.err"; then
+    # The lease expects R, the tip this plan was built on: the commit's parent is R, so the lease
+    # only ever adds a refusal — a branch deleted or moved since the fetch is rejected (the retry
+    # re-fetches) and is never re-created here; init stays the only creator.
+    if g push -q --force-with-lease="refs/heads/$BRANCH:$R" origin "$commit:refs/heads/$BRANCH" 2>"$WORK/push.err"; then
       nb="$(build_agreed_base)" || die "pushed $commit but could not build the agreed-state base tree; meta-base untouched"
       write_base_file "$nb" || die "pushed $commit but could not write meta-base"
       say "pushed $commit ($changed path(s))"

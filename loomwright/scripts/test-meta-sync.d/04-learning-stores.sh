@@ -501,3 +501,38 @@ else
   no "mutation control (list-managed tracked env): could not build the mutant — control inconclusive"
 fi
 
+echo "== 93. drift pin: the twin gate's chain walk reads provenance exactly as read-system-contract.sh does =="
+# learning-twin.sh's twin_trusted re-implements read-system-contract.sh's provenance walk (the
+# reader is a standalone script, so the walk is mirrored rather than sourced). The pin: both
+# STRING-field extractors carry a byte-identical sed expression and both walks start at the same
+# prev="GENESIS". td_sed_expr <file> <fn> prints <fn>'s `sed -E` expression; td_start <file> the
+# first prev="…" assignment.
+td_sed_expr() { awk -v fn="$2() {" 'index($0, fn) == 1 { i = index($0, "sed -E "); if (i) { s = substr($0, i + 7); sub(/; [}]$/, "", s); print s }; exit }' "$1" 2>/dev/null; }
+td_start() { grep -oE '(^|[[:space:]])prev="[^"]*"' "$1" 2>/dev/null | head -n 1 | tr -d '[:space:]'; }
+# twin_drift_leg <learning-twin.sh> <read-system-contract.sh> — 0 when both match. Detail in TD_DETAIL.
+twin_drift_leg() {
+  local a b ga gb
+  a="$(td_sed_expr "$1" twin_field)"; b="$(td_sed_expr "$2" field)"
+  ga="$(td_start "$1")"; gb="$(td_start "$2")"
+  TD_DETAIL="twin_field=[$a] field=[$b] starts=[$ga]/[$gb]"
+  [ -n "$a" ] && [ "$a" = "$b" ] && [ "$ga" = 'prev="GENESIS"' ] && [ "$gb" = "$ga" ]
+}
+TD_TWIN="$HERE/meta-sync.d/learning-twin.sh"; TD_READ="$HERE/read-system-contract.sh"
+twin_drift_leg "$TD_TWIN" "$TD_READ"
+check $? "twin_field and read-system-contract.sh's field carry a byte-identical sed expression and both walks start at prev=\"GENESIS\" ($TD_DETAIL)"
+TD_MUT="$TROOT/mutant-twin-drift"; mkdir -p "$TD_MUT"
+sed '/^twin_field() {/s/\[^\\"\]\*/[^\\"]+/' "$TD_TWIN" > "$TD_MUT/learning-twin.sh"
+if ! cmp -s "$TD_TWIN" "$TD_MUT/learning-twin.sh" && grep -qF '([^\"]+)' "$TD_MUT/learning-twin.sh"; then
+  if twin_drift_leg "$TD_MUT/learning-twin.sh" "$TD_READ"; then no "mutation control (twin drift) REFUTED: a one-character drift in twin_field kept leg 93 green ($TD_DETAIL)"
+  else ok "mutation control (twin drift): ([^\"]*) -> ([^\"]+) in a scratch twin_field turns leg 93 red"; fi
+else
+  no "mutation control (twin drift): could not build the drifted twin_field copy — control inconclusive"
+fi
+sed 's/^prev="GENESIS"/prev="GENESIS0"/' "$TD_READ" > "$TD_MUT/read-system-contract.sh"
+if ! cmp -s "$TD_READ" "$TD_MUT/read-system-contract.sh"; then
+  if twin_drift_leg "$TD_TWIN" "$TD_MUT/read-system-contract.sh"; then no "mutation control (twin start) REFUTED: a different walk start kept leg 93 green ($TD_DETAIL)"
+  else ok "mutation control (twin start): a scratch reader starting at another prev turns leg 93 red"; fi
+else
+  no "mutation control (twin start): could not build the drifted reader copy — control inconclusive"
+fi
+

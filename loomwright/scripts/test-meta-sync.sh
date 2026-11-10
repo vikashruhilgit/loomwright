@@ -80,7 +80,8 @@
 #  34. push-retry exhaustion: an origin whose pre-receive rejects every push -> exit 1 `push_failed
 #      — rejected <N> times`, N = meta-sync.sh's own MAX_ATTEMPTS (grep-read, never hard-coded); the
 #      hook ran exactly N times; branch tip unchanged, meta-base byte-unchanged; a PATH git shim
-#      logged exactly N push argvs, none with a force form (--force*, -f, a +refspec)
+#      logged exactly N push argvs, none with a force form (--force*, -f, a +refspec) beyond the
+#      lease pinned on the fetched tip (--force-with-lease=refs/heads/<branch>:<sha>, leg 89)
 #  35. a meta-base tree object missing from the object store (a nonexistent 40-hex sha) -> the
 #      `missing from the object store` warning and the no-base derivation: push does not re-add a
 #      branch-deleted file and pushes a new one; pull deletes it locally; an unlisted conflict
@@ -246,6 +247,20 @@
 #      tracked managed path (the real index), exit 0
 #  88. mutation control: a list-managed --tracked whose ls-files honours the inherited GIT_INDEX_FILE
 #      (no `env -u`) turns (87) red (a missing index lists nothing tracked)
+#  89. a branch deleted between the fetch and the push (a receive-pack wrapper deletes it before
+#      the advertisement): the push, leased on R, is refused; the re-fetch ends no_remote_branch,
+#      the branch stays absent on origin and meta-base is byte-unchanged
+#  90. a dead holder behind a reclaim-marker chain past the depth bound -> exit 1 `locked` naming
+#      the hand fix (`the holder is not running: remove … by hand`), nothing changed; a live
+#      holder's `locked` carries no such hint
+#  91. forge-slug owners: orgs/, users/ and sponsors/ name an owner in the next segment, and an
+#      owner/.../pull placeholder still checks the owner -> forge_slug hits for an unallowlisted
+#      owner; the allowlisted owner behind each passes
+#  92. mutation controls: a plain refspec push turns (89) red, skipping orgs/users/sponsors turns
+#      (91) red, a locked message without the hint turns (90) red
+#  93. drift pin: learning-twin.sh's twin_field and read-system-contract.sh's field carry the same
+#      sed expression and both chain walks start at prev="GENESIS"; two scratch-copy mutants (one
+#      per side) turn it red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail

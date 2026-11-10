@@ -73,7 +73,7 @@ reclaim_lock() {
   return 0
 }
 acquire_lock() {
-  local start holder
+  local start holder hint
   start="$(date +%s)"
   while :; do
     # LOCK_HELD is set BEFORE the create so a signal between the create and the pid write still runs
@@ -86,6 +86,7 @@ acquire_lock() {
     fi
     LOCK_HELD=0
     holder="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+    hint=""
     if lock_is_stale "$LOCK_DIR" "$holder"; then
       RECLAIMED=0
       reclaim_lock "$LOCK_DIR" "$holder" 0
@@ -93,9 +94,11 @@ acquire_lock() {
         warn "reclaimed a stale lock left by pid ${holder:-unknown}"
         continue
       fi
+      # Stale but not reclaimed (a reclaim-marker chain past the depth bound): waiting cannot help.
+      hint=" — the holder is not running: remove $LOCK_DIR (and any $LOCK_DIR.reclaim.* markers) by hand"
     fi
     if [ $(( $(date +%s) - start )) -ge "$LOCK_WAIT" ]; then
-      die "locked — another meta-sync (pid ${holder:-unknown}) holds $LOCK_DIR; waited ${LOCK_WAIT}s, nothing was changed"
+      die "locked — another meta-sync (pid ${holder:-unknown}) holds $LOCK_DIR; waited ${LOCK_WAIT}s, nothing was changed$hint"
     fi
     sleep 1
   done
