@@ -619,7 +619,7 @@ else
 fi
 
 # (j2) `applies_to: null` AND an absent key are BOTH repo-wide — emitted for any path set. This is the
-# no-regression guard for the one rule the plugin's own store ships (.agent/rules/process.json).
+# no-regression guard for the store's repo-wide rule (applies_to: null in .agent/rules/process.json).
 for want in "Explicit null applies_to is repo-wide" "Absent applies_to key is repo-wide"; do
   if grep -qF -- "- $want" < <(echo "$outJ1a") && grep -qF -- "- $want" < <(echo "$outJ1b"); then
     ok "(j2) repo-wide rule emitted for BOTH unrelated path sets: $want"

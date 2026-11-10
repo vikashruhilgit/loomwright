@@ -23,8 +23,8 @@
 #      `automate-lanes:<run_id>` whose recorded `session_id` EQUALS the payload `session_id` — only the
 #      coordinator session is ever nudged; every other session working in the repo is allowed;
 #   4. `<run_id>.lanes` exists and `<run_id>.md` does not read `## Status: done`;
-#   5. some lane is LIVE (its quick state is in automate-lanes.sh's `_LANES_WAIT_LIVE` — the very set
-#      lane-wait uses, read from there, never restated) OR holds an unanswered question that lane-wait
+#   5. some lane is LIVE (its quick state is in `_LANES_WAIT_LIVE`, automate-lanes.d/status.sh — the
+#      very set lane-wait uses, read from there, never restated) OR holds an unanswered question that lane-wait
 #      has not yet reported (its `question <lane> <id>` key is absent from `<run_id>.lane-wait-seen`;
 #      a REPORTED question is the coordinator's to relay, and re-blocking on it would ping-pong: the
 #      re-armed watcher exits idle at once when no lane is live);
@@ -38,9 +38,9 @@
 # until the coordinator decides, and lane-wait reports that state only once — so the turn end is blocked naming the
 # lane(s) and `lane-scope-check`. Read through automate-lanes.sh's _lanes_scope_held (scope.sh), only after a cheap
 # grep finds a scope_hold run file; a serialized lane (its scope_wait recorded) is decided and never blocks.
-# The lane states come from `_lanes_quick_state` (automate-lanes.sh, sourced): the lane table, lane
-# process liveness (`lanes_proc_alive`), the lane inbox and — for a dead lane whose question was just
-# answered — the last lines of its stream log only; no gh, no ci-slot, no full `lane-status` reconcile —
+# The lane states come from `_lanes_quick_state` (automate-lanes.d/status.sh, sourced through
+# automate-lanes.sh): the lane table, lane process liveness (`lanes_proc_alive`), the lane inbox and —
+# for a dead lane whose question was just answered — the last lines of its stream log only; no gh, no ci-slot, no full `lane-status` reconcile —
 # so the hook stays fast at every turn end of every session.
 #
 # FAIL SAFE: this is a reminder, not a correctness gate (a wedged main thread is worse than a missed

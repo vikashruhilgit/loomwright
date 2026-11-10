@@ -683,8 +683,8 @@ _lanes_render() { # <status JSON> — the plain view
     (if .keep_awake_suggestion != null and (if .machine | has("keep_awake_lasting") then .machine.keep_awake_lasting else .machine.keep_awake == "held" end) != true
      then "keep-awake suggestion (run it yourself, or lane-status --keep-awake): \(.keep_awake_suggestion) — a closed lid still sleeps" else empty end)' <<<"$1"
 }
-# _lanes_render_terse <status JSON> — lane-status's default view: the header line, then each lane's first
-# line; every other _lanes_render line (wave PRs, policy, next wave, steps, questions, readiness,
+# _lanes_render_terse <status JSON> — the renderer body of lane-status's default view (status.sh appends
+# the backlog pointer line): the header line, then each lane's first line; every other _lanes_render line (wave PRs, policy, next wave, steps, questions, readiness,
 # machine, keep-awake status) needs `--verbose` (questions: `--inbox`).
 _lanes_render_terse() { jq -r "$_LANES_RENDER_HEAD"' hdr, (.lanes[] | lane1)' <<<"$1"; }
 

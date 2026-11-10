@@ -18,8 +18,8 @@ One JSON file per answered lane question, beside its question file `inbox/questi
 
 | Field | Owner answer (`lane-answer`) | Policy answer (the lane's `relay-hook`) |
 |---|---|---|
-| `answers` | `{"0": "<label>", …}` — the question's own option labels | same |
-| `note` | the owner's optional note, or `null` | none — a policy carries no note |
+| `answers` | `{"<question text>": "<label[,label…]>", …}` — keyed by the question's text, valued with its own option labels (the `lane-answer` input is index-keyed; `_lanes_validate_answers` re-keys it) | same |
+| `note` | the owner's optional note, or `null` | `null` — a policy carries no note |
 | `source` | `"human"` | `"policy"` |
 | `via` | the client the owner answered through | `"policy"` |
 | `at` | UTC timestamp | UTC timestamp |

@@ -173,7 +173,8 @@ findings went away, and the rules cannot be credited with it.
   lines **86–158**. Line 85 is the last line of the ledger at `3f4bb2e`, the commit that landed
   the first harvested rule batch (2026-09-01T05:38:59Z), and the pin's first 85 lines are
   byte-identical to that copy (`cmp`, below), so the line range is exactly "records appended after
-  the rules landed".
+  the rules landed". Ledger line 85 itself (`pr_url` #160) is counted by neither row: it postdates
+  the baseline's 84 records and is the last line before the window.
 - **Instrument:** `measure-heal-signal.sh --distribution`, run from `main` at `4e0f255` (script
   blob `a4ffd40`; the baseline ran blob `9ac80e5`, changed by one commit since). The same copy
   re-run on the baseline's pinned ledger (`952ff91`) reproduces the baseline row exactly, so the
