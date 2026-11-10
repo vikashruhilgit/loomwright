@@ -765,7 +765,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `dreaming` | 39945 | 36313 |
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
-| `janitor` | 1470 | 1336 |
+| `janitor` | 1470 | 1427 |
 | `launch-pad` | 6203 | 5678 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |

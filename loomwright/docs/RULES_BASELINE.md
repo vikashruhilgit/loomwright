@@ -276,12 +276,15 @@ git show 1df5d34:.supervisor/postmortem/results.jsonl | sed -n "$((N+1)),\$p" > 
 bash loomwright/scripts/measure-heal-signal.sh --distribution --repo "$W"
 ```
 
-The distinct-PR count and the merge-date check (a `number: 0` record takes its number from
-`pr_url`):
+The distinct-PR count, its baseline, and the merge-date check (a `number: 0` record takes its
+number from `pr_url`; the baseline ledger's one such record names #126, which another record
+already carries, so a plain distinct-`.number` count over it prints 71, not 70):
 
 ```
 jq -r '[.repo, (if (.number//0)==0 then (.pr_url|capture("/pull/(?<n>[0-9]+)").n) else (.number|tostring) end)]|@tsv' \
   "$W/.supervisor/postmortem/results.jsonl" | sort -u > "$W/pairs.tsv"; wc -l < "$W/pairs.tsv"   # 73
+git show 5293d06:.supervisor/postmortem/results.jsonl | jq -r '[.repo, (if (.number//0)==0 then (.pr_url|capture("/pull/(?<n>[0-9]+)").n) else (.number|tostring) end)]|@tsv' \
+  | sort -u | wc -l   # 70 (baseline)
 while IFS=$'\t' read -r r n; do printf '%s\t%s\n' "$n" "$(gh pr view "$n" --repo "$r" --json mergedAt -q .mergedAt)"; done < "$W/pairs.tsv"
 ```
 
