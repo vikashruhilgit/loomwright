@@ -1,7 +1,7 @@
 # test-automate-next-step.d/12-dismissed-batch.sh — part of test-automate-next-step.sh (TNS_PARTS / TNS_GROUPS /
 # its `pg_want 12-dismissed-batch` line): the dismissed-findings decision step's silent follow-up, its ONE batched
 # AUT-DISMISS ask, the PICK-time automatic follow-up and the park report (skills/automate-loop/per-item-loop.md
-# §"Dismissed-findings decision step (before the park)"). Sourced by the runner (its setup, helpers and counters);
+# §"Dismissed-findings decision step"). Sourced by the runner (its setup, helpers and counters);
 # run directly — e.g. by run-pin-mutations.sh — it re-enters the runner for this part alone.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   exec "${BASH:-bash}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-next-step.sh" --part 12-dismissed-batch

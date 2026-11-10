@@ -2,7 +2,7 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/resume.golden.
 #:  resume-glob      <automate_dir> [--finalize]        # §4 (--finalize: run finalize-empty on each candidate first, list the rest; finalize lines on stderr) list run files (is_run_file: a "# Automate Run:" title line anywhere — BOM/0-3-space indent/whitespace/case tolerant, RUN_TITLE_ERE) not "## Status: done"; §6 result sidecars never listed because they carry no such line
 #:  reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
-#:  park-ask-gate    <runfile> <item> <pr_url> [--wait <s>]  # §6 "Dismissed-findings decision step (before the park)" park-first READY park: READ-ONLY; `ask — fix-now allowed: …` only when ## Current names this item+PR at status awaiting_merge, a <run_id>.merge-watch marker carries this PR (polled every 1s for up to --wait <s>, default 0) and `gh pr view --json state` reads exactly OPEN; `ask — fix-now unavailable: …` on MERGED/CLOSED/other/unreadable or a closed-out (done) item; else one `refuse — <reason>` line (ask nothing); exit 0 (usage error 1)
+#:  park-ask-gate    <runfile> <item> <pr_url> [--wait <s>]  # §6 "Dismissed-findings decision step" park-first READY park: READ-ONLY; `ask — fix-now allowed: …` only when ## Current names this item+PR at status awaiting_merge, a <run_id>.merge-watch marker carries this PR (polled every 1s for up to --wait <s>, default 0) and `gh pr view --json state` reads exactly OPEN; `ask — fix-now unavailable: …` on MERGED/CLOSED/other/unreadable or a closed-out (done) item; else one `refuse — <reason>` line (ask nothing); exit 0 (usage error 1)
 
 # --------------------------------------------------------------------------- #
 # §4 — resume: glob + reconcile (run-file is BELIEF; git/gh is TRUTH)
@@ -158,7 +158,7 @@ reconcile_item() {
 }
 
 # park-ask-gate <runfile> <item> <pr_url> [--wait <seconds>] — SKILL §6 "Dismissed-findings
-# decision step (before the park)", its "Order — sequential interactive READY park (park
+# decision step", its "Order — sequential interactive READY park (park
 # first, then ask)" list, is the spec (automate-speed/01, owner decisions D2/D3). The engine
 # writes the `awaiting_merge` park, arms the merge watcher, notifies and releases the run
 # lock FIRST; this gate then says whether the owner's dismissed-findings decisions may be

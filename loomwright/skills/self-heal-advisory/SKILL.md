@@ -282,7 +282,7 @@ while heal_iterations < max_heal_iterations:
   # when it is pre_existing/nit/drift (docs/result-schemas/code-review-result.md:29 [pins: `category: enum [new, pre_existing, nit, drift]`]), else "below_severity_floor" for a
   # `new` finding below FIX_FLOOR. `source` is "code_reviewer" (full enum: docs/RESULT_SCHEMAS.md §SUPERVISOR_RESULT).
   # `severity` is the issue's own severity; `/automate`'s dismissed-findings decision step thresholds on it
-  # (skills/automate-loop/SKILL.md §6 "Dismissed-findings decision step (before the park)"). The
+  # (skills/automate-loop/SKILL.md §6 "Dismissed-findings decision step"). The
   # marker-comment bullet format below is unchanged — severity is not rendered there.
   heal_dismissed += [
     {finding: i.description,
