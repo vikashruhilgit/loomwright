@@ -126,7 +126,7 @@ and `finalize-empty`; `fleet closeout sweep (dry run): <summary>` for `fleet-clo
 
 ## F258 — three copies of the refusal rule say "nothing written" without the ledger exception's scope
 
-The authority, `automate-run.md` §"Writers and failures", says nothing is written with ONE exception (a refused
+The authority, `automate-run.md` §"Writers and failures.", says nothing is written with ONE exception (a refused
 `--result` appends its `ok: false` line to the coordinator-model ledger). Re-verify on the base:
 
 ```
