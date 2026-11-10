@@ -60,9 +60,9 @@ per-item-loop.md|Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle r
 # deterministic branches are pinned by test-automate-next-step.sh F4n and test-automate-lanes.sh NP.
 per-item-loop.md|No-PR stop park (end of RUN, after the rate-limit read)	judgment — covered at the step boundary: rate-limit-park
 per-item-loop.md|Rate-limit park (end of RUN, before DRAIN)	rate-limit-park
-per-item-loop.md|Dismissed-findings decision step (before the park)	dismissed-findings-decision-step
-# per-item-loop.md|Rate-limit park (end of RUN, before DRAIN) and Dismissed-findings decision step (before the
-# park) are pointer stubs since automate-speed/08 retired legacy-tail.md (the --legacy prose); the rules run in
+per-item-loop.md|Dismissed-findings decision step	dismissed-findings-decision-step
+# per-item-loop.md|Rate-limit park (end of RUN, before DRAIN) and Dismissed-findings decision step
+# are pointer stubs since automate-speed/08 retired legacy-tail.md (the --legacy prose); the rules run in
 # scripts/automate-next-step.sh (steps rate-limit; dismissed / decide / park / fix-now). Learning-emit at
 # end-of-DRAIN and §7's three subsections (Suppress window, Config-toggle contract, Own ONE inline drain) left
 # with legacy-tail.md and are no unit source. Their cases — park-first-ready-park, park-first-decisions-recorded,

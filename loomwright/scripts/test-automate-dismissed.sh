@@ -835,7 +835,7 @@ RSD="$REPO/loomwright/docs/result-schemas"
 # Every schema-doc surface (index + split files), repo-relative, for whole-doc absence scans.
 RS_ALL="loomwright/docs/RESULT_SCHEMAS.md $(cd "$REPO" && ls loomwright/docs/result-schemas/*.md loomwright/docs/result-schemas/automate-run/*.md 2>/dev/null | tr '\n' ' ')"
 QUAL="at most one owner-requested fix-now re-drain per item"
-SUBH="### Dismissed-findings decision step (before the park)"
+SUBH="### Dismissed-findings decision step"
 # first_line <file> <fixed anchor> — the first line containing the anchor (empty if none)
 first_line() { grep -F -m1 -- "$2" "$1" 2>/dev/null || true; }
 # ln_of <file> <fixed anchor> — its line number (0 if none)
@@ -1034,15 +1034,15 @@ case "$L" in *'st_set park_kind escalated; st_set order decide-first'*'st_set pa
 L="$(first_line "$SK" "**Safe mode (default):**")"
 before "$L" "arm the merge watcher" "park-ask-gate" && before "$L" "write the park state" "the owner's decisions" && ok "B: §9 safe-mode park is written and watched before park-ask-gate and the decisions" || no "B: §9 safe-mode bullet order"
 L="$(first_line "$SK" "otherwise fail **CLOSED** → park + notify")"
-case "$L" in *"park-first order"*"the merge watcher"*"park-ask-gate"*"Dismissed-findings decision step (before the park)"*) ok "B: §9 fail-closed --auto-merge park takes the park-first order" ;; *) no "B: §9 --auto-merge park order wrong" ;; esac
+case "$L" in *"park-first order"*"the merge watcher"*"park-ask-gate"*"Dismissed-findings decision step"*) ok "B: §9 fail-closed --auto-merge park takes the park-first order" ;; *) no "B: §9 --auto-merge park order wrong" ;; esac
 L="$(first_line "$SK" "**\`ESCALATED\` never merges and PARKS the run**")"
-before "$L" "Dismissed-findings decision step (before the park)" "## Status: paused" && ok "B: §9 escalated park still runs the decision step before the park write" || no "B: §9 escalated bullet order"
+before "$L" "Dismissed-findings decision step" "## Status: paused" && ok "B: §9 escalated park still runs the decision step before the park write" || no "B: §9 escalated bullet order"
 if grep -qF -- 'if ! ns_interactive; then ns_emit_park decide "park written; decisions not asked (--non-interactive) — $NS_NEXT_PICK"; return 0; fi' "$PFL" \
    && grep -qF -- 'ns_interactive || return 1   # --non-interactive: the rest stay undecided (pending_decisions), never asked' "$NBF"; then
   ok "B: --non-interactive-fallback (unchanged) asks nothing and records pending_decisions"
 else no "B: non-interactive branch missing"; fi
 L="$(first_line "$SK" "**PICK-time pending-decisions ask")"
-case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"follow-up --auto"*"fix-now is never offered here"*'"Dismissed-findings decision step (before the park)"'*) ok "B: PICK records every undecided draft follow-up before RECONCILE's closeout, never fix-now, pointing at the decision step" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
+case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"follow-up --auto"*"fix-now is never offered here"*'"Dismissed-findings decision step"'*) ok "B: PICK records every undecided draft follow-up before RECONCILE's closeout, never fix-now, pointing at the decision step" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
 case "$L" in *"Fix now on this PR"*) no "B: PICK ask must never offer Fix now" ;; *) ok "B: PICK ask offers no Fix-now option" ;; esac
 # pick_ask_placed <file> — 0 when the PICK ask sits after step 1 (RECONCILE) and before the DEFAULT-path step-2
 # pointer (`2. **RUN — run next-step**`, per-item-loop.md) — the step a misplaced ask would follow
@@ -1421,7 +1421,7 @@ C_R5="fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this rep
 # ns_drain_start_line / ns_drain_result write the pinned fix-now re-drain lines.
 SUB2="$(dfn "$DRV" ns_decide)$(dfn "$DRV" ns_decide_next_batch)$(dfn "$DRV" ns_decide_record)"; SUB3="$(dfn "$DRV" ns_drain_start_line)$(dfn "$DRV" ns_drain_result)"
 # the park-time ask is ONE batched AUT-DISMISS question: Fix none costs nothing now, both fix-now options carry
-# the derived wall-clock cost (per-item-loop.md §"Dismissed-findings decision step (before the park)")
+# the derived wall-clock cost (per-item-loop.md §"Dismissed-findings decision step")
 case "$SUB2" in *'dismissed-cost "$RF"'*'"Fix none (follow-up all)": "0 min now ('*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*'" wall-clock: the same ONE fix pass + full re-drain + re-park for '*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; Fix none '0 min now'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
 before "$SUB2" '"Fix none (follow-up all)","Fix all listed on this PR"' '"Fix selected on this PR"' && ok "C8 §6 step 2 keeps Fix none first" || no "C8 option order changed"
 # the AUT-PENDING fallback (ns_pending_next_batch) keeps the follow-up note's exact text

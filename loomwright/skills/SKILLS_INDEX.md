@@ -15,7 +15,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Context Summarization | `context-summarization/` | Execute Manager (preload); removed from Supervisor, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)" | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.1.0 | 2026-08-17 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
-| Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.1.0 | 2026-05-10 |
+| Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.1.0 | 2026-10-23 |
 | Agent Output | `agent-output/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.2.0 | 2026-10 |
@@ -68,8 +68,8 @@ Comprehensive index of all skills available in the Loomwright plugin.
 |------------|-----------|-----------------|------------|---------|--------------|
 | Playwright E2E | `playwright-e2e/` | QA Executor (preload) | ~1,500 | 1.0.0 | 2026-03 |
 | QA Strategy | `qa-strategy/` | QA Strategist (preload), QA Executor (preload) | ~1,100 | 1.0.0 | 2026-03 |
-| QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-03 |
-| QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-03 |
+| QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-04 |
+| QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-04 |
 | QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
 | Verify Walkthrough | `verify-walkthrough/` | QA Executor (reference — Read on demand in `--verify` mode), `/verify` (reference) | ~3,600 | 1.4.0 | 2026-09-26 |
 

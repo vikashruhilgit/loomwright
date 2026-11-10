@@ -188,7 +188,8 @@ the entries after the watermark of the last transcript-sourced line the same
 repeat stop with no new message writes no line). The watermark read, the count
 and the append are ONE critical section under the per-log lock, so concurrent
 firings of one completion sum its transcript once, in one line, whatever their
-`ts`. The transcript is read ONLY when it is this agent's own — its basename is
+`ts` — unless the lock wait times out (the append then proceeds unguarded and a
+duplicate line is possible). The transcript is read ONLY when it is this agent's own — its basename is
 `agent-<agent_id>.jsonl` for the payload's `agent_id`, the same test that sets
 `agent_scope: "subagent"`; a payload with no `agent_id`, or a path naming another
 agent's transcript, gets the proxy line, never another transcript's tokens.

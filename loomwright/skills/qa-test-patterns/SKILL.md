@@ -3,7 +3,7 @@ name: qa-test-patterns
 description: Test Pattern Library, assertion rules, and generation rules for QA Executor. Contains all test generation patterns including signal-driven security, UI interaction, and API test patterns.
 allowed-tools: [Read, Write, Edit, Bash]
 version: "1.0.0"
-lastUpdated: "2026-03"
+lastUpdated: "2026-04"
 ---
 
 # QA Test Patterns

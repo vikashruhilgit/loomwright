@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # automate-dismissed.sh — the `/automate` engine's dismissed-findings drafts.
 # PROTOCOL AUTHORITY: `skills/automate-loop/SKILL.md` §6 "Dismissed-findings
-# decision step (before the park)" — the THRESHOLD rule, the ask order, fix-now
+# decision step" — the THRESHOLD rule, the ask order, fix-now
 # and the next-PICK ask are written there once; this script implements the
 # mechanical half. Dispatched from `automate-helpers.sh`
 # (`exec bash "$(dirname "$0")/automate-dismissed.sh" <subcmd>`).

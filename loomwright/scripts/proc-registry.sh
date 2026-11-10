@@ -100,7 +100,9 @@
 #               registers nor descends from a registered one is counted, so each such process
 #               registers itself (the wave's lane-sampler.sh does, as kind lane owned by its
 #               coordinator).
-#       Test seam: LOOMWRIGHT_PROC_PS_SNAPSHOT=<file> is read IN PLACE of running ps (same columns).
+#       LOOMWRIGHT_PROC_PS_SNAPSHOT=<file> is read IN PLACE of running ps (same columns): a production
+#       input (janitor-report.sh passes its one shared ps snapshot, so every section reads one moment)
+#       as well as a test seam.
 #   reap [--apply] [<id>...]
 #       Without --apply (the DEFAULT): a dry run — prints the action it would take per entry, sends
 #       no signal, writes nothing. With --apply, per entry (all entries, or only the named ids):
