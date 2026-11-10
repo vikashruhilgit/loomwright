@@ -35,7 +35,9 @@
 #             (ign_salvage_list below — the runtime records a drained worktree holds,
 #             and the host's local settings file, IGN_HOST_SETTINGS) is copied to
 #             `<salvage>/ignored/<rel>` and verified byte-identical (`diff -r`),
-#             stopping at the first failure. The VERDICT is the LAST stdout line,
+#             stopping at the first failure. An entry that is itself a symlink fails
+#             (`symlinked entry`): its copy would be the link, dangling once the
+#             worktree is removed. The VERDICT is the LAST stdout line,
 #             always printed in this mode: `ignored: ok <n>` (n = entries copied;
 #             `ignored: ok 0` with no salvage directory when the tree is clean and no
 #             entry is present) or `ignored: failed <rel> — <reason>` (a script-level
@@ -490,6 +492,9 @@ if [ "$IGNORED" -eq 1 ]; then
   while IFS= read -r IGN_REL; do
     [ -n "$IGN_REL" ] || continue
     IGN_DST="$SALVAGE_DIR/ignored/$IGN_REL"
+    # A symlinked entry: `cp -pR` copies the link itself and `diff -r` follows both links, so the
+    # check would pass on a copy that dangles once the worktree is removed. Refuse it instead.
+    [ -L "$WT_TOP/$IGN_REL" ] && { IGN_VERDICT="ignored: failed $IGN_REL — symlinked entry (a copied link dangles once the worktree is removed)"; break; }   # IGNLINK
     # IGNORED_COPY_ANCHOR — test-worktree-salvage.sh's pin mutation deletes this copy.
     if ! mkdir -p "$(dirname "$IGN_DST")" 2>/dev/null || ! cp -pR "$WT_TOP/$IGN_REL" "$IGN_DST" 2>/dev/null; then
       IGN_VERDICT="ignored: failed $IGN_REL — copy failed"; break

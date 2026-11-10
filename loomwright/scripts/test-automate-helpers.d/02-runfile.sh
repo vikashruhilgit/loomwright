@@ -646,5 +646,16 @@ cr_run "$W10"
 [ "$RUN_OUT" = "current_rebuilt: $W10_ITEM pr $W10_PR state MERGED" ] \
   && grep -qxF -- "- item: $W10_ITEM | status: running | pr: $W10_PR | branch: feature/parallel-automate-10-touches-lint-and-explain" "$W10" \
   && ok "current-rebuild on the w1-10 replay: item + PR 377 + branch, status running (never awaiting_merge)" || no "w1-10 rebuild wrong: $RUN_OUT"
+# B10g. a value carrying a CR, a tab or any other control byte is refused like '|'/newline:
+# exit 1, the same `… left unchanged` message family, the run file byte-identical.
+cs_fixture "$CWD/cntrl-base" "- item: a.md | status: running | pr: https://github.com/acme/widgets/pull/1 | branch: f/a"
+for cv in cr tab soh; do
+  case "$cv" in cr) cval="$(printf 'f/a\r')" ;; tab) cval="$(printf 'f\ta')" ;; soh) cval="$(printf 'f/\001a')" ;; esac
+  cp "$CWD/cntrl-base" "$CRF"
+  cerr="$(bash "$H" current-set "$CRF" --item a.md --status running --branch "$cval" 2>&1 >/dev/null)"; rc=$?
+  if [ "$rc" -eq 1 ] && cmp -s "$CWD/cntrl-base" "$CRF" && case "$cerr" in *"left unchanged"*) true ;; *) false ;; esac; then
+    ok "current-set refuses a $cv-bearing --branch (exit 1, '… left unchanged', byte-identical)"
+  else no "current-set $cv-bearing --branch: rc=$rc err=$cerr diff=$(diff "$CWD/cntrl-base" "$CRF" | tr '\n' '|')"; fi
+done
 rm -rf "$CWD"
 

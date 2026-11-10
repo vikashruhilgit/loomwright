@@ -66,7 +66,9 @@
 #                  drain-subfloor-decision.sh `decide`. A change to this
 #                  output grammar changes that reader in the same commit.
 #   --call-max <s> OPT-IN RESUMABLE MODE (implementation-quality/02 T03). A
-#                  per-CALL ceiling (positive integer, clamped to 570) so no
+#                  per-CALL ceiling (positive integer, clamped to 570; a poll
+#                  sleep is shortened to end at it; --bound and --call-max may
+#                  be zero-padded and read as decimal) so no
 #                  single foreground call outlives the host's 600 s foreground
 #                  cap, while --bound stays the TOTAL budget across calls. The
 #                  total is a persisted absolute deadline (epoch seconds,
@@ -208,6 +210,9 @@ if [ -z "$PR_URL" ] || [ -z "$SHA" ] || [ -z "$BOUND" ]; then
   printf 'ELAPSED sha=%s required=pending review_producing=elapsed pending=bad_usage\n' "${SHA:-unknown}"
   exit 0
 fi
+# Zero-padded numbers are decimal: `$((… + BOUND))` read `08` as a bad octal literal, and the error
+# aborted the deadline block, so the run silently fell back to the non-resumable path.
+case "$BOUND" in *[!0-9]*) ;; *) BOUND=$((10#$BOUND)) ;; esac   # BOUNDDEC
 
 if ! command -v "$JQ_BIN" >/dev/null 2>&1; then
   log "jq not found — cannot parse gh output"
@@ -227,6 +232,7 @@ if [ -n "$CALL_MAX" ]; then
     printf 'ELAPSED sha=%s required=pending review_producing=elapsed pending=bad_usage\n' "$SHA"
     exit 0
   fi
+  CALL_MAX=$((10#$CALL_MAX))   # decimal, like BOUND: the ceiling arithmetic below must not read 08 as octal
   [ "$CALL_MAX" -gt 570 ] && CALL_MAX=570   # stay under the host's 600 s foreground cap
   _scope="required"
   [ "$REQUIRED_ONLY" -eq 0 ] && _scope="review:$REVIEW_PATTERN"
@@ -449,6 +455,7 @@ SECONDS=0   # bash builtin wall-clock counter — reset here so $SECONDS is the
 # rather than elapsing, and --bound 0 (a one-shot read) never waits.
 NO_LIST_GRACE="${WFC_NO_LIST_GRACE:-60}"
 case "$NO_LIST_GRACE" in ''|*[!0-9]*) NO_LIST_GRACE=60 ;; esac
+NO_LIST_GRACE=$((10#$NO_LIST_GRACE))
 case "$BOUND" in
   ''|*[!0-9]*) NO_LIST_GRACE=0 ;;
   *) [ "$NO_LIST_GRACE" -gt $((BOUND / 2)) ] && NO_LIST_GRACE=$((BOUND / 2)) ;;
@@ -584,5 +591,11 @@ EOF_ROWS
     exit 0
   fi
 
+  # Resumable mode: the last sleep of a call ends AT the per-call ceiling, never up to one interval
+  # past it. The next pass then prints CONTINUE (or a result), so the shortened INTERVAL is not reused.
+  if [ -n "$DEADLINE" ]; then
+    _left=$((CALL_MAX - SECONDS))
+    case "$INTERVAL" in ''|*[!0-9]*) ;; *) [ "$((10#$INTERVAL))" -gt "$_left" ] && INTERVAL="$_left" ;; esac   # CEILCAP
+  fi
   sleep "$INTERVAL" 2>/dev/null || sleep 1
 done

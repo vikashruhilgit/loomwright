@@ -1566,14 +1566,16 @@ leg_watch_note() {
   return 0
 }
 # af/39e AC10/AC11/AC16 — the DEFAULT ns_watch launch (no NEXT_STEP_WATCH_CMD) at the escalated park starts the
-# real automate-merge-watch.sh beside <driver>, with gh stubbed (LOOMWRIGHT_GH_BIN) to read the PR OPEN. The
+# real automate-merge-watch.sh beside <driver>, with gh stubbed (LOOMWRIGHT_GH_BIN) to read the PR OPEN — one arm for
+# the watcher's state poll, one for its rollup read (made only for an armed settle re-check). The
 # watcher registers itself: ONE merge-watch entry whose pid is the marker's pid, with this run's resolved cap,
 # the run file and a stop hint. Its `started` log line is printed only after that (synchronous) registration
 # call, so the registry is read once that line is there — the mutant side costs no timeout. Every watcher this
 # leg starts is TERMed before it asserts (its EXIT trap removes the marker).
 MW_GH_BODY='#!/usr/bin/env bash
 case "$*" in
-  "pr view "*" --json state,headRefOid,statusCheckRollup") printf "%s\n" "{\"state\":\"OPEN\",\"headRefOid\":\"247e203aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"statusCheckRollup\":[]}"; exit 0 ;;
+  "pr view "*" --json state,headRefOid") printf "%s\n" "{\"state\":\"OPEN\",\"headRefOid\":\"247e203aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0 ;;
+  "pr view "*" --json headRefOid,statusCheckRollup") printf "%s\n" "{\"headRefOid\":\"247e203aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"statusCheckRollup\":[]}"; exit 0 ;;
 esac
 exec gh "$@"
 '

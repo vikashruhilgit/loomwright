@@ -114,6 +114,11 @@
 #         named; an unreadable dir ⇒ named (never read as empty); pin mutations (the
 #         empty skip, find's failure arm, the name-every-entry join, the drain records
 #         on the list) ⇒ each leg RED
+#   AC-20 a salvage-list entry that is a SYMLINK (`.supervisor/postmortem` ⇒ an
+#         absolute link into the worktree) ⇒ `ignored: failed .supervisor/postmortem —
+#         symlinked entry …`, exit 0, no link copied — on main `cp -pR` copied the
+#         link, `diff -r` followed both and the verdict read `ignored: ok 3`; pin
+#         mutation (the symlink refusal deleted) ⇒ RED
 #
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
@@ -1277,6 +1282,31 @@ for m19 in 'emptyskip:check_ac19c:s/^      ign_empty_dir "\$e" \&\& continue$/  
     no "AC-19f gate: $n19 mutant not usable (empty, identical, or syntax error)"
   fi
 done
+
+echo "== AC-20. --ignored: a symlinked salvage-list entry fails the verdict naming it (never a copied link that dangles) =="
+# check_ac20 <script> — ign_wt with `.supervisor/postmortem` replaced by an ABSOLUTE link to the
+# tracked sub/ dir of the same worktree: `cp -pR` would copy the link and `diff -r` follow both, so
+# the copy "verifies" and then dangles once the worktree is removed. Want: the verdict names the link.
+check_ac20() {
+  local dir last
+  ign_wt ac20
+  rm -rf "$FX_WT/.supervisor/postmortem"; ln -s "$FX_WT/sub" "$FX_WT/.supervisor/postmortem"
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d20" --ignored --reason "AC-20"
+  dir="$(printf '%s\n' "$S_OUT" | head -n1)"; last="$(printf '%s\n' "$S_OUT" | tail -n1)"
+  [ "$S_RC" -eq 0 ] || return 1
+  case "$last" in "ignored: failed .supervisor/postmortem — symlinked entry"*) ;; *) return 1 ;; esac
+  [ ! -L "$dir/ignored/.supervisor/postmortem" ]
+}
+if check_ac20 "$SALVAGE"; then ok "AC-20: a symlinked entry ⇒ '$(printf '%s\n' "$S_OUT" | tail -n1)', exit 0, no link copied"
+else no "AC-20 (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+MUT20="$SCRATCH/mut20/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut20"
+grep -v '# IGNLINK$' "$SALVAGE" > "$MUT20"
+if [ -s "$MUT20" ] && ! cmp -s "$MUT20" "$SALVAGE" && bash -n "$MUT20" 2>/dev/null; then
+  if check_ac20 "$MUT20"; then no "AC-20b: AC-20 survived the symlink-refusal-deleted mutant (vacuous)"
+  else ok "AC-20b: AC-20 RED against the mutant without the symlink refusal ($(printf '%s\n' "$S_OUT" | tail -n1))"; fi
+else
+  no "AC-20b gate: mutant not usable (empty, identical, or syntax error)"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

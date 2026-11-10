@@ -16,7 +16,9 @@
 #        bash scripts/bump-version.sh --check [--base <ref>]
 #   no level argument ⇒ the highest `<!-- bump: X -->` any fragment requests (default patch);
 #   an explicit level always wins over the fragments.
-#   --dry-run prints the planned version and CHANGELOG entry and writes nothing.
+#   --dry-run prints the planned version and CHANGELOG entry and writes nothing; outside a re-fold it
+#              renders the capability contract to a scratch dir and exits 1 when the real bump would
+#              refuse it (a contract already stale before the bump).
 #   --refold   re-fold ONLY: no-op (exit 0) unless this branch already carries a bump AND a fragment
 #              is pending; then it folds every fragment into that ONE bump (see RE-FOLD below).
 #   --check    read-only content gate (see CHECK below); exit 0 consistent, 1 violated, 2 cannot check.
@@ -77,7 +79,10 @@
 #
 # HONEST LIMITS: only the loomwright plugin is versioned (stackpack / mysql-mcp are never touched).
 # A crash between two renames is restored by the EXIT trap; a SIGKILL is not trappable — the backups
-# are then left in the .bump-version.* scratch dir under the repo root for a manual restore.
+# are then left in the .bump-version.* scratch dir under the git dir (`git rev-parse
+# --absolute-git-dir`) for a manual restore. Every scratch dir lives there, never in the working
+# tree, so a leftover one is invisible to `git status` and `git add -A` cannot commit it; outside a
+# git repo the scratch dir falls back to the repo root.
 #
 # CAPABILITIES: loomwright/capabilities.json and loomwright/scripts/build-capabilities.sh must both
 # exist or both be absent (absent only in a fixture tree that predates the contract); one without the
@@ -97,7 +102,8 @@
 # blob to read back (commit the fragment, then bump); B is origin/main as last fetched.
 #
 # Exit: 0 bumped / re-folded / nothing to re-fold / check consistent (or dry run printed),
-#       1 refused / failed (nothing left changed) / check violated, 2 check could not run.
+#       1 refused / failed (nothing left changed) / check violated / dry run predicts a refusal,
+#       2 check could not run.
 # Portability: bash 3.2 + BSD userland (macOS) and GNU (CI): no sed -i, no mapfile, temp file + mv.
 set -uo pipefail
 export LC_ALL=C
@@ -117,6 +123,9 @@ VALIDATORS="${BUMP_VERSION_VALIDATORS:-scripts/validate-version.sh:scripts/check
 ENTRY_RE='^\*\*v[0-9]+\.[0-9]+\.[0-9]+ — '
 
 die() { echo "bump-version: $*" >&2; exit 1; }
+
+# The parent of every .bump-version.* scratch dir: the git dir, so no leftover reaches the working tree.
+scratch_parent="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -d "$scratch_parent" ] || scratch_parent="$repo_root"
 
 usage() {
   sed -n '/^# usage:/,/CI passes a dedicated fetched ref/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -230,13 +239,18 @@ verify_rendered() { # <work dir>
   verify_marketplace_edit "$w/bak/marketplace.json" "$w/new.marketplace.json" || return 1
   [ "$(grep -m1 -E "$ENTRY_RE" "$w/new.CHANGELOG.md")" = "$entry" ] || { echo "CHANGELOG.md top entry is not the new entry"; return 1; }
   [ "$(( $(wc -l < "$w/new.CHANGELOG.md") - $(wc -l < "$w/bak/CHANGELOG.md") ))" = "2" ] || { echo "CHANGELOG.md would change more than the inserted entry"; return 1; }
-  if [ "$caps" -eq 1 ]; then
-    [ "$(jq -r '.plugin_version' "$w/new.capabilities.json" 2>/dev/null)" = "$new_ver" ] \
-      || { echo "capabilities.json plugin_version is not $new_ver after regeneration"; return 1; }
-    [ "$(jq -cS 'del(.plugin_version)' "$w/bak/capabilities.json" 2>/dev/null)" = "$(jq -cS 'del(.plugin_version)' "$w/new.capabilities.json" 2>/dev/null)" ] \
-      && [ "$(changed_lines "$w/bak/capabilities.json" "$w/new.capabilities.json")" = "1" ] \
-      || { echo "capabilities.json would change more than plugin_version — the committed contract is stale; run bash $CAPS_GEN, commit it, then bump"; return 1; }
-  fi
+  if [ "$caps" -eq 1 ]; then verify_caps_rendered "$w/bak/capabilities.json" "$w/new.capabilities.json" || return 1; fi
+  return 0
+}
+
+# verify_caps_rendered <committed contract> <regenerated contract> — the capabilities half of
+# verify_rendered, shared with --dry-run: the regenerated copy may differ only in plugin_version.
+verify_caps_rendered() {
+  [ "$(jq -r '.plugin_version' "$2" 2>/dev/null)" = "$new_ver" ] \
+    || { echo "capabilities.json plugin_version is not $new_ver after regeneration"; return 1; }
+  [ "$(jq -cS 'del(.plugin_version)' "$1" 2>/dev/null)" = "$(jq -cS 'del(.plugin_version)' "$2" 2>/dev/null)" ] \
+    && [ "$(changed_lines "$1" "$2")" = "1" ] \
+    || { echo "capabilities.json would change more than plugin_version — the committed contract is stale; run bash $CAPS_GEN, commit it, then bump"; return 1; }
   return 0
 }
 
@@ -564,7 +578,7 @@ set_caps_version() {
 do_refold() {
   local i p name lvl eff_rank=0 rc names="" t
   CHK=()
-  CW="$(mktemp -d "$repo_root/.bump-version.XXXXXX")" || die "cannot create a scratch dir under $repo_root"
+  CW="$(mktemp -d "$scratch_parent/.bump-version.XXXXXX")" || die "cannot create a scratch dir under $scratch_parent"
   RF_PHASE="prepare"; RF_MADE=()
   trap 'refold_cleanup' EXIT
   trap 'exit 1' INT TERM HUP
@@ -672,18 +686,33 @@ new_ver="$(next_version "$old_ver" "$level")"
 entry="$(fold_entry "$new_ver")"
 
 if [ "$dry_run" -eq 1 ]; then
+  # The contract is rendered to a scratch dir and checked exactly as the real bump checks it, so a
+  # contract that is already stale is reported here instead of claimed as a plugin_version-only change.
+  dry_rc=0; caps_line=""
+  if [ "$caps" -eq 1 ]; then
+    WORK="$(mktemp -d "$scratch_parent/.bump-version.XXXXXX")" || die "cannot create a scratch dir under $scratch_parent"
+    trap 'rm -rf "$WORK"' EXIT
+    if ! render_plugin "$PLUGIN_JSON" "$WORK/new.plugin.json" \
+       || ! render_capabilities "$WORK/new.plugin.json" "$WORK/new.capabilities.json"; then
+      caps_line="  REFUSES:   cannot regenerate $CAPS_JSON with $CAPS_GEN — the real bump stops here"; dry_rc=1
+    elif why="$(verify_caps_rendered "$CAPS_JSON" "$WORK/new.capabilities.json")"; then
+      caps_line="  also regenerates: $CAPS_JSON (plugin_version only)"
+    else
+      caps_line="  REFUSES:   $why"; dry_rc=1
+    fi
+  fi
   echo "bump-version: DRY RUN — nothing written"
   echo "  version:   $old_ver -> $new_ver ($level, from $level_src)"
   echo "  fragments: ${frags[*]}"
-  [ "$caps" -eq 1 ] && echo "  also regenerates: $CAPS_JSON (plugin_version only)"
+  [ -n "$caps_line" ] && echo "$caps_line"
   echo "  CHANGELOG entry:"
   printf '%s\n' "$entry"
   scan_reminder "$level"
-  exit 0
+  exit "$dry_rc"
 fi
 
 # ---- 2..6: back up, render, rename, delete, validate — restore on any failure -----------------
-WORK="$(mktemp -d "$repo_root/.bump-version.XXXXXX")" || die "cannot create a scratch dir under $repo_root"
+WORK="$(mktemp -d "$scratch_parent/.bump-version.XXXXXX")" || die "cannot create a scratch dir under $scratch_parent"
 TARGETS="$CHANGELOG $PLUGIN_JSON $MARKETPLACE_JSON"   # rename order
 [ "$caps" -eq 1 ] && TARGETS="$TARGETS $CAPS_JSON"
 phase="prepare"          # prepare -> mutate -> done

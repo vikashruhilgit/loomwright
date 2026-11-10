@@ -45,6 +45,11 @@
 #       restoring checkout stubbed to a no-op) is refused by the detached-HEAD verify.
 #   (o) mutation controls, in-suite, for (l) (m) (n) (p) (q): each VALID mutant reverts one fix, still
 #       PROVES a valid run (faithful), and turns its test RED.
+#   (r) a TMPDIR inside the repo (direct, or a symlink to it) is not used: the scratch dir goes under
+#       /tmp, so a check that reads `git status` never sees a prove-rule-check. path (PROVEN), and the
+#       in-repo dir stays empty; mutation control (r2): the containment check removed ⇒ FAILS_NOW.
+#   (s) cwd inside .git (`--git-dir` ok, `--show-toplevel` fails) ⇒ UNPROVABLE (not_a_git_repo) and no
+#       proof lands in the working tree; mutation control (s2): the git-dir case removed ⇒ RED.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -728,6 +733,71 @@ if [ "$CI_FS" -eq 1 ] && [ "$RL_UP" != "$RL" ] && [ "$RL_UP" -ef "$RL" ]; then
 else
   echo "  skip: (o4) needs a case-insensitive filesystem, like (l)"
 fi
+
+# ============================================================================
+echo "== (r) a TMPDIR inside the repo: the scratch dir goes under /tmp, the user's tree stays clean =="
+# Leg 1 writes its logs into the scratch dir WHILE the check runs, so a check that reads
+# `git status` saw `?? <tmpdir>/prove-rule-check.*/logs/now.out` in the user's tree and failed
+# (FAILS_NOW). The check below asserts exactly that no such path is visible, and still needs the
+# token (so the counterexample proves). A symlinked alias of the in-repo TMPDIR is caught too.
+CHECK_R='grep -q TOKEN src/a.txt && ! grep -q prove-rule-check. < <(git status --porcelain --untracked-files=all)'
+# r_case <prover> <repo> <tmpdir> — one run; sets OUT, RC, BEFORE, AFTER.
+r_case() {
+  BEFORE="$(state "$2" 2>&1)"
+  OUT="$( ( cd "$2" && TMPDIR="$3" bash "$1" --check "$CHECK_R" --counterexample "$DEL_PATCH" --confirm ) </dev/null 2>&1 )"; RC=$?
+  AFTER="$(state "$2" 2>&1)"
+}
+r_ok() {   # r_ok <prover> — exit 0 iff (r) holds for a direct and a symlinked in-repo TMPDIR; RWHY says why not
+  local rr t
+  RWHY=""
+  for t in direct link; do
+    rr="$(new_repo)"; mkdir "$rr/tmpin"
+    if [ "$t" = link ]; then rm -f "$ROOT/tmplink"; ln -s "$rr/tmpin" "$ROOT/tmplink"; r_case "$1" "$rr" "$ROOT/tmplink"
+    else r_case "$1" "$rr" "$rr/tmpin"; fi
+    if [ "$RC" -ne 0 ] || [ "$(last_line)" != "verdict: PROVEN" ] || [ -n "$(ls -A "$rr/tmpin")" ] \
+       || [ "$BEFORE" != "$AFTER" ] || ! grep -q 'lies inside the repo' <<<"$OUT"; then
+      RWHY="$RWHY [$t: rc=$RC $(last_line) tmpin=[$(ls -A "$rr/tmpin" | tr '\n' ' ')]]"
+    fi
+  done
+  [ -z "$RWHY" ]
+}
+if r_ok "$PROVER"; then ok "(r1) an in-repo TMPDIR (direct, and through a symlink) ⇒ PROVEN with the scratch dir under /tmp; the check never saw a prove-rule-check. path; tmpin empty, status unchanged"
+else no "(r1) in-repo TMPDIR:$RWHY"; fi
+MUT_S="$ROOT/mutant-scratchin-prove-rule-check.sh"
+sed -e 's|^if .*   # SCRATCHIN$|if false; then   # MUTANT: no scratch-inside-TOP check|' -e '/# SCRATCHIN-VERIFY$/d' "$PROVER" > "$MUT_S"
+if mutant_ok "$MUT_S" '# MUTANT: no scratch-inside-TOP check' && ! grep -q 'SCRATCHIN-VERIFY' "$MUT_S"; then
+  if r_ok "$MUT_S"; then no "(r2) MUTATION CONTROL: without the scratch-inside-TOP check (r1) still passed — it proves nothing"
+  else ok "(r2) MUTATION CONTROL: without the scratch-inside-TOP check (r1) goes RED:$RWHY"; fi
+else
+  no "(r2) the scratch-inside-TOP mutation did not land — the control proves nothing"
+fi
+rm -f "$MUT_S" "$ROOT/tmplink"
+
+# ============================================================================
+echo "== (s) cwd inside .git: containment is unknown, so no proof lands in the working tree =="
+# `--show-toplevel` fails there while `--git-dir` succeeds; TOP was empty with no TOP_ERR, so an
+# in-tree --out received an UNPROVABLE (not_a_git_repo) proof.
+s_ok() {   # s_ok <prover> — exit 0 iff (s) holds; SWHY says why not
+  local rs
+  rs="$(new_repo)"
+  RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"
+  BEFORE="$(state "$rs" 2>&1)"
+  OUT="$( ( cd "$rs/.git" && TMPDIR="$RUN_TMP" bash "$1" --check 'true' --counterexample "$DEL_PATCH" --out "$rs/proof148.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+  AFTER="$(state "$rs" 2>&1)"
+  SWHY="rc=$RC $(last_line) proof=$([ -e "$rs/proof148.json" ] && echo WRITTEN || echo absent)"
+  [ "$RC" -eq 2 ] && [ "$(last_line)" = "verdict: UNPROVABLE (not_a_git_repo)" ] && [ ! -e "$rs/proof148.json" ] && [ "$BEFORE" = "$AFTER" ]
+}
+if s_ok "$PROVER"; then ok "(s1) cwd inside .git ⇒ UNPROVABLE (not_a_git_repo), exit 2, no proof in the working tree, status unchanged"
+else no "(s1) cwd inside .git: $SWHY"; fi
+MUT_G="$ROOT/mutant-gitdir-prove-rule-check.sh"
+sed 's|^\[ -z "\$TOP" \] .*   # GITDIRCASE$|:   # MUTANT: no git-dir containment case|' "$PROVER" > "$MUT_G"
+if mutant_ok "$MUT_G" '# MUTANT: no git-dir containment case'; then
+  if s_ok "$MUT_G"; then no "(s2) MUTATION CONTROL: without the git-dir case (s1) still passed — it proves nothing"
+  else ok "(s2) MUTATION CONTROL: without the git-dir case (s1) goes RED ($SWHY)"; fi
+else
+  no "(s2) the git-dir mutation did not land — the control proves nothing"
+fi
+rm -f "$MUT_G"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

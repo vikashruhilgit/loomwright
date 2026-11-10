@@ -172,7 +172,7 @@
 #   different pid (the holder a caller saw refused it has since released, and
 #   another took the lock), it prints `dead`, never the newcomer's `alive` —
 #   a caller judging a refusal fails toward "not running". A non-numeric
-#   `--pid` is a usage error.
+#   or empty `--pid` is a usage error (an empty one would unbind the check).
 #
 # probe: read-only — would an `acquire --session-id <id>` be refused by a
 #   holder that is RUNNING? Prints exactly one line, always exit 0:
@@ -214,6 +214,7 @@ SESSION_ID=""
 ROOT=""
 FORCE=0
 EXPECT_PID=""
+PID_GIVEN=0   # --pid was passed: its value must then be a number (`--pid ''` is not "no --pid")
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -221,7 +222,7 @@ while [ $# -gt 0 ]; do
     --session-id)   SESSION_ID="${2:-}"; shift 2 ;;
     --root)         ROOT="${2:-}"; shift 2 ;;
     --force-unlock) FORCE=1; shift ;;
-    --pid)          EXPECT_PID="${2:-}"; shift 2 ;;
+    --pid)          EXPECT_PID="${2:-}"; PID_GIVEN=1; shift 2 ;;
     -h|--help)      die_usage ;;
     *)              die_usage ;;
   esac
@@ -491,7 +492,9 @@ cmd_status() {
 
 cmd_liveness() {
   local lk_pid
-  case "$EXPECT_PID" in *[!0-9]*) die_usage ;; esac
+  if [ "$PID_GIVEN" -eq 1 ]; then
+    case "$EXPECT_PID" in ''|*[!0-9]*) die_usage ;; esac
+  fi
   lk_pid="$(meta_get pid)"
   if [ ! -d "$LOCK_DIR" ] || [ -z "$lk_pid" ]; then
     echo "unknown"

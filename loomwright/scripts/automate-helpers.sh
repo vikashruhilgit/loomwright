@@ -489,7 +489,11 @@ _ge_protection_class() {
 #           `.git/info/exclude` and a repo-local or env-injected `core.excludesFile` cannot hide
 #           an untracked file, and an untracked `.gitignore` git reads (outside an ignored
 #           directory) parks; the GIT_CONFIG_* env injection family is unset and fsmonitor /
-#           untracked-cache are off; a root whose top level cannot be read parks. SUBMODULES:
+#           untracked-cache are off; a root whose top level cannot be read parks, and so does
+#           one whose physical path is neither that top level nor beneath it (a `core.worktree`
+#           pointing the repo at another tree). With neither HOME nor XDG_CONFIG_HOME set there
+#           is no user global config: the `--global` read is skipped and the key read as unset.
+#           SUBMODULES:
 #           the status read runs with `--ignore-submodules=none` (a committed `.gitmodules`
 #           `ignore = all` cannot hide a dirty submodule or one checked out at a commit other
 #           than the recorded one), and every checked-out submodule gets the same reads,
@@ -1017,6 +1021,16 @@ GEPARTS
   if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
     root_top="$(CDPATH='' cd -P -- "$root_top" 2>/dev/null && pwd -P)" || root_top=""
   fi
+  # The tree read must be the tree --root IS: the physical --root has to be the toplevel or
+  # lie beneath it (`_ge_inside` on `<root>/.`: device + inode ancestor walk). A `core.worktree`
+  # in the repo's own config points the toplevel at ANOTHER tree, whose cleanliness says
+  # nothing about --root's — that, or a --root that does not resolve, reads as a failed
+  # toplevel read (the dirty-tree park below). A subdirectory --root is beneath it and decides.
+  if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
+    local root_p=""
+    root_p="$(CDPATH='' cd -P -- "$root" 2>/dev/null && pwd -P)" || root_p=""
+    if [ -z "$root_p" ] || ! _ge_inside "$root_p/." "$root_top"; then root_top=""; fi
+  fi
   if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
     # USER-SCOPE global excludes (review iteration 2): resolved exactly as git does for the
     # user — `core.excludesFile` from the user's own global config (`--global --includes`,
@@ -1030,7 +1044,10 @@ GEPARTS
     # bytes an ignore source and is refused. `.git/info/exclude`, a repo-local
     # `core.excludesFile` and the system config are still never read. rc 1 = key unset; any
     # other failure parks.
-    ge_xf="$(_ge_git -C "$root_top" config --global --includes --path --get core.excludesFile 2>/dev/null)" || ge_xf_rc=$?
+    # No HOME and no XDG_CONFIG_HOME ⇒ there is no user global config for git to read (it
+    # would fail, not answer "unset"), so the read is skipped and taken as key-unset (rc 1).
+    local ge_xf_nohome=""; [ -n "${HOME:-}" ] || [ -n "${XDG_CONFIG_HOME:-}" ] || ge_xf_nohome=1
+    ge_xf="$([ -z "$ge_xf_nohome" ] || exit 1; _ge_git -C "$root_top" config --global --includes --path --get core.excludesFile 2>/dev/null)" || ge_xf_rc=$?
     if [ "$ge_xf_rc" -eq 1 ]; then
       ge_xf_rc=0
       if [ -n "${XDG_CONFIG_HOME:-}" ]; then ge_xf="$XDG_CONFIG_HOME/git/ignore"

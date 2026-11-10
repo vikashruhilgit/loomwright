@@ -721,6 +721,63 @@ gate; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'NOTE \[bump-fragment-guard\] skipped' "$TMP/gate.out"; check $? "guard: unresolvable origin/main skips with a visible note"
 set_ver "$base_ver"
 
+# ---- 11. scratch dirs live under the git dir; --dry-run checks the capability contract ------------
+echo "# bump-version.sh scratch location and the dry-run contract check"
+# scratch_in_status <dir> — every .bump-version. path `git status` lists (expected: none).
+scratch_in_status() { grep -F '.bump-version.' <<<"$(g "$1" status --porcelain --untracked-files=all)"; }
+# scratch_in_gitdir <dir> — how many .bump-version.* scratch dirs sit directly under the git dir.
+scratch_in_gitdir() { find "$1/.git" -maxdepth 1 -name '.bump-version.*' -type d | wc -l | tr -d ' '; }
+
+D="$TMP/sc1"; make_fixture "$D"; frag "$D" x.md 'X\n'
+run_bump "$D"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(scratch_in_gitdir "$D")" = "0" ] && [ -z "$(scratch_in_status "$D")" ]
+check $? "scratch: a successful bump removes its scratch dir (none in the git dir, none in git status)"
+
+# A SIGKILL is not trappable, so the backups stay behind: they must stay out of the working tree.
+D="$TMP/sc2"; make_fixture "$D"; frag "$D" x.md 'X\n'
+printf '#!/usr/bin/env bash\nkill -KILL "$PPID"\n' > "$D/scripts/kill-validator.sh"; g "$D" add -A && g "$D" commit -q -m kill
+( cd "$D" && BUMP_VERSION_VALIDATORS="scripts/kill-validator.sh" bash scripts/bump-version.sh; exit $? ) > "$TMP/last.out" 2>&1; rc=$?   # `; exit $?`: no exec, so the "Killed" notice lands in last.out
+[ "$rc" -ne 0 ] && [ "$(scratch_in_gitdir "$D")" = "1" ] && [ -n "$(find "$D/.git" -maxdepth 3 -path '*/.bump-version.*/bak/plugin.json')" ] \
+  && [ -z "$(scratch_in_status "$D")" ]
+check $? "scratch: a SIGKILLed bump keeps its backups under the git dir; git status --untracked-files=all lists no .bump-version. path"
+
+# The re-fold's own scratch dir too: kill the child bump AND the re-fold that started it.
+D="$TMP/sc3"; make_branch "$D"; bump_commit "$D"; frag "$D" b.md 'Late\n'
+cat > "$D/scripts/kill-validator.sh" <<'EOF'
+#!/usr/bin/env bash
+# SIGKILL the child bump and its parent re-fold: neither EXIT trap runs.
+gp="$(ps -o ppid= -p "$PPID" | tr -d ' ')"
+kill -KILL "$gp" "$PPID"
+EOF
+g "$D" add -A && g "$D" commit -q -m kill
+( cd "$D" && BUMP_VERSION_VALIDATORS="scripts/kill-validator.sh" bash scripts/bump-version.sh; exit $? ) > "$TMP/last.out" 2>&1; rc=$?   # `; exit $?`: no exec, so the "Killed" notice lands in last.out
+[ "$rc" -ne 0 ] && ! grep -qF 're-folded this branch' "$TMP/last.out" && [ "$(scratch_in_gitdir "$D")" = "2" ] && [ -z "$(scratch_in_status "$D")" ]
+check $? "scratch: a SIGKILLed re-fold keeps both scratch dirs (re-fold + child bump) under the git dir; git status lists neither"
+
+# --dry-run renders the contract and checks it the way the real bump does.
+D="$TMP/sc4"; make_caps_fixture "$D"
+printf -- '---\nname: loomwright:b\ntools: Read\n---\nbody\n' > "$D/loomwright/agents/b.md"
+g "$D" add -A && g "$D" commit -q -m "agent added without regenerating the contract"; frag "$D" x.md 'X\n'
+before="$(tree_sum "$D")"; run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 'REFUSES:' "$TMP/last.out" && grep -qF 'the committed contract is stale' "$TMP/last.out" \
+  && ! grep -qF '(plugin_version only)' "$TMP/last.out" && [ "$(scratch_in_gitdir "$D")" = "0" ] && [ -z "$(scratch_in_status "$D")" ]
+check $? "dry-run: a contract stale BEFORE the bump is reported stale (exit 1), never 'plugin_version only'; nothing written"
+D="$TMP/sc5"; make_caps_fixture "$D"; frag "$D" x.md 'X\n'; before="$(tree_sum "$D")"
+run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF "also regenerates: $CJ (plugin_version only)" "$TMP/last.out" \
+  && ! grep -qF 'REFUSES:' "$TMP/last.out" && [ "$(scratch_in_gitdir "$D")" = "0" ]
+check $? "dry-run: a fresh contract still prints 'also regenerates: … (plugin_version only)' (exit 0, nothing written)"
+D="$TMP/sc6"; make_caps_fixture "$D"; printf '#!/usr/bin/env bash\nexit 1\n' > "$D/loomwright/scripts/build-capabilities.sh"
+g "$D" add -A && g "$D" commit -q -m "generator broken"; frag "$D" x.md 'X\n'; before="$(tree_sum "$D")"
+run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF "REFUSES:   cannot regenerate $CJ" "$TMP/last.out" && [ "$(scratch_in_gitdir "$D")" = "0" ]
+check $? "dry-run: a generator that fails is reported (exit 1, nothing written, no scratch dir left)"
+# Outside a git repo the scratch dir falls back to the repo root and is still removed.
+D="$TMP/sc7"; make_fixture "$D"; frag "$D" x.md 'X\n'; rm -rf "$D/.git"
+run_bump "$D"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ver_of "$D")" = "1.2.4 1.2.4 1.2.4" ] && [ -z "$(find "$D" -maxdepth 1 -name '.bump-version.*')" ]
+check $? "scratch: outside a git repo the bump still works and leaves no scratch dir at the repo root"
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1
