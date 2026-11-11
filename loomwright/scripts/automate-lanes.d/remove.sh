@@ -107,7 +107,9 @@ _lanes_remove_refusals() {
   # <<< awaiting-input check
   state="$(_lt_get "$LN_TABLE" "$L" 8)"
   if [ "$abandon" = 0 ]; then
-    if [ "$state" = gone ] || { [ -f "$rf" ] && grep -qE '(status|pause_reason): *gone' "$rf"; }; then
+    # rstate too: a lane reads gone from its live PR state (any PR-carrying park, #890), which neither
+    # the table nor the run file records — without it the refusal said "metadata not pushed" instead.
+    if [ "$state" = gone ] || [ "$rstate" = gone ] || { [ -f "$rf" ] && grep -qE '(status|pause_reason): *gone' "$rf"; }; then
       _refuse "gone (PR closed unmerged) — a human runs lane-remove --abandon"; return 1
     fi
   fi

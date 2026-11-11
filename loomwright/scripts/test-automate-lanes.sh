@@ -102,6 +102,8 @@
 #   SC scope-outside (lane-scope-regate Part A, automate-lanes.d/scope.sh): a brief's paths outside its item's
 #     Touches — outside / inside / unknown / unreadable (fail CLOSED: every brief path), companions included,
 #     changelog.d/ exempt, _lanes_declared's LD_TOUCHES contract kept; one mutation control per Pin mutations row
+#   E890 an escalated / failed / drain_died lane whose PR closed unmerged reads `gone` and lane-remove --abandon
+#     records + pushes it; OPEN / hand-MERGED / unreadable keep the park; rate_limit untouched; mutation control
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
