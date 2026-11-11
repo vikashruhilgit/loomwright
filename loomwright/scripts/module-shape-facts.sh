@@ -27,12 +27,12 @@
 # <reason> one of: bad_args | not_a_git_repo | bad_ref | git_failed | no_changes | binary_only |
 # deleted_only | no_text_files. A consumer must read empty stdout as "facts unavailable", never as
 # "no structural issue" (CLAUDE.md §"Failure-Mode Invariants": a fail-SAFE reader consumed by a lens).
-# A failed repo-wide name scan keeps the line facts and adds `names_unavailable` on stderr.
+# A failed repo-wide name scan or added-names diff keeps the line facts and adds `names_unavailable` on stderr.
 #
 # Definition detection — approximate and language-agnostic by design (a false positive costs
 # reviewer judgement only, never a gate). A definition line is one of:
 #   `function <name>` (shell, JS/TS; any non-identifier character or line start before `function`)
-#   `def <name>` / `async def <name>` at line start (Python)
+#   `def <name>` / `async def <name>` at column 0 (Python; an indented method `def` is not read)
 #   `const|let|var <name> = ` followed by `function`, `(`, `async` or `<param> =>` (JS/TS)
 #   `<name>()` at line start — shell files only (`.sh`/`.bash`/`.zsh`/`.bats`/`.ksh` or no extension),
 #     so a JS method or a call in another language is not read as a definition
@@ -101,7 +101,11 @@ done
 git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || no_facts "not_a_git_repo" "root=$root"  # pin: not-a-repo-guard
 git -C "$root" rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1 || no_facts "bad_ref" "base ref not found: $base"  # pin: base-ref-guard
 git -C "$root" rev-parse --verify --quiet "$head^{commit}" >/dev/null 2>&1 || no_facts "bad_ref" "head ref not found: $head"
-mb="$(git -C "$root" merge-base "$base" "$head" 2>/dev/null)" || no_facts "git_failed" "no merge base for $base and $head"
+# <head> is named by its commit id, resolved ONCE here: the merge base, every diff, the cat-file
+# specs and the repo-wide git grep all read that one tree, so a branch that moves mid-run cannot
+# make the facts describe two different trees.
+hrev="$(git -C "$root" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" || no_facts "git_failed" "cannot resolve head $head"
+mb="$(git -C "$root" merge-base "$base" "$hrev" 2>/dev/null)" || no_facts "git_failed" "no merge base for $base and $head"
 # Every later call runs from the top level: a --root below it would scope the repo-wide name scan
 # (git grep) to that subdirectory.
 root="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || no_facts "git_failed" "cannot resolve the top level of the repo"
@@ -112,8 +116,8 @@ trap 'rm -rf "$tmp"' EXIT
 
 G() { git -C "$root" -c core.quotePath=false "$@"; }
 
-G diff --no-renames --no-ext-diff --name-status -z "$base...$head" > "$tmp/status" 2>"$tmp/err" || no_facts "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"  # pin: all-touched-paths
-G diff --no-renames --no-ext-diff --numstat -z "$base...$head" > "$tmp/numstat" 2>"$tmp/err" || no_facts "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"
+G diff --no-renames --no-ext-diff --name-status -z "$base...$hrev" > "$tmp/status" 2>"$tmp/err" || no_facts "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"  # pin: all-touched-paths
+G diff --no-renames --no-ext-diff --numstat -z "$base...$hrev" > "$tmp/numstat" 2>"$tmp/err" || no_facts "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"
 
 # Binary paths: numstat prints `-<TAB>-<TAB><path>` for them.
 TAB="$(printf '\t')"
@@ -133,10 +137,6 @@ while IFS= read -r -d '' -u 3 st && IFS= read -r -d '' -u 3 p; do
   grep -qxF -- "$p" "$tmp/binary" && { n_bin=$((n_bin + 1)); continue; }  # pin: binary-skip
   printf '%s\n' "$p" >> "$tmp/kept"
 done 3< "$tmp/status"
-
-# Every cat-file spec below names <head> by its commit id, resolved once, so a branch that moves
-# mid-run cannot hand the type check and the content stream two different trees.
-hrev="$(G rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" || no_facts "git_failed" "cannot resolve head $head"
 
 # Object type at <head>; anything but a blob (a submodule, a tree, a path gone at head) is skipped.
 REV="$hrev" awk '{ print ENVIRON["REV"] ":" $0 }' "$tmp/kept" \
@@ -198,8 +198,8 @@ function defs(p, t,   s, r) {
     print p "\t" s
     r = substr(r, RSTART + RLENGTH)
   }
-  if (match(t, /^[ \t]*(async[ \t]+)?def[ \t]+[A-Za-z_][A-Za-z0-9_]*/)) {
-    s = substr(t, RSTART, RLENGTH); sub(/^[ \t]*(async[ \t]+)?def[ \t]+/, "", s); print p "\t" s
+  if (match(t, /^(async[ \t]+)?def[ \t]+[A-Za-z_][A-Za-z0-9_]*/)) {
+    s = substr(t, RSTART, RLENGTH); sub(/^(async[ \t]+)?def[ \t]+/, "", s); print p "\t" s
   }
   if (match(t, /(^|[^A-Za-z0-9_$.])(const|let|var)[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(async[ \t(]|function|\(|[A-Za-z_$][A-Za-z0-9_$]*[ \t]*=>)/)) {
     s = substr(t, RSTART, RLENGTH); sub(/^[^A-Za-z]*/, "", s); sub(/^(const|let|var)[ \t]+/, "", s); sub(/[ \t]*=.*$/, "", s)
@@ -215,7 +215,8 @@ function defs(p, t,   s, r) {
 # Names the diff ADDS: `+` definitions per file, minus `-` definitions of the same file. The diff's
 # header lines (between `diff --git` and the first `@@`) are skipped, so a content line that starts
 # with `+++`/`---` is still read as content. Each line becomes `<A|R><path><SOH><text>`.
-G diff --no-renames --no-ext-diff --no-color -U0 --src-prefix=a/ --dst-prefix=b/ "$base...$head" 2>/dev/null \
+names_ok=1; names_why=""
+G diff --no-renames --no-ext-diff --no-color -U0 --src-prefix=a/ --dst-prefix=b/ "$base...$hrev" 2>/dev/null \
   | awk '
       /^diff --git / { hdr = 1; minus = ""; cur = ""; next }
       hdr && /^--- / { minus = substr($0, 5); sub(/^a\//, "", minus); next }
@@ -225,6 +226,9 @@ G diff --no-renames --no-ext-diff --no-color -U0 --src-prefix=a/ --dst-prefix=b/
       /^\+/ { print "A" cur "\001" substr($0, 2); next }
       /^-/  { print "R" cur "\001" substr($0, 2); next }
     ' > "$tmp/diffdefs.in"
+# A failed added-names diff would yield no added name and so no shared-name line: say so.
+diff_rc=$?
+[ "$diff_rc" -eq 0 ] || { names_ok=0; names_why="added-names diff exit $diff_rc"; }
 awk "$DEF_AWK"'{ i = index($0, "\001"); if (i > 1) defs(substr($0, 1, i - 1), substr($0, i + 1)) }' "$tmp/diffdefs.in" \
   | awk -F'\t' '
       { k = substr($1, 1, 1); p = substr($1, 2); key = p "\t" $2 }
@@ -233,15 +237,14 @@ awk "$DEF_AWK"'{ i = index($0, "\001"); if (i > 1) defs(substr($0, 1, i - 1), su
     ' | sort -u > "$tmp/added_names"
 
 # Repo-wide definitions at <head>: one git grep prefilter, the SAME extractor, deduplicated.
-names_ok=1
 G -c grep.lineNumber=false -c grep.column=false grep -I -z --no-color -E \
   -e 'function[[:space:]]' -e '\(\)' -e '(const|let|var)[[:space:]]' -e 'def[[:space:]]' \
-  "$head" -- ':(exclude)*.md' ':(exclude)*.markdown' ':(exclude)*.mdx' ':(exclude)*.txt' \
+  "$hrev" -- ':(exclude)*.md' ':(exclude)*.markdown' ':(exclude)*.mdx' ':(exclude)*.txt' \
   ':(exclude)*.rst' ':(exclude)*.adoc' > "$tmp/grep" 2>/dev/null
 grep_rc=$?
-[ "$grep_rc" -le 1 ] || names_ok=0
+[ "$grep_rc" -le 1 ] || { names_ok=0; names_why="${names_why:+$names_why, }git grep exit $grep_rc"; }
 tr '\000' '\001' < "$tmp/grep" \
-  | HEADPFX="$head:" awk "$DEF_AWK"'{
+  | HEADPFX="$hrev:" awk "$DEF_AWK"'{
       i = index($0, "\001"); if (i < 2) next
       p = substr($0, 1, i - 1); hp = ENVIRON["HEADPFX"]
       if (index(p, hp) == 1) p = substr(p, length(hp) + 1)
@@ -268,7 +271,7 @@ if [ "$names_ok" -eq 1 ]; then
     printf 'shared-name: %s defined in %s files: %s%s\n' "$name" "$nfiles" "$shown" "$more" >> "$tmp/names"
   done < "$tmp/cand"
 else
-  printf '%s: names_unavailable (git grep exit %s) — line facts only\n' "$SELF" "$grep_rc" >&2
+  printf '%s: names_unavailable (%s) — line facts only\n' "$SELF" "$names_why" >&2
 fi
 
 # ---------------------------------------------------------------------------

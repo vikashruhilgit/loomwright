@@ -18,7 +18,8 @@
 #   F. AC11 — every no-facts case exits 0 with EMPTY stdout and its OWN stderr reason: bad args,
 #      missing base ref (named), missing head ref, not a git repo, binary-only diff, deleted-only
 #      diff, empty diff, mixed deleted+binary diff (no_text_files), no merge base (git_failed); and
-#      a failed repo-wide name scan keeps the line facts with `names_unavailable` on stderr
+#      a failed repo-wide name scan or added-names diff keeps the line facts with `names_unavailable`
+#      on stderr; a head branch moving mid-run never mixes trees; an indented Python method is no def
 #   G. wording pins: AC6 single home of the line threshold (exact AC6 pattern), AC4b
 #      `deliberate per-file convention`, AC12 "facts unavailable", AC5 severities, step 1h's base
 #      rule, and that the script itself holds no threshold
@@ -122,6 +123,8 @@ printf 'export function redact(s) {\n  return s\n}\n' > "$R/r1.js"
 printf 'async function redact(s: string) {\n  return s\n}\n' > "$R/r2.ts"
 printf 'class A {\n  render() {\n    go()\n  }\n}\n' > "$R/m1.js"
 printf 'class B {\n  render() {\n    go()\n  }\n}\n' > "$R/m2.js"
+printf 'class P:\n    def __init__(self):\n        pass\n' > "$R/py_a.py"
+printf 'class Q:\n    async def __init__(self):\n        pass\n' > "$R/py_b.py"
 printf '```sh\nmdonly() { :; }\nfunction mdonly2 {\n```\n' > "$R/notes.md"
 cp "$R/notes.md" "$R/more.md"
 commit "$R" feature
@@ -131,6 +134,7 @@ has "$OUT" 'shared-name: redact defined in 2 files: r1.js, r2.ts' && ok "D2 JS/T
 lacks "$OUT" 'render' && lacks "$OUT" 'shared-name: go' && ok "D3 a JS method or call is not a definition" || no "D3 render/go printed: $OUT"
 lacks "$OUT" 'mdonly' && ok "D4 documentation files never define a name" || no "D4 md name printed: $OUT"
 has "$OUT" 'lines: notes.md new -> 4' && ok "D5 documentation files still get a line count" || no "D5 notes.md count: $OUT"
+lacks "$OUT" '__init__' && ok "D6 an indented Python method def is not a definition (column-0 def only)" || no "D6 __init__ printed: $OUT"
 
 # ---- E. cap ------------------------------------------------------------------------------------
 echo "== E. per-name file list is capped with a visible marker =="
@@ -183,6 +187,38 @@ if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a 1 -> 2' && lacks "$OUT" 'shared-name'
   ok "F11 failed name scan ⇒ exit 0, line facts kept, stderr 'names_unavailable'"
 else
   no "F11 names_unavailable (rc=$RC out='$OUT' err='$ERR')"
+fi
+# F12 / F13 — a `git` shim on PATH (real git underneath). SHIM_FAIL_U0=1 fails the -U0 added-names
+# diff only; SHIM_MOVE_REF/SHIM_MOVE_TO move a branch right after the first --name-status diff.
+REALGIT="$(command -v git)"; SHIM="$TMP/shim"; mkdir -p "$SHIM"
+cat > "$SHIM/git" <<SH
+#!/usr/bin/env bash
+for a in "\$@"; do [ "\$a" = "-U0" ] && [ -n "\${SHIM_FAIL_U0:-}" ] && exit 128; done
+"$REALGIT" "\$@"; rc=\$?
+for a in "\$@"; do
+  if [ "\$a" = "--name-status" ] && [ -n "\${SHIM_MOVE_REF:-}" ] && [ ! -e "$TMP/shim.moved" ]; then
+    : > "$TMP/shim.moved"; "$REALGIT" -C "\$SHIM_ROOT" update-ref "\$SHIM_MOVE_REF" "\$SHIM_MOVE_TO"
+  fi
+done
+exit \$rc
+SH
+chmod +x "$SHIM/git"
+R="$TMP/f12"; mkrepo "$R"; printf 'foo() { :; }\nbar() { :; }\n' > "$R/b.sh"; commit "$R" base; BK="$(g "$R" rev-parse HEAD)"
+g "$R" checkout -q -b feat; printf 'foo() { :; }\n' > "$R/a.sh"; commit "$R" c1; C1="$(g "$R" rev-parse HEAD)"
+printf 'bar() { :; }\n' >> "$R/a.sh"; commit "$R" c2; C2="$(g "$R" rev-parse HEAD)"; g "$R" update-ref refs/heads/feat "$C1"
+SHIM_FAIL_U0=1 PATH="$SHIM:$PATH" run "$BK" feat --root "$R"
+if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a.sh new -> 1' && lacks "$OUT" 'shared-name' && has "$ERR" 'names_unavailable'; then
+  ok "F12 a failed added-names diff ⇒ exit 0, line facts kept, stderr 'names_unavailable'"
+else
+  no "F12 added-names diff failure (rc=$RC out='$OUT' err='$ERR')"
+fi
+rm -f "$TMP/shim.moved"
+SHIM_ROOT="$R" SHIM_MOVE_REF=refs/heads/feat SHIM_MOVE_TO="$C2" PATH="$SHIM:$PATH" run "$BK" feat --root "$R"
+if [ -e "$TMP/shim.moved" ] && [ "$RC" -eq 0 ] && has "$OUT" 'shared-name: foo defined in 2 files' \
+   && lacks "$OUT" 'shared-name: bar' && has "$OUT" 'lines: a.sh new -> 1'; then
+  ok "F13 a head branch that moves mid-run ⇒ every fact describes the tree resolved at start"
+else
+  no "F13 facts mixed trees after a mid-run ref move (moved=$([ -e "$TMP/shim.moved" ] && echo y || echo n) rc=$RC out='$OUT')"
 fi
 
 # ---- H. non-blob entries never desync the batched line counts ---------------------------------
