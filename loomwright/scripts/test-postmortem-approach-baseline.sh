@@ -188,11 +188,15 @@ jq -cn '{schema_version:1, repo:"acme/widgets", number:42, pr_url:"https://githu
          categories:[{round:1,class:"execution_bug",evidence:"null check"}]}' > "$FX/results.jsonl"
 jq -cn '{schema_version:1, repo:"acme/widgets", number:43, pr_url:"https://github.com/acme/widgets/pull/43",
          categories:[{round:1,class:"execution_bug",evidence:"inverted guard"}]}' >> "$FX/results.jsonl"
+# PR 44: the stub's `pr view` fails, so the gather answers unavailable for this entry.
+jq -cn '{schema_version:1, repo:"acme/widgets", number:44, pr_url:"https://github.com/acme/widgets/pull/44",
+         categories:[{round:1,class:"quality_gap",evidence:"missing test"}]}' >> "$FX/results.jsonl"
 run_bl "gather" "$BIN_STUB" "$FX" --fixture "$FX"
 [ "$(col 1 4)" = "true" ] && ok "a matching PR comment ('simpler to …') ORs the row to true" || no "row 1: [$(col 1 4)] out=[$OUT] err=[$ERR]"
 [ "$(col 2 4)" = "false" ] && ok "control: a gathered PR with no matching comment stays false" || no "row 2: [$(col 2 4)]"
-[ "$(last)" = "approach_challenged: 1 of 2 categorized rounds (guess; 2 entries, 2 gathered, 0 gather-unavailable)" ] \
-  && ok "summary counts the gathered entries" || no "summary wrong: [$(last)]"
+[ "$(col 3 4)" = "false" ] && ok "a PR the gather cannot read falls back to the evidence guess" || no "row 3: [$(col 3 4)]"
+[ "$(last)" = "approach_challenged: 1 of 3 categorized rounds (guess; 3 entries, 2 gathered, 1 gather-unavailable)" ] \
+  && ok "summary counts gathered and gather-unavailable entries" || no "summary wrong: [$(last)]"
 if [ -s "$GH_LOG" ]; then
   ok "the gather actually called the stub ($(wc -l < "$GH_LOG" | tr -d ' ') calls)"
   bad="$(grep -vE '^(pr view [0-9]+ |api user( |$)|api repos/[^ ]+/comments)' "$GH_LOG" || true)"
@@ -265,6 +269,15 @@ base_set="$(rows | awk -F'\t' '{print $3}' | sort | tr '\n' ' ')"
 expect="cls_empty_tk cls_missing_tk cls_nonstring_tk cls_untouched "
 [ "$reader_set" = "$expect" ] && ok "reader excludes exactly the two well-formed targets" || no "reader set: [$reader_set] out=[$reader_out]"
 [ "$base_set" = "$reader_set" ] && ok "baseline and reader exclude the same entries" || no "parity broken: baseline [$base_set] vs reader [$reader_set]"
+
+# (f) a ledger path that is a directory → not_a_file; (g) an unknown argument → exit 0, no stdout.
+FX="$TMP/fx-dir"; mkdir -p "$FX/results.jsonl"
+run_bl "not-a-file" "$BIN_FAIL" "$FX" --fixture "$FX" --no-gh
+[ "$OUT" = "approach_challenged: 0 of 0 categorized rounds (ledger unreadable: not_a_file)" ] \
+  && ok "a directory ledger path reads as not_a_file" || no "not_a_file output: [$OUT]"
+out="$( PATH="$BIN_FAIL:$PATH" bash "$SCRIPT" --bogus 2>"$TMP/err" )"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && [ -s "$TMP/err" ] && ok "unknown argument: exit 0, empty stdout, usage on stderr" \
+  || no "unknown argument: rc=$rc out=[$out]"
 
 echo "== 6. no injection through evidence text =="
 FX="$TMP/fx-inject"; mkdir -p "$FX"; MARK="$TMP/injected-marker"; MARK2="$TMP/injected-marker2"
