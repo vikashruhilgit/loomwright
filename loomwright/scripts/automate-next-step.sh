@@ -1829,8 +1829,6 @@ ns_reconcile_open() { # the PR reads OPEN (or unreadable — reconcile-item's sa
   if [ "$STATUS" = running ]; then
     # RUN opened the PR and the session ended before DRAIN: this pass's ONE owned drain, unless it ran
     ns_drain_owned || { NEXT=drain; return 0; }
-    # the run stops here for the owner: ## Status says so (as every other RECONCILE stop does)
-    ns_status paused || return 1
     ns_release
     ns_emit done reconcile "$("$JQ" -cn --arg p "$PR" '{status: "stopped", message: ("the item is running with open PR " + $p + " and its owned drain already ran without a terminal REVIEW_HEAL_RESULT — the owner decides (a /review-pr by hand, or a skip/abandon check-off), then --resume")}')"
     return 0
