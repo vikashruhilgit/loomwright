@@ -155,7 +155,7 @@ abort() { echo "automate-helpers: ABORT: $*" >&2; exit 2; }
 # usage segments (header note above), then a grep adds the few `#   ` comment lines inside the
 # families and the gate-eval block; test-automate-helpers.sh runs the bundle as one file.
 # Listed by name, never globbed: a stray file in automate-helpers.d/ is never sourced.
-# A missing or unreadable family file fails CLOSED (exit 1, the file named), never a silent no-op.
+# A missing, unreadable or empty family file fails CLOSED (exit 1, the file named), never a silent no-op.
 # `$0` stays this dispatcher, so every `$(dirname "$0")` sibling lookup is unchanged.
 _ah_source() {
   local _ah_f
@@ -187,7 +187,8 @@ _AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation rec
 # segment at a time in _AH_HELP_SEGMENTS order. A line's segment is the family whose
 # `# >>> automate-helpers.d/<name>.sh` markers enclose it, else the dispatcher's open `#:@` group.
 # Fails CLOSED (stderr, exit 1, nothing printed): a listed segment with no line, a line in an unlisted
-# segment, a duplicated segment, a usage line outside any segment, or any other `#:` line shape.
+# segment, a duplicated segment, a `#:@` group opened twice or named like a family, a usage line
+# outside any segment, or any other `#:` line shape.
 _ah_usage() {
   _ah_bundle "$@" | awk -v order="$_AH_HELP_SEGMENTS" '
     function bad(m) { err = err "automate-helpers: --help: " m "\n" }

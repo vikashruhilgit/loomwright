@@ -74,7 +74,7 @@
 
 ### 📋 /backlog — Requirement Backlog Board (Read-Only, Owner-Gated Stamps)
 
-**Purpose:** Answer "what is pending, done, in flight" from evidence, never from a hand-kept label. Every `*.md` under `.supervisor/requirements/` gets exactly one state, derived from run files, live lanes (`lane-status --json`), merged and open PRs (two cached `gh pr list` reads) and the item's own `## Status:` stamps. A done stamp appended under a first-line `pending` reads `done`. The board groups rows by folder, names the evidence behind each state, adds a right-size column, and prints totals that add up to the item count. `gh` failing ⇒ `github: unverified`, never a silent `open`.
+**Purpose:** Answer "what is pending, done, in flight" from evidence, never from a hand-kept label. Every `*.md` under `.supervisor/requirements/` gets exactly one state, derived from run files, live lanes (`lane-status --json`), merged and open PRs (two cached `gh pr list` reads) and the item's own `## Status:` stamps. A done stamp appended under a first-line `pending` reads `done`. The board groups rows by folder, names the evidence behind each state, adds a right-size column, and prints totals that add up to the item count. `gh` failing (or a possibly truncated full page) ⇒ `github: unverified`, never a silent `open`.
 
 **Usage:**
 ```bash

@@ -21,7 +21,8 @@
 #                       no <commands dir>/<name>.md is an orphan (ERROR), and
 #                       so is a .md under a subdirectory of <commands dir>.
 # Each table fails CLOSED on a breach, a missing entry, an orphaned entry, a
-# non-integer budget, and a missing or empty dir.
+# non-integer budget, an empty or newline-bearing key, and a missing or empty
+# dir (every empty dir is reported before the run exits 1).
 #
 # IMPORTANT — PROXY, NOT A REAL TOKEN COUNT. The weight is an OFFLINE PROXY
 # (bytes / 4), never a call to Anthropic's count_tokens API (no network in CI).

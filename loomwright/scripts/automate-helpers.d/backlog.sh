@@ -57,7 +57,7 @@
 #     (_rs_first_status_open) ⇒ `open` (`unknown` when github is unverified, below); anything
 #     else ⇒ `unknown`, with the offending line or `no status line`.
 # GITHUB: exactly two reads per pass, `gh pr list --state merged|open --limit $_BL_PR_LIMIT`. Either
-# failing (or not JSON) ⇒ `github: unverified`: every item's pr_state reads `unverified`, step 2's PR
+# failing (or not JSON, or a full $_BL_PR_LIMIT-entry page that may be truncated) ⇒ `github: unverified`: every item's pr_state reads `unverified`, step 2's PR
 # lookup is skipped, a claim stays `in_flight` (never `pr_open`), and an item that would read `open`
 # reads `unknown` with `(merged-PR lookup unverified)` in its evidence — no item reads `open` or
 # `pr_open` because of the failure, and `--verify-list` says its candidates are unverified.

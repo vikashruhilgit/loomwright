@@ -2,7 +2,7 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/intake.golden.
 #:  resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #:  resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
-#:  queue-confirm    <source> <n> <limit> | --lane-backlog  # §2 "--limit N" gate AUT-QUEUE: `skip — backlog queue <n> ≤ limit <limit>` for a backlog source whose Queue is not longer than --limit (owner decision D1), `skip — lane backlog …` with --lane-backlog, else `ask` (folder/prompt, n > limit, a non-integer, an unknown source: fail toward asking); exit 0 (missing argument 1)
+#:  queue-confirm    <source> <n> <limit> | --lane-backlog  # §2 "--limit N" gate AUT-QUEUE: `skip — backlog queue <n> ≤ limit <limit>` for a backlog source whose Queue is not longer than --limit (owner decision D1), `skip — lane backlog …` with --lane-backlog, else `ask` (folder/prompt, n > limit, a non-integer, an unknown source: fail toward asking); exit 0 (a missing argument, or any positional beside --lane-backlog, 1)
 
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).
