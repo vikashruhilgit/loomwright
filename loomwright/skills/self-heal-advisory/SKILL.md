@@ -181,7 +181,8 @@ pending_human = []                  # the review issues a NEEDS_HUMAN review mar
 # owner about it. Skips an issue already in heal_dismissed this run (same description), so nothing is listed twice.
 #   heal_dismissed += [{finding: ("needs your ruling: " if i in pending_human else note) + i.description,
 #                       reason: "escalated_unfixed", source: "code_reviewer", severity: i.severity}
-#                      for i in issues if i.description not in {d.finding stripped of that prefix for d in heal_dismissed}]
+#                      for i in issues if i.description not in {d.finding with its leading "needs your ruling: " or note
+#                                                               prefix (whichever it carries) removed, for d in heal_dismissed}]
 # Rule and CI findings are not review issues: they stay counted in heal_remaining_issues only, as before.
 
 while heal_iterations < max_heal_iterations:

@@ -75,15 +75,19 @@ Code Reviewer returns FAIL at the final iteration (max --heal-iterations reached
     → Findings posted to the PR as a comment
     → Job moves to done/ with escalation fields (heal reason, heal_remaining_issues)
 
-Code Reviewer returns NEEDS_HUMAN
+Code Reviewer returns NEEDS_HUMAN, with other at-floor findings beside the needs_human one(s), first time this run
+    → ONE fix round for the other findings (consumes an iteration); the needs_human issue(s) are held, never fixed
+    → Re-review: still NEEDS_HUMAN, or clean (the owner never ruled), or max iterations ⇒ ESCALATED on the held items
+
+Code Reviewer returns NEEDS_HUMAN with nothing else to fix (or after that one fix round)
     → heal_decision = ESCALATED (immediate, does not consume remaining iterations)
-    → Findings posted to the PR as a comment
+    → Findings posted to the PR as a comment; every unfixed at-floor finding itemised in heal_dismissed (escalated_unfixed)
     → Job moves to done/ with escalation fields
 ```
 
 **Rules:**
 - Bounded by `--heal-iterations` (default 3) per Phase 4.5 run — not a per-subtask retry count
-- NEEDS_HUMAN always escalates immediately (no partial-workflow continuation — Phase 4.5 is a single integrated review, not per-subtask)
+- NEEDS_HUMAN always ends ESCALATED, but escalates immediately only when nothing beside the `needs_human` issue(s) is at the floor. Otherwise it first gets ONE fix round for the other findings (an unmarked NEEDS_HUMAN review reads as all-human, so it escalates immediately as before). A `needs_human` issue is never fixed by the loop.
 - `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` plus the deterministic co-gates — a stamped countable `must`-rule failure and a red required check read by `phase45-ci-read.sh` (PASS only from a reviewer PASS with neither; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
 - Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
 - A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/multi-voter.md` §"Delay-vs-decide")
