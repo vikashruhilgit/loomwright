@@ -80,15 +80,18 @@ else no "(C) committed capabilities.json is stale: $(cat "$tmp/c.err")"; fi
 
 # (S)
 want_version="$(jq -r .version "$PLUGIN/.claude-plugin/plugin.json")"
+# The per-agent (S) predicate, shared with the tools-less (F) fixture below: tools is string[] | null
+# (null = no tools key, the agent inherits every tool), so a tools-less agent is valid.
+S_AGENT='(.name|type=="string") and (.runtime_agent_type|type=="string")
+         and (.model == null or (.model|type=="string")) and (.tools == null or (.tools|type=="array"))
+         and (.result_block == null or (.result_block|type=="string")) and (.result_blocks|type=="array")'
 if jq -e --arg v "$want_version" '
     (.contract_schema_version | type == "number" and . == floor)
     and .plugin_version == $v and (.plugin_version | type == "string")
     and (.host_switch | type == "object" and (keys == ["effect", "env", "state_dir_env"])
          and all(.[]; type == "string" and length > 0))
     and ([.agents, .commands, .skills, .result_schemas, .hooks] | all(type == "array"))
-    and (.agents | all((.name|type=="string") and (.runtime_agent_type|type=="string")
-         and (.model == null or (.model|type=="string")) and (.tools|type=="array")
-         and (.result_block == null or (.result_block|type=="string")) and (.result_blocks|type=="array")))
+    and (.agents | all('"$S_AGENT"'))
     and (.commands | all((.name|type=="string") and (.description == null or (.description|type=="string"))))
     and (.skills | all(.name|type=="string"))
     and (.result_schemas | all((.name|type=="string") and (.schema_version == null or (.schema_version|type=="number"))))
@@ -241,6 +244,16 @@ hm_pin "the StopFailure inline leaf" '.event == "StopFailure"' redirects
 hm_pin "a validator leaf (matched by the validate-*-result.py glob row)" '.scripts == ["scripts/validate-worker-result.py"]' unaffected
 hm_pin "a send-webhook.sh leaf" '.scripts == ["scripts/send-webhook.sh"]' unaffected
 
+# A StopFailure failures.log append to a NON-literal path: writes is unknown, so host_mode is unknown
+# too (unknown WINS) — the inline-leaf row classifies only a literal append.
+fixture_copy "$tmp/fi"
+jq '.hooks = {"StopFailure": [{"hooks": [{"type": "command", "command": "mkdir -p $X && echo x >> $X/failures.log || true"}]}]}' \
+  "$PLUGIN/hooks/hooks.json" > "$tmp/fi/hooks/hooks.json"
+got="$(bash "$SUT" --root "$tmp/fi" --out "$tmp/fi.json" 2>/dev/null && jq -c '.hooks[0] | [.writes, .host_mode]' "$tmp/fi.json")"
+if [ "$got" = '[["unknown"],"unknown"]' ]; then
+  ok "(HM) a StopFailure failures.log append to a non-literal path => writes [unknown] AND host_mode unknown"
+else no "(HM) non-literal StopFailure append: got $got want [[\"unknown\"],\"unknown\"]"; fi
+
 # Fixture controls. mutate_doc <sed-expr | grep -v PATTERN> builds $tmp/fh/docs/HOOKS.md from the real
 # doc and refuses an invalid mutant (empty, or identical to the real doc).
 fixture_copy "$tmp/fh"
@@ -350,6 +363,10 @@ pcase '>& <word> (space before the word) is a write of that path' \
 pcase '>&<non-literal> => unknown (may name a file at run time)' 'echo hi >&"$F" || true' '[null,["unknown"],false]'
 pcase 'real fd duplications >&2, 3>&2-, >&- and >& 2 stay non-writes (control)' \
   'echo hi >&2 3>&2- >&- || true; echo b >& 2 || true' '[null,[],false]'
+pcase 'a redirect written right after an fd duplication (2>&1>f) is a write of f (never [])' \
+  'echo x 2>&1>out.log || true' '[null,["out.log"],false]'
+pcase 'a newline ends a redirect target (no next-line words glued onto the path)' \
+  "$(printf 'echo x > a.log\necho y || true')" '[null,["a.log"],false]'
 pcase '>>& (a bash syntax error, unmodelled) => unknown' 'echo hi >>& f || true' '[null,["unknown"],false]'
 pcase 'a >(...) process substitution => unknown' 'echo x >(cat) || true' '[null,["unknown"],false]'
 pcase 'exec N>file => unknown' 'exec 3>f || true' '[null,["unknown"],false]'
@@ -371,6 +388,9 @@ if ! grep -q '^tools:' "$tmp/ff/agents/worker.md" \
    && [ "$(jq -c '.agents[] | select(.name == "loomwright:worker") | .tools' "$tmp/ff.json")" = null ]; then
   ok "(F) an agent with no tools key publishes tools: null (inherits every tool), never []"
 else no "(F) tools-absent agent: $(jq -c '.agents[] | select(.name == "loomwright:worker") | .tools' "$tmp/ff.json")"; fi
+if jq -e "(.agents | length) > 0 and (.agents | all($S_AGENT))" "$tmp/ff.json" >/dev/null; then
+  ok "(F) the (S) agent predicate accepts a tools-less agent (tools: null is in the documented string[] | null type)"
+else no "(F) the (S) agent predicate rejects the tools-less fixture: $(jq -c '.agents[] | select(.name == "loomwright:worker") | .tools' "$tmp/ff.json")"; fi
 fcase() { # fcase <label> <stderr substring> — the current $tmp/ff fixture must make the generator exit 1
   bash "$SUT" --root "$tmp/ff" --out "$tmp/ff.json" 2>"$tmp/ff.err"; local rc=$?
   if [ "$rc" -eq 1 ] && grep -qF "$2" "$tmp/ff.err"; then ok "(F) $1"; else no "(F) $1: rc=$rc err=$(cat "$tmp/ff.err")"; fi

@@ -83,7 +83,7 @@ A set with no documented rule gets `result_block: null` (never a guess); `result
 | `source` | string | Position in `hooks.json`, e.g. `hooks.StopFailure[0].hooks[0]` — traces the entry back; changes if `hooks.json` is reordered. |
 | `script` | string \| null | The first plugin script the command invokes, as `scripts/<file>` relative to the plugin root (the install-root variable may be spelled `$VAR/scripts/`, `${VAR}/scripts/` or `"${VAR}"/scripts/`); `null` for a prompt leaf or a leaf that invokes none. |
 | `scripts` | string[] | Every plugin script the command invokes, in invocation order (several for leaves such as the telemetry + token-ledger leaf or the SessionStart resume leaf). |
-| `blocking` | bool | `false` only for a `command` leaf whose command ENDS in `\|\| true` (a `\|\| true` earlier in the command does not make the last command's exit status fail-safe), and for a `prompt` leaf. `true` marks a fail-CLOSED gate that can stop the tool call. |
+| `blocking` | bool | `false` only for a `command` leaf whose command ENDS in `\|\| true` (a `\|\| true` earlier in the command does not make the last command's exit status fail-safe), and for a `prompt` leaf. `true` marks a fail-CLOSED gate whose exit status (or crash) can stop the tool call. It describes exit-status semantics only: a `false` leaf can still block through its output — a command validator printing `{"decision": "block", …}` on stdout, or a prompt leaf answering `ok: false`. |
 | `writes` | string[] | What the leaf may create, modify or delete in the session's working directory with host mode OFF (see below). |
 | `host_mode` | string | What the leaf does with host mode ON: `redirects`, `skips`, `unaffected`, or `unknown` (see below). |
 

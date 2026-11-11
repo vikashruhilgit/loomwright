@@ -18,7 +18,8 @@
 #                       recursively (a split command's on-demand parts — the
 #                       bytes a full read pays, automate-speed/22). No parts
 #                       dir = the router alone. A dir under the parts dir with
-#                       no <commands dir>/<name>.md is an orphan (ERROR).
+#                       no <commands dir>/<name>.md is an orphan (ERROR), and
+#                       so is a .md under a subdirectory of <commands dir>.
 # Each table fails CLOSED on a breach, a missing entry, an orphaned entry, a
 # non-integer budget, and a missing or empty dir.
 #
@@ -220,11 +221,28 @@ done
 
 # Anti-drift: an empty/misconfigured agents dir must fail LOUDLY, not silently pass
 # (a 0-agent run of a fail-closed ratchet is a false green). Mirrors the ci.yml
-# self-test loop's `[ "${#tests[@]}" -gt 0 ] || exit 1` guard.
+# self-test loop's `[ "${#tests[@]}" -gt 0 ] || exit 1` guard. The zero-agent,
+# zero-skill and zero-command guards each record their failure in zero_dirs and
+# the run exits 1 once, after the third, so every empty dir is reported.
+zero_dirs=0
 if [ "$agent_count" -eq 0 ]; then
   echo "check-token-budget: no agent .md files found in $AGENTS_DIR — refusing to pass a 0-agent ratchet" >&2
-  exit 1
+  zero_dirs=$((zero_dirs + 1))
+  exit_code=1
 fi
+
+# A budget key that is empty or carries a newline cannot be checked by the
+# line-by-line key loops below (an empty line is skipped, a newline splits the
+# key), so it is an ERROR up front, in every table.
+while IFS= read -r bad; do
+  [ -n "$bad" ] || continue
+  printf "%-22s %8s %8s  %-6s  %s\n" "(bad key)" "-" "-" "ERROR" "empty or newline-bearing key $bad in $BUDGET_JSON — it cannot be matched to an agent, skill dir or command doc"
+  errors=$((errors + 1))
+  exit_code=1
+done <<EOF
+$(jq -r '["agents", "skills", "commands"][] as $t | .[$t] | objects | keys[]
+         | select(. == "" or test("\n")) | "." + $t + "[" + tojson + "]"' "$BUDGET_JSON" 2>/dev/null)
+EOF
 
 # Orphaned-budget detection (symmetric with the per-agent no-budget ERROR): a
 # budget key with no matching agent .md is stale (e.g. an agent was deleted but
@@ -358,7 +376,8 @@ done
 # fail-closed ratchet is a false green. Runs after the zero-agent guard above.
 if [ "$skill_count" -eq 0 ]; then
   echo "check-token-budget: no skill dirs found in $SKILLS_DIR (missing or empty) — refusing to pass a 0-skill ratchet" >&2
-  exit 1
+  zero_dirs=$((zero_dirs + 1))
+  exit_code=1
 fi
 check_orphans skills "$seen_skills" "skill dir under $SKILLS_DIR/"
 
@@ -367,13 +386,15 @@ printf "%-22s %8s %8s  %-6s  %s\n" "COMMAND DOC" "PROXY" "BUDGET" "STATUS" "DETA
 command_count=0
 seen_commands=""
 for cmd_file in "$COMMANDS_DIR"/*.md; do
-  # A dangling symlinked command doc fails `-f` and would be silently skipped —
-  # fail CLOSED. A live symlink is measured through `wc -c` (target bytes).
+  # A symlinked command doc that is not a file (dangling, or pointing at a
+  # directory) fails `-f` and would be silently skipped — fail CLOSED. A live
+  # symlink to a file is measured through `wc -c` (target bytes).
   if [ -L "$cmd_file" ] && [ ! -f "$cmd_file" ]; then
     command_count=$((command_count + 1))
     seen_commands="$seen_commands
 $(basename "$cmd_file" .md)"
-    printf "%-22s %8s %8s  %-6s  %s\n" "$(basename "$cmd_file" .md)" "-" "-" "ERROR" "command doc $cmd_file is a dangling symlink — it cannot be measured"
+    if [ -e "$cmd_file" ]; then why="is a symlink to a non-file (e.g. a directory)"; else why="is a dangling symlink"; fi
+    printf "%-22s %8s %8s  %-6s  %s\n" "$(basename "$cmd_file" .md)" "-" "-" "ERROR" "command doc $cmd_file $why — it cannot be measured"
     errors=$((errors + 1))
     exit_code=1
     continue
@@ -414,8 +435,23 @@ done
 
 if [ "$command_count" -eq 0 ]; then
   echo "check-token-budget: no command .md files found in $COMMANDS_DIR (missing or empty) — refusing to pass a 0-command ratchet" >&2
-  exit 1
+  zero_dirs=$((zero_dirs + 1))
+  exit_code=1
 fi
+[ "$zero_dirs" -eq 0 ] || exit 1
+
+# The command loop measures only <commands dir>/*.md, so a doc in a subdirectory
+# (a namespaced command) would be neither measured nor reported — fail CLOSED.
+for sub in "$COMMANDS_DIR"/*/; do
+  [ -d "$sub" ] || continue
+  sub="${sub%/}"
+  hits="$(find "$sub/" -name '*.md' 2>/dev/null)"; frc=$?
+  if [ -n "$hits" ] || [ "$frc" -ne 0 ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$(basename "$sub")" "-" "-" "ERROR" "commands subdirectory $sub/ holds .md docs (or cannot be listed) — only $COMMANDS_DIR/*.md is measured"
+    errors=$((errors + 1))
+    exit_code=1
+  fi
+done
 check_orphans commands "$seen_commands" "command doc $COMMANDS_DIR/<stem>.md"
 
 # Orphaned parts dir: every dir under the parts dir must belong to a command doc, or its
