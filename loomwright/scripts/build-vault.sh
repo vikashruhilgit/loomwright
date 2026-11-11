@@ -238,14 +238,14 @@ if [ -n "$records" ] && [ "${#log_files[@]}" -gt 0 ]; then
     [ -f "$f" ] || continue
     sid="$(basename "$f" .jsonl)"
     # Take the LAST session_end event in the file (mirrors build-insights.sh). Flat System Twin
-    # hard-signal fields default to null when older logs lack them.
+    # hard-signal fields default to null when older logs lack them. session_end has no duration
+    # field (nothing writes one), so none is projected.
     jq -c --arg sid "$sid" '
       select(.event=="session_end")
       | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
          pr_url:(.pr_url//""), heal_decision:(.heal_decision//""),
          heal_iterations:(.heal_iterations//null), rubric_score:(.rubric_score//null),
          subtasks_completed:(.subtasks_completed//null), files_changed:(.files_changed//null),
-         duration_seconds:(.duration_seconds//null),
          contract_conformance_status:(.contract_conformance_status//null),
          contract_violations:(.contract_violations//null),
          benchmark_status:(.benchmark_status//null),
@@ -281,7 +281,6 @@ if [ -n "$records" ] && [ -s "$records" ]; then
         (if .rubric_score!=null       then "rubric_score: \"\(.rubric_score)\""          else empty end),
         (if .subtasks_completed!=null then "subtasks_completed: \(.subtasks_completed)" else empty end),
         (if .files_changed!=null      then "files_changed: \(.files_changed)"            else empty end),
-        (if .duration_seconds!=null   then "duration_seconds: \(.duration_seconds)"      else empty end),
         (if .contract_conformance_status!=null then "contract_conformance_status: \(.contract_conformance_status)" else empty end),
         (if .contract_violations!=null then "contract_violations: \(.contract_violations)" else empty end),
         (if .benchmark_status!=null   then "benchmark_status: \(.benchmark_status)"      else empty end),

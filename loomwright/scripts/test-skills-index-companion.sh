@@ -82,6 +82,18 @@ if [ "$RC" -eq 0 ] && ! grep -q 'conflicts with' <<<"$OUT"; then
   ok "--explain prints no 'conflicts with' line"
 else no "--explain rc=$RC out=$(printf '%s' "$OUT" | tr '\n' '|')"; fi
 
+echo "== real table: a NEW command doc or skill dir reserves its budget ceiling file =="
+# check-token-budget.sh fails CLOSED on a command doc or skill dir with no budget entry, so the
+# `"new": true` rules reserve loomwright/docs/prompt-token-budgets.json, like the agents rule does.
+printf '# new command\n\n## Depends on\nnone\n\n## Touches\nloomwright/commands/brand-new.md\n' > "$R/q/03-cmd.md"
+printf '# new skill\n\n## Depends on\nnone\n\n## Touches\nloomwright/skills/brand-new/SKILL.md\n' > "$R/q/04-skill.md"
+for it in 03-cmd 04-skill; do
+  tout="$(bash "$H" plan-waves "$R/q/$it.md" --touches --root "$R" 2>"$T/err")"; trc=$?
+  if [ "$trc" -eq 0 ] && grep -qx 'loomwright/docs/prompt-token-budgets.json' <<<"$tout"; then
+    ok "a new item ($it) reserves loomwright/docs/prompt-token-budgets.json"
+  else no "a new item ($it) does not reserve prompt-token-budgets.json: rc=$trc out=$(printf '%s' "$tout" | tr '\n' '|') err=$(cat "$T/err")"; fi
+done
+
 echo "== mutation control: the old SKILL.md ⇒ SKILLS_INDEX.md rule re-added splits them =="
 M_CJ="$T/companions-old-rule.json"
 jq '.companions = [{"when": "loomwright/skills/*/SKILL.md", "add": ["loomwright/skills/SKILLS_INDEX.md"]}] + .companions' \

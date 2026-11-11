@@ -24,6 +24,21 @@ if [ -n "$cm_join" ] && cm_last_err | grep -qF "is not $cm_join — coordinator_
   ok "CM message: coordinator_model_invalid lists NS_CM_VALUES ($cm_join), built from it"
 else no "CM message: '$(cm_last_err | grep coordinator_model_invalid | head -n 1)' vs NS_CM_VALUES '$cm_join'"; fi
 
+# ns_checkout_of's other branch: a --resume dir NOT ending in .supervisor/automate resolves the checkout
+# holding it through git, never the driver's cwd (whose config names a different model)
+cm_co_ok=0
+if new_scratch "$FIX/escalated-park"; then
+  rm -f "$CASE_RF"; printf '{"coordinator_model":"claude-haiku-5-5"}\n' > "$CASE_ROOT/.supervisor/config.json"
+  cm_co="$CASE_DIR/other"; mkdir -p "$cm_co/runs" "$cm_co/.supervisor"
+  ( cd "$cm_co" && git init -q . ) && printf '{"coordinator_model":"claude-sonnet-5-5"}\n' > "$cm_co/.supervisor/config.json"
+  printf '%s\n' 'env: AD= RUN_ID=' "call-bare: --resume \"$cm_co/runs\" --session-id cm-resume" 'expect: done' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$DRIVER" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(printf '%s' "$LAST_OUT" | jq -r .choice)" = start_new ] && [ "$(cm_model)" = claude-sonnet-5-5 ] && cm_co_ok=1
+fi
+if [ "$cm_co_ok" = 1 ]; then
+  ok "CM resume-elsewhere: a --resume dir outside .supervisor/automate takes the coordinator_model of the git checkout holding it"
+else no "CM resume-elsewhere: '$LAST_OUT' model '$(cm_model)' ($DRIVE_ERR)"; fi
+
 echo "-- E. the coordinator-model eval suite, model-free (automate-speed/10)"
 # its reference coordinator must score every A/B case PASS and the mutation control FAIL, and its graders
 # must notice a wrong question / a skipped instruction / a hand edit — so a red case under a model is the model

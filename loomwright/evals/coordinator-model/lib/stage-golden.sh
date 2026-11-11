@@ -22,7 +22,7 @@
 #   .eval/entry.txt            the loop's first call, exactly as the fixture's first `call:` line makes it
 #   .eval/verdict.txt          rewritten after every call / stand-in: PARITY (the run file, normalised like
 #                              leg G — ISO timestamps ⇒ <TS>, the scratch root ⇒ <ROOT> — equals expected.md
-#                              byte for byte), SKIPPED (spawn / ask instructions never answered by a later
+#                              byte for byte), SKIPPED (spawn / ask instructions never answered by a later accepted
 #                              --result call), WRONG_QUESTIONS (ask-owner with no ask pending), WRONG_SPAWNS,
 #                              CALLS, LAST_DO. The case graders read this file.
 #
@@ -160,9 +160,9 @@ norm() { # leg G's normalisation for these cases: the scratch root ⇒ <ROOT>, I
 }
 norm "$rf" > "$E/run.norm" 2>/dev/null; norm "$E/expected.md" > "$E/expected.norm"
 if cmp -s "$E/run.norm" "$E/expected.norm"; then parity=PASS; else parity=FAIL; fi
-# a spawn / ask instruction is answered when a LATER call carried a --result
-skipped="$(awk -F'\t' '{ k[NR] = $2; d[NR] = $4 } END { n = 0
-  for (i = 1; i <= NR; i++) if (d[i] == "spawn" || d[i] == "ask") { a = 0; for (j = i + 1; j <= NR; j++) if (k[j] == 1) { a = 1; break } if (!a) n++ }
+# a spawn / ask instruction is answered when a LATER call carried a --result the driver accepted (exit 0)
+skipped="$(awk -F'\t' '{ k[NR] = $2; r[NR] = $3; d[NR] = $4 } END { n = 0
+  for (i = 1; i <= NR; i++) if (d[i] == "spawn" || d[i] == "ask") { a = 0; for (j = i + 1; j <= NR; j++) if (k[j] == 1 && r[j] == 0) { a = 1; break } if (!a) n++ }
   print n }' "$E/calls.log")"
 wq="$(awk -F'\t' '$1 == "ask" && $3 == "WRONG"' "$E/standins.log" | grep -c . | tr -d ' ')"
 ws="$(awk -F'\t' '$1 == "spawn" && $3 == "WRONG"' "$E/standins.log" | grep -c . | tr -d ' ')"
