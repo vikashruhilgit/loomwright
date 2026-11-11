@@ -91,8 +91,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from result_block_parser import (  # noqa: E402
-        FALSE_SPELLINGS,
-        TRUE_SPELLINGS,
+        as_bool,
         as_int,
         as_text,
         emit,
@@ -333,14 +332,8 @@ def _check_needs_human(issues, decision):
         if "needs_human" not in issue:
             continue
         raw = issue.get("needs_human")
-        # A nested mapping's scalars reach here as text; the top-level parser's
-        # spellings decide which text is a boolean.
-        text = raw if isinstance(raw, bool) else as_text(raw).strip()
-        if text is True or text in TRUE_SPELLINGS:
-            val = True
-        elif text is False or text in FALSE_SPELLINGS:
-            val = False
-        else:
+        val, bad = as_bool(raw)
+        if bad is not None:
             emit(False, "issue[%d] needs_human must be true or false; got %r (v3 rule o)"
                  % (index, as_text(raw)))
         if val and decision != "NEEDS_HUMAN":

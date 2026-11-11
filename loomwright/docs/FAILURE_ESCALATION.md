@@ -432,7 +432,7 @@ Plan Reviewer returns NEEDS_HUMAN
 | Worker | Routed edit step tampered with git (`write_seat_tampered`) | 0 (never) | run stops → Human (brief → `failed/`) |
 | Execute Manager | Dependency merge conflict | 0 (never) | Supervisor → User manual resolution |
 | Code Reviewer | FAIL decision | 3 (fix + re-review) | Supervisor → Human |
-| Code Reviewer | NEEDS_HUMAN | 0 (immediate) | Supervisor → Human (3x = halt) |
+| Code Reviewer | NEEDS_HUMAN | 0 (immediate); 1 fix round first when other at-floor findings sit beside the `needs_human` issue(s) | Supervisor → Human (3x = halt) |
 | QA Executor | Test failure | 0 | Partial result (non-blocking) |
 | QA Strategist | Analysis failure | 0 | Partial classification (non-blocking) |
 | Supervisor | Budget/conflict | 0 | Human (checkpoint + exit) |
