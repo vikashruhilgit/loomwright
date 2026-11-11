@@ -38,3 +38,24 @@ base copy of the fixed script swapped in, then restored. A doc- or comment-only 
 - F019 — fixed (doc/comment only)
 - F209 — fixed (doc/comment only)
 - F306 — not worth fixing: a label and Decide-window nit in an advisory report. A correct fix needs a fix-now-aware window model (the re-drain's own Decide, ending at the re-park or close-out), not a local edit.
+
+## Part 04b dispositions
+
+- F065 — fixed (test-build-capabilities.sh "(P) a redirect written right after an fd duplication (2>&1>f) is a write of f (never [])" and "(P) a newline ends a redirect target (no next-line words glued onto the path)")
+- F066 — fixed (doc/comment only)
+- F084 — fixed (doc/comment only); the frontmatter note no longer claims to mirror hooks.json. agents/execute-manager.md carries the same claim and is outside this PR's lanes
+- F089 — fixed (test-build-vault.sh "run note never projects the unwritten session_end duration_seconds slot")
+- F263 — fixed (evals/coordinator-model/lib/selftest.sh "S3: a refused --result (exit N) does not answer the spawn ⇒ SKIPPED: 1"; test-automate-next-step.d/08-coordinator-model.sh "CM resume-elsewhere: a --resume dir outside .supervisor/automate takes the coordinator_model of the git checkout holding it")
+- F293 — fixed (test-skills-index-companion.sh "a new item (03-cmd) reserves loomwright/docs/prompt-token-budgets.json" and "a new item (04-skill) …")
+- F297 — fixed (test-check-token-budget.sh "case7u ALSO names the empty commands dir")
+- F298 — fixed (test-check-token-budget.sh "case7s ERROR says symlink to a non-file, not dangling")
+- F366 — fixed (test-module-shape-facts.sh "D6 an indented Python method def is not a definition (column-0 def only)")
+- F369 — fixed (test-module-shape-facts.sh "F13 a head branch that moves mid-run ⇒ every fact describes the tree resolved at start")
+- F057 — fixed (check-skills-index-sync.sh --self-test "bom-skill-still-checked" and "leading-blank-skill-still-checked")
+- F069 — fixed (test-only: test-build-capabilities.sh "(F) the (S) agent predicate accepts a tools-less agent (tools: null is in the documented string[] | null type)")
+- F121 — fixed (test-build-capabilities.sh "(HM) a StopFailure failures.log append to a non-literal path => writes [unknown] AND host_mode unknown")
+- F248 — not worth fixing: four of the six Critical Rules items already have their own q: rows (LP-235 to LP-238); splitting out the other two needs new ids and a renumbered GAP list, which is more than a local edit
+- F278 — fixed (test-check-prompt-history-refs.sh "P11 <queue>/<NN> trailing guard: a path segment followed by / counts 0" and "… a glob after the digits counts 0"; baseline lowered by 4). Queue-shaped examples such as qh/20-x stay counted: their shape is the same as a real reference
+- F294 — fixed (test-check-token-budget.sh "case7v an empty-string .skills key exits 1" and "case7v ERROR names the newline-bearing key")
+- F295 — fixed (test-check-token-budget.sh "case7t a .md under a commands subdirectory exits 1")
+- F367 — fixed (test-module-shape-facts.sh "F12 a failed added-names diff ⇒ exit 0, line facts kept, stderr 'names_unavailable'")
