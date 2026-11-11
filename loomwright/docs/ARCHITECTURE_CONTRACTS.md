@@ -729,7 +729,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `mvp-scoping` | 1850 | 1681 |
 | `pattern-detector` | 853 | 775 |
 | `playwright-e2e` | 9017 | 8197 |
-| `pr-postmortem` | 7015 | 6377 |
+| `pr-postmortem` | 7836 | 7124 |
 | `preflight-sync` | 5790 | 5263 |
 | `product-discovery` | 2059 | 1871 |
 | `qa-gates` | 7238 | 6580 |

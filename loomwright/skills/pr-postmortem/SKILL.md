@@ -49,6 +49,12 @@ Set `dismissed_then_raised: true` when a finding the drain or Phase 4.5 self-hea
 
 When `dismissed_then_raised: true`, attribute `flow_stage: self_heal` (a dismissal a human later re-raised is exactly the class of signal `self_heal` already covers below — the automated loop's own validate-then-fix judgment was wrong, whether that judgment ran in the drain or in Phase 4.5). This is its own root-cause signal distinct from `self_heal_miss`: `self_heal_miss` flags a finding self-heal *never saw*; `dismissed_then_raised` flags a finding self-heal *saw, judged stale/invalid/already-addressed, and was wrong about* — a sharper, higher-confidence miss because the loop's own reasoning is on record (`gather.dismissed_findings[].reason`) and demonstrably contradicted by the later human comment.
 
+### Optional `approach_challenged` flag (boolean, per round)
+
+**Not a 7th root-cause class.** For the same reason as `dismissed_then_raised` above, this signal is an ADDITIVE PER-ROUND BOOLEAN, mirroring `self_heal_miss` exactly, never a new string value for `class`.
+
+Set `approach_challenged: true` when the round's evidence questions the chosen approach, library, tool or mechanism rather than the code's correctness — the reviewer proposes a different way, not a fix. Typical phrasing: "why not …", "use X instead", "already provides", "simpler to", "reinvent", "the platform / SDK / library / harness already". The `class` is UNCHANGED — one of the six, by the finding's own language (typically `missing_context` or `plan_gap`) — and so is `flow_stage` (typically `launch_pad`, where the approach was chosen). A correctness question that happens to use the phrase ("why not null-check here?") is not a challenge to the approach. Default `false` when unsure; `false` on every round where the check did not trigger, never omitted. For ledger lines written before this flag existed, `scripts/postmortem-approach-baseline.sh` prints a labelled phrase-match guess and never writes it back.
+
 ### Flow-stage attribution (per round)
 
 Attribute each round to the stage of the agent flow where the root cause was introduced:
@@ -95,6 +101,7 @@ For each review round / review-fix signal that has concrete evidence (driven by 
 - exactly one **class** from the 6 above,
 - the optional **`self_heal_miss`** boolean,
 - the optional **`dismissed_then_raised`** boolean (dismissed-findings-01),
+- the optional **`approach_challenged`** boolean,
 - a **`flow_stage`** from the 4 above,
 - a short **evidence snippet** (the review-comment snippet or review-fix commit headline that justifies the call).
 
@@ -105,6 +112,7 @@ Categorization heuristics (reproducible, evidence-first):
 - When `review_rounds_source` is `bot_comments`, the per-round evidence usually lives in the bot-comment snippets (`review_comments[]` entries from a review-bot author — login `claude`, `github-actions*`, or any `*[bot]`) — read those first, then fall back to commit headlines.
 - Apply the Self-Heal Miss-Class Checklist to set `self_heal_miss` (and thereby lean `flow_stage: self_heal`) where the evidence matches one of its classes.
 - **`dismissed_then_raised` (dismissed-findings-01):** when `gather.dismissed_findings` is non-empty, before finalizing each round check whether its evidence (the `review_comments[]` snippet, restricted to HUMAN-authored entries — i.e. NOT a review-bot login) contains, via normalised substring match (see the flag's own definition above), the text of any `dismissed_findings[]` item. When it does, set `dismissed_then_raised: true` and `flow_stage: self_heal` on that round — the class assignment (one of the 6 above) is UNCHANGED, still driven by the finding's own language exactly as every other round; only the flow-stage attribution is forced to `self_heal`, because a re-raised dismissal means the loop's own validate-then-fix judgment (not the underlying code defect's nature) is what needs fixing.
+- **`approach_challenged`:** set it `true` on a round whose evidence proposes a different approach, library, tool or mechanism instead of a fix (the phrasing in the flag's own definition above, e.g. "why not use X" / "the SDK already provides this"); assign the class and `flow_stage` exactly as for any other round.
 
 **Seat routing.** Step 3's categorization is the `postmortem_classifier` seat: run `resolve-routing.sh seat postmortem_classifier` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` Step 3 runs inline as written, unchanged. On another provider only the categorization goes out (the gathered JSON in, `categories[]` back, checked for the role marker); the gather script, the Step 4 report and the Step 5 trend append stay on the main thread. On a non-`ok` result or failed check, Step 3 runs inline and one `seat_routing postmortem_classifier provider=<p> reason=<r>` line is logged.
 
@@ -113,7 +121,7 @@ Human-readable, to stdout. Include:
 - **PR identity:** `repo#number — title`, and `agent_generated_guess`.
 - **Size:** `additions`/`deletions`/`changed_files`.
 - **review_rounds** total.
-- **Per-round lines:** `round N: class=<class>  self_heal_miss=<bool>  flow_stage=<stage>  evidence="<snippet>"` — one per categorized round; when Step 3 omitted any no-evidence rounds, say how many (e.g. `2 of 5 rounds omitted: no concrete finding`) so the gap between `review_rounds` and the listed rounds is explained, not silent.
+- **Per-round lines:** `round N: class=<class>  self_heal_miss=<bool>  approach_challenged=<bool>  flow_stage=<stage>  evidence="<snippet>"` — one per categorized round; when Step 3 omitted any no-evidence rounds, say how many (e.g. `2 of 5 rounds omitted: no concrete finding`) so the gap between `review_rounds` and the listed rounds is explained, not silent.
 - **Root-cause narrative:** 2–4 sentences answering *why this PR needed back-and-forth* — the dominant class, whether self-heal should have caught it, and the stage most implicated.
 
 ### Step 5 — Append exactly ONE POSTMORTEM_RESULT trend line (fail-safe)
@@ -128,6 +136,7 @@ if command -v jq >/dev/null 2>&1; then
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" \
         --argjson categories "$CATEGORIES_JSON" \
         --argjson self_heal_misses "$SELF_HEAL_MISSES" \
+        --argjson approach_challenges "$APPROACH_CHALLENGES" \
         --argjson flow_stages "$FLOW_STAGES_JSON" \
         --arg summary "$SUMMARY" \
         --arg plugin_version "$(jq -r '.version // "unknown"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo unknown)" \
@@ -143,6 +152,7 @@ if command -v jq >/dev/null 2>&1; then
            changed_files: .changed_files,
            categories: $categories,
            self_heal_misses: $self_heal_misses,
+           approach_challenges: $approach_challenges,
            flow_stages: $flow_stages,
            summary: $summary,
            plugin_version: $plugin_version,
@@ -160,8 +170,9 @@ exit 0
 ```
 
 Where the main thread builds, before the snippet:
-- `CATEGORIES_JSON` — a JSON array of per-round objects `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]`, one per CATEGORIZED round (at most `review_rounds`; a round Step 3 omitted has no entry), itself jq-built (`jq -cn` with `--arg`/`--argjson`) so no untrusted PR text is string-interpolated. `dismissed_then_raised` (dismissed-findings-01) is additive here exactly like `self_heal_miss` — `false` on every round where the check did not trigger, never omitted.
+- `CATEGORIES_JSON` — a JSON array of per-round objects `[{round, class, self_heal_miss, dismissed_then_raised, approach_challenged, flow_stage, evidence}]`, one per CATEGORIZED round (at most `review_rounds`; a round Step 3 omitted has no entry), itself jq-built (`jq -cn` with `--arg`/`--argjson`) so no untrusted PR text is string-interpolated. `dismissed_then_raised` (dismissed-findings-01) and `approach_challenged` are additive here exactly like `self_heal_miss` — `false` on every round where the check did not trigger, never omitted.
 - `SELF_HEAL_MISSES` — integer count of rounds with `self_heal_miss: true`.
+- `APPROACH_CHALLENGES` — integer count of rounds with `approach_challenged: true` (`0` when none).
 - `FLOW_STAGES_JSON` — object tallying rounds per stage, e.g. `{"launch_pad":1,"worker":2,"self_heal":0,"unknowable":0}` — tallied over the `CATEGORIES_JSON` entries, so an omitted round is counted in neither: the sum of the `flow_stages` values equals the length of `categories[]`, which keeps `build-floor.sh`'s `flow_stage_counter_disagreements` compare clean for `/pr-postmortem` lines. Always emit all four keys (`0` when unused).
 - `SUMMARY` — the one-line root-cause narrative (plain string, passed via `--arg`).
 
@@ -184,8 +195,9 @@ One JSON object per line in `.supervisor/postmortem/results.jsonl`:
 | `agent_generated_guess` | bool | best-effort agent-PR heuristic (from gather) |
 | `review_rounds` | int | from gather |
 | `additions` / `deletions` / `changed_files` | int | size (from gather) |
-| `categories` | array | per-round `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]`, one per categorized round — may hold fewer entries than `review_rounds` (no-evidence rounds are omitted, Step 3) — `dismissed_then_raised` is **additive** (dismissed-findings-01); absent in pre-dismissed-findings-01 lines, which remain valid — `schema_version` stays `1` |
+| `categories` | array | per-round `[{round, class, self_heal_miss, dismissed_then_raised, approach_challenged, flow_stage, evidence}]`, one per categorized round — may hold fewer entries than `review_rounds` (no-evidence rounds are omitted, Step 3) — `dismissed_then_raised` (dismissed-findings-01) and `approach_challenged` are **additive**; absent in lines written before each flag existed, which remain valid — `schema_version` stays `1` |
 | `self_heal_misses` | int | count of rounds flagged `self_heal_miss` |
+| `approach_challenges` | int | **additive, optional** — count of rounds flagged `approach_challenged`; absent in older lines, which remain valid — `schema_version` stays `1` |
 | `flow_stages` | object | tally per stage `{launch_pad, worker, self_heal, unknowable}` over `categories[]` — its values sum to `categories[]`'s length (omitted rounds appear in neither) |
 | `summary` | string | one-line root-cause narrative |
 | `plugin_version` | string | **additive, optional** — plugin version at analysis time, read defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq (`"unknown"` fallback); absent in older lines, which remain valid — `schema_version` stays `1` |

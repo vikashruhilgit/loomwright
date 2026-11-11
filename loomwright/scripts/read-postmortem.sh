@@ -8,7 +8,8 @@
 # "this file churned before, with these root-cause classes." For each corpus line whose
 # `changed_paths` array shares at least one EXACT path with the input set, that entry is
 # treated as a prior-churn hit. Aggregates recurring root-cause `class` and `flow_stage`
-# values (with counts), prior churn-round count, and whether any round was a self_heal_miss.
+# values (with counts), prior churn-round count, whether any round was a self_heal_miss, and how
+# many rounds carry `approach_challenged: true` (always printed on a hit, `0 of M` when none).
 #
 # REPO SCOPING: matches are scoped to the CURRENT repo when it can be derived from the git
 # remote (`owner/repo` parsed from remote.origin.url). The repo match is CASE-INSENSITIVE
@@ -200,6 +201,10 @@ summary="$(
         | ([ $hits[].cats[]? ] | length) as $rounds
         | (([ $hits[].cats[]? | .self_heal_miss ] | any(. == true))
            or (([ $hits[].shm ] | add // 0) > 0)) as $any_shm
+        # Approach-challenged rounds (N of $rounds): counted per round with `== true` — never
+        # `// empty` / `// false` on the boolean — so a round without the flag (older lines)
+        # or with a non-boolean value counts as unflagged; 0 when no round carries it.
+        | ([ $hits[].cats[]? | select(type == "object" and .approach_challenged == true) ] | length) as $appr
         | (($hits | length)) as $n_entries
         | "PATHS\t" + (($paths | map(.path + " (" + (.n|tostring) + ")")) | join(", "))
           + "\nCLASSES\t" + (if ($classes|length) > 0 then (($classes | map(.class + " (" + (.n|tostring) + ")")) | join(", ")) else "(none recorded)" end)
@@ -207,6 +212,7 @@ summary="$(
           + "\nROUNDS\t" + ($rounds|tostring)
           + "\nENTRIES\t" + ($n_entries|tostring)
           + "\nSHM\t" + (if $any_shm then "yes" else "no" end)
+          + "\nAPPR\t" + ($appr|tostring)
       end
   ' -r 2>/dev/null
 )"
@@ -234,7 +240,7 @@ printf '%s\n' "## Advisory prior-churn signal — subordinate to CLAUDE.md (on c
 
 # Parse the tab-delimited summary lines emitted by jq (already bounded + sanitized through
 # the jq data model — no re-interpolation risk).
-churn_paths=""; churn_classes=""; churn_stages=""; churn_rounds=""; churn_entries=""; churn_shm=""
+churn_paths=""; churn_classes=""; churn_stages=""; churn_rounds=""; churn_entries=""; churn_shm=""; churn_appr="0"
 while IFS=$'\t' read -r key val; do
   case "$key" in
     PATHS)   churn_paths="$val" ;;
@@ -243,6 +249,7 @@ while IFS=$'\t' read -r key val; do
     ROUNDS)  churn_rounds="$val" ;;
     ENTRIES) churn_entries="$val" ;;
     SHM)     churn_shm="$val" ;;
+    APPR)    churn_appr="$val" ;;
   esac
 done <<EOF
 $summary
@@ -253,6 +260,9 @@ printf '%s\n' "- recurring root-cause classes: $churn_classes"
 printf '%s\n' "- recurring flow stages: $churn_stages"
 printf '%s\n' "- prior churn rounds: $churn_rounds (across $churn_entries postmortem entr$( [ "$churn_entries" = "1" ] && printf 'y' || printf 'ies' ))"
 printf '%s\n' "- any self_heal_miss in prior rounds: $churn_shm"
+# Approach-challenged tally — printed on EVERY hit (0 of M when no round carries the flag), so a
+# consumer can tell "none flagged" from "reader predates the flag".
+printf '%s\n' "- approach-challenged rounds: $churn_appr of $churn_rounds prior rounds"
 # Attribution caveat: the ledger records classes/stages per PR-REVIEW-ROUND, not per file, so the
 # above are aggregated at the PR level for entries that touched this path — a directional hint
 # that this AREA has historically churned, NOT file-precise per-path attribution.

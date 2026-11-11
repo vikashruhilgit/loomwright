@@ -14,6 +14,8 @@
 #   + stdin path source, self_heal_miss surfacing, malformed line tolerance, advisory banner.
 #   + repo scoping: when CUR_REPO resolves from a remote, only same-repo entries contribute
 #     (a same-path entry from another repo must NOT produce a false cross-repo churn hit).
+#   + approach_challenged tally (4h): `- approach-challenged rounds: N of M prior rounds` right after
+#     the self_heal_miss line, 0 of M when unflagged, absent on a no-hit, plus a reader mutant.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -191,6 +193,87 @@ out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with mixed-case CUR_REPO" || no "non-zero exit with mixed-case CUR_REPO ($rc)"
 grep -q "src/auth/guard.ts" < <(echo "$out") && ok "case-insensitive: O/R hit against corpus o/r still surfaced" || no "case-insensitive same-repo hit dropped"
 grep -q "validation-parity" < <(echo "$out") && ok "case-insensitive: own-repo class still surfaced" || no "case-insensitive class lost"
+rm -rf "$TMP"
+
+echo "== 4h. approach_challenged tally: N of M prior rounds, placed right after the self_heal_miss line =="
+# Dedicated fixture (the write_fixture entries above are NOT changed): two entries touch
+# src/approach.ts and hold 3 categorized rounds between them. With $1 = flagged, round 2 of the
+# first entry carries approach_challenged:true; the second entry is an OLD-shape line with no flag
+# at all. With $1 = unflagged, every round is false or absent.
+write_appr_fixture() {
+  local repo="$1" mode="$2" f2="false"
+  [ "$mode" = "flagged" ] && f2="true"
+  mkdir -p "$repo/.supervisor/postmortem"
+  {
+    jq -cn --argjson f2 "$f2" '{schema_version:1, number:11, repo:"o/r", pr_url:"u11",
+             changed_paths:["src/approach.ts"],
+             categories:[{round:1,class:"execution_bug",self_heal_miss:false,approach_challenged:false,flow_stage:"worker",evidence:"off-by-one"},
+                         {round:2,class:"missing_context",self_heal_miss:false,approach_challenged:$f2,flow_stage:"launch_pad",evidence:"why not use the SDK retry"}],
+             self_heal_misses:0, approach_challenges:(if $f2 then 1 else 0 end), flow_stages:{worker:1,launch_pad:1}, summary:"s11"}'
+    jq -cn '{schema_version:1, number:12, repo:"o/r", pr_url:"u12",
+             changed_paths:["src/approach.ts"],
+             categories:[{round:1,class:"quality_gap",self_heal_miss:true,flow_stage:"self_heal",evidence:"missing test"}],
+             self_heal_misses:1, flow_stages:{self_heal:1}, summary:"s12"}'
+    # Hostile round values must not crash or count: a non-boolean flag and a non-object round.
+    jq -cn '{schema_version:1, number:13, repo:"o/r", pr_url:"u13",
+             changed_paths:["src/other.ts"],
+             categories:[{round:1,class:"plan_gap",approach_challenged:"true",flow_stage:"launch_pad",evidence:"x"}],
+             self_heal_misses:0, flow_stages:{launch_pad:1}, summary:"s13"}'
+  } > "$repo/$CORPUS"
+}
+TMP="$(newrepo)"; write_appr_fixture "$TMP" flagged
+out="$( cd "$TMP" && bash "$READ" "src/approach.ts" 2>/dev/null )"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 on approach fixture" || no "non-zero exit on approach fixture ($rc)"
+grep -qxF -- "- approach-challenged rounds: 1 of 3 prior rounds" < <(echo "$out") \
+  && ok "flagged ledger → '- approach-challenged rounds: 1 of 3 prior rounds'" \
+  || no "flagged tally line missing/wrong: [$out]"
+# Existing pinned lines still present; the new line sits IMMEDIATELY after the self_heal_miss line,
+# and the attribution caveat still follows.
+shm_ln="$(printf '%s\n' "$out" | grep -n -- '- any self_heal_miss in prior rounds:' | head -1 | cut -d: -f1)"
+appr_ln="$(printf '%s\n' "$out" | grep -n -- '- approach-challenged rounds:' | head -1 | cut -d: -f1)"
+cav_ln="$(printf '%s\n' "$out" | grep -n -- '- (attribution: aggregated PR-level' | head -1 | cut -d: -f1)"
+grep -qE "prior churn rounds: 3 " < <(echo "$out") && ok "prior churn rounds line still present (3)" || no "prior churn rounds line lost"
+if [ -n "$shm_ln" ] && [ -n "$appr_ln" ] && [ "$appr_ln" -eq $((shm_ln + 1)) ]; then
+  ok "approach line sits immediately after the self_heal_miss line ($shm_ln → $appr_ln)"
+else
+  no "approach line not immediately after self_heal_miss (shm=$shm_ln appr=$appr_ln)"
+fi
+if [ -n "$cav_ln" ] && [ -n "$appr_ln" ] && [ "$cav_ln" -gt "$appr_ln" ]; then
+  ok "attribution caveat still present, after the approach line"
+else
+  no "attribution caveat missing or misplaced (appr=$appr_ln caveat=$cav_ln)"
+fi
+# A non-boolean flag ("true" string) and a hit with no flag at all count as unflagged.
+out_h="$( cd "$TMP" && bash "$READ" "src/other.ts" 2>/dev/null )"
+grep -qxF -- "- approach-challenged rounds: 0 of 1 prior rounds" < <(echo "$out_h") \
+  && ok "non-boolean flag value is not counted (0 of 1)" || no "non-boolean flag miscounted: [$out_h]"
+# Mutant (c): a copy of the reader that omits the new line must FAIL the tally case.
+MUT_DIR="$(mktemp -d)"; MUT="$MUT_DIR/read-postmortem.sh"
+grep -vF -- '- approach-challenged rounds: ' "$READ" > "$MUT"
+if ! cmp -s "$READ" "$MUT"; then
+  out_m="$( cd "$TMP" && bash "$MUT" "src/approach.ts" 2>/dev/null )"
+  grep -qxF -- "- approach-challenged rounds: 1 of 3 prior rounds" < <(echo "$out_m") \
+    && no "mutant (reader without the approach line) still passed the tally case" \
+    || ok "mutant (reader without the approach line) fails the tally case"
+else
+  no "mutant (c) is identical to the original — the mutation did not apply"
+fi
+rm -rf "$MUT_DIR" "$TMP"
+# Same ledger with no round flagged → 0 of 3 (the line is never omitted on a hit).
+TMP="$(newrepo)"; write_appr_fixture "$TMP" unflagged
+out="$( cd "$TMP" && bash "$READ" "src/approach.ts" 2>/dev/null )"
+grep -qxF -- "- approach-challenged rounds: 0 of 3 prior rounds" < <(echo "$out") \
+  && ok "unflagged ledger → '- approach-challenged rounds: 0 of 3 prior rounds'" \
+  || no "unflagged tally line missing/wrong: [$out]"
+# No hit → empty output, no approach line.
+out="$( cd "$TMP" && bash "$READ" "src/never/touched.ts" 2>/dev/null )"
+[ -z "$out" ] && ok "no hit → empty output (no approach line)" || no "no-hit printed output: [$out]"
+rm -rf "$TMP"
+# Legacy lines (write_fixture, no flag anywhere) still read; the tally is 0 of their rounds.
+TMP="$(newrepo)"; write_fixture "$TMP"
+out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"
+grep -qxF -- "- approach-challenged rounds: 0 of 2 prior rounds" < <(echo "$out") \
+  && ok "pre-flag lines read as unflagged (0 of 2)" || no "pre-flag lines tally wrong: [$out]"
 rm -rf "$TMP"
 
 echo "== 5. jq masked off PATH → exit 0, quiet (missing-tool fail-safe) =="
