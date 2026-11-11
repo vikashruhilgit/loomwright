@@ -102,6 +102,16 @@ if [ "$HAVE_JQ" -eq 1 ]; then
   # Run note present (logs source), memory note present, no twin contracts section linkage.
   [ -f "$V2/$SLUG2/$SLUG2 — Project Memory.md" ] && ok "project-memory note projected" || no "project-memory note missing"
   ls "$V2/$SLUG2/$SLUG2 — Run — "*.md >/dev/null 2>&1 && ok "run note projected from logs" || no "run note missing"
+  # session_end has no duration field (nothing writes one): a stray duration_seconds in a log is
+  # never projected into a run note, while a real field beside it still is (the control).
+  R2d="$(new_repo)"; V2d="$(mktmp)"; SLUG2d="$(basename "$R2d")"; mkdir -p "$R2d/.supervisor/logs"
+  printf '%s\n' '{"event":"session_end","ts":"2026-06-05T10:00:00Z","status":"completed","files_changed":3,"duration_seconds":77}' \
+    > "$R2d/.supervisor/logs/sess-d.jsonl"
+  ( cd "$R2d" && LOOMWRIGHT_OBSIDIAN_VAULT="$V2d" bash "$BUILD" ) >/dev/null 2>&1
+  rn="$V2d/$SLUG2d/$SLUG2d — Run — sess-d.md"
+  if grep -q '^files_changed: 3$' "$rn" 2>/dev/null && ! grep -q 'duration_seconds' "$rn" 2>/dev/null; then
+    ok "run note never projects the unwritten session_end duration_seconds slot"
+  else no "run note duration_seconds: $(grep -E 'files_changed|duration_seconds' "$rn" 2>&1 | tr '\n' ' ')"; fi
 else
   created="$(find "$V2" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')"
   [ "${created:-0}" -eq 0 ] && ok "jq absent → clean no-op (no vault), exit 0" || no "jq absent but vault written"

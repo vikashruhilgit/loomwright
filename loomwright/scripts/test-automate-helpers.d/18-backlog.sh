@@ -301,6 +301,10 @@ bl_refuse "a --pr that is not a /pull/<n> url" bl/14-open done --pr https://gith
 bl_refuse "a kept-open --date later than today (it would settle future runs' rows)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2099-01-01
 bl_refuse "a --date with an impossible month" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-13-01
 bl_refuse "a --date with no value" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date
+bl_refuse "a --date that is no calendar day (February 31)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-02-31
+bl_refuse "a --date that is no calendar day (April 31)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-04-31
+bl_refuse "a --date of February 29 outside a leap year" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2025-02-29
+bl_refuse "a --date of February 29 in a century non-leap year" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 1900-02-29
 bl_refuse "a control character in --reason" bl/14-open abandoned --reason "$(printf 'gone\033[2J')"
 bl_refuse "a multi-line --owed" bl/14-open done_with_escalation --pr https://github.com/acme/widgets/pull/1 --owed "$(printf 'a\n## Status: done')"
 bl_s9d() { bl_run "$1" backlog-stamp bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2099-01-01 --root "$T9" --confirm; printf '%s %s' "$BL_RC" "$([ "$(bl_sum "$T9")" = "$BL_B9" ] && echo unchanged || echo written)"; }
@@ -485,4 +489,56 @@ LOOMWRIGHT_FOLLOWUP_NOW="$BL_FUN" bl_run "$H" backlog --json --offline --state f
 bl_is "BL13 --state follow_up lists only the follow-up draft, totals whole-tree" \
   "$(jq -r '"\([.items[].item] | join(",")) \(.totals | add) \(.state_filter)"' <<<"$BL_OUT")" "$BL_FU 27 follow_up"
 bl_is "BL13 the board never printed an absolute path for a follow-up row" "$(grep -c "$BL" <<<"$BL_OUT")" "0"
+# ---- BL14 a merged-PR read of exactly _BL_PR_LIMIT entries may be truncated ⇒ github: unverified
+mkdir -p "$BL/fix14" && cp -R "$BL_FIX/." "$BL/fix14/"
+jq -n '[range(0; 1000) | {number: (. + 5000), url: ("https://github.com/acme/widgets/pull/" + ((. + 5000) | tostring)), title: "old", headRefName: ("old-" + tostring)}]' > "$BL/fix14/gh/merged.json"
+BL_FIXDIR_OVR="$BL/fix14" bl_run "$H" backlog --json --root "$T0"
+bl_is "BL14 a merged-PR list as long as the read's --limit ⇒ github unverified (it may be truncated), never verified" "$(jq -r '.github' <<<"$BL_OUT")" "unverified"
+jq '.[0:999]' "$BL/fix14/gh/merged.json" > "$BL/fix14/gh/m" && mv "$BL/fix14/gh/m" "$BL/fix14/gh/merged.json"
+BL_FIXDIR_OVR="$BL/fix14" bl_run "$H" backlog --json --root "$T0"
+bl_is "BL14 one entry under the --limit ⇒ github verified" "$(jq -r '.github' <<<"$BL_OUT")" "verified"
+# ---- BL15 a backlog-stamp killed while it holds the item lock removes that lock (its exit trap)
+. "$HERE/wait-lib.sh"
+# the cp stub parks on a gate file (clock-bounded) instead of a fixed sleep: the lock is held for as
+# long as the leg needs, and the gate opens only after the TERM is sent
+T15="$(bl_tree t15)"; mkdir -p "$BL/slowbin"; BL_GATE15="$BL/slowbin/gate"; BL_CPPID15="$BL/slowbin/cp.pid"
+printf '#!/usr/bin/env bash
+echo $$ > %s
+end=$(( $(date +%%s) + 30 ))
+while [ ! -e %s ] && [ "$(date +%%s)" -lt "$end" ]; do sleep 0.05; done
+exec %s "$@"
+' "$BL_CPPID15" "$BL_GATE15" "$(command -v cp)" > "$BL/slowbin/cp"; chmod +x "$BL/slowbin/cp"
+PATH="$BL/slowbin:$PATH" bash "$H" backlog-stamp bl/14-open abandoned --reason gone --root "$T15" --confirm >/dev/null 2>&1 &
+BL_PID=$!; BL_LK15="$T15/.supervisor/requirements/bl/14-open.md.backlog-stamp.lock"
+# wait on the cp stub's pid file, not the lock: the lock appears just before the traps are set, and
+# the stub starts only after them, so a TERM sent from here always finds the trap in place
+wait_for_cmd 10 test -s "$BL_CPPID15"
+BL_HELD="$([ -e "$BL_LK15" ] && echo held || echo never)"
+# bash runs the TERM trap only once its foreground child returns, so the gate opens after the kill
+# and before the wait (the fixed sleep this replaces released the child the same way, by time)
+kill -TERM "$BL_PID" 2>/dev/null; : > "$BL_GATE15"; wait "$BL_PID" 2>/dev/null
+[ -s "$BL_CPPID15" ] && wait_for_pid_gone "$(cat "$BL_CPPID15")" 35
+bl_is "BL15 a TERM while backlog-stamp holds the lock ⇒ the lock is removed (a later stamp is not refused)" \
+  "$BL_HELD $([ -e "$BL_LK15" ] && echo left || echo removed)" "held removed"
+# ---- BL16 positive control for the calendar check: a leap-year February 29 is stamped
+T16="$(bl_tree t16)"
+bl_run "$H" backlog-stamp bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2024-02-29 --root "$T16" --confirm
+bl_is "BL16 kept-open --date 2024-02-29 (a leap day) ⇒ stamped" "$BL_RC $(grep -c '^- \*\*Kept open:\*\* 2024-02-29 ' "$T16/.supervisor/requirements/bl/11-conflict.md")" "0 1"
+# ---- BL17 a refusal that released the lock never removes a lock another stamp took afterwards:
+# cp fails (the write-failed path), and an rm stub plants a foreign lock right after our release —
+# the exit trap must leave it alone
+T17="$(bl_tree t17)"; mkdir -p "$BL/bin17"; BL_LK17="$T17/.supervisor/requirements/bl/14-open.md.backlog-stamp.lock"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$BL/bin17/cp"
+printf '#!/usr/bin/env bash
+%s "$@"; rc=$?
+for a in "$@"; do
+  case "$a" in *.backlog-stamp.lock) [ -e %s ] || { echo foreign-holder > "$a"; : > %s; } ;; esac
+done
+exit $rc
+' "$(command -v rm)" "$BL/bin17/planted" "$BL/bin17/planted" > "$BL/bin17/rm"
+chmod +x "$BL/bin17/cp" "$BL/bin17/rm"
+PATH="$BL/bin17:$PATH" bash "$H" backlog-stamp bl/14-open abandoned --reason gone --root "$T17" --confirm >"$BL/out17" 2>&1; BL_RC17=$?
+bl_is "BL17 write failed ⇒ exit 1, the item unchanged, and a lock planted after our release survives our exit" \
+  "$BL_RC17 $(grep -c 'write failed' "$BL/out17") $(grep -c 'ABANDONED' "$T17/.supervisor/requirements/bl/14-open.md") $(cat "$BL_LK17" 2>/dev/null || echo removed)" \
+  "1 1 0 foreign-holder"
 rm -rf "$BL"

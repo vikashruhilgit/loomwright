@@ -361,6 +361,10 @@ brief "$B" '| `d/test-pipe.sh` | flip `a\|b` → `a/b` in `d/pipe.sh` |'
 run "$B"
 if [ "$rc" -eq 0 ] && has 'pin-mutation 1: held'; then ok "(S) \`\\|\` in a backticked literal reads as \`|\`"
 else no "(S) escaped pipe: rc=$rc out=$out"; fi
+brief "$B" '| `d/test-pipe.sh` (the `a\|b` literal) | flip `a\|b` → `a/b` in `d/pipe.sh` |'
+run "$B"
+if [ "$rc" -eq 0 ] && has 'pin-mutation 1: held'; then ok "(S) a \`\\|\` in the Pin cell does not split the row there"
+else no "(S) escaped pipe in the Pin cell: rc=$rc out=$out"; fi
 rm -f "$R/d/test-pipe.sh"
 
 # (E)

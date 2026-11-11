@@ -2,7 +2,7 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/intake.golden.
 #:  resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #:  resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
-#:  queue-confirm    <source> <n> <limit> | --lane-backlog  # §2 "--limit N" gate AUT-QUEUE: `skip — backlog queue <n> ≤ limit <limit>` for a backlog source whose Queue is not longer than --limit (owner decision D1), `skip — lane backlog …` with --lane-backlog, else `ask` (folder/prompt, n > limit, a non-integer, an unknown source: fail toward asking); exit 0 (missing argument 1)
+#:  queue-confirm    <source> <n> <limit> | --lane-backlog  # §2 "--limit N" gate AUT-QUEUE: `skip — backlog queue <n> ≤ limit <limit>` for a backlog source whose Queue is not longer than --limit (owner decision D1), `skip — lane backlog …` with --lane-backlog, else `ask` (folder/prompt, n > limit, a non-integer, an unknown source: fail toward asking); exit 0 (a missing argument, or any positional beside --lane-backlog, 1)
 
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).
@@ -94,7 +94,8 @@ resolve_backlog() {
 #                                               wrote and ordered the doc, and --limit
 #                                               already caps the run, so asking adds nothing
 # - skip — lane backlog written by lane-create from the owner's --parallel command
-#                                               --lane-backlog (anywhere in the arguments):
+#                                               --lane-backlog alone (with any positional
+#                                               argument it is a usage error, exit 1):
 #                                               the parallel-automate/21 B8 lane skip; its
 #                                               text is the lane's `skipped AUT-QUEUE:`
 #                                               Progress reason, byte for byte
@@ -105,7 +106,7 @@ resolve_backlog() {
 #                                               unknown source: fail toward asking.
 # The engine writes the reason after `skip — ` as ONE `skipped AUT-QUEUE: <reason>`
 # `## Progress` line. Without --lane-backlog, anything but exactly three positional
-# arguments is a usage error (exit 1); otherwise exit 0.
+# arguments is a usage error (exit 1), as is any positional beside --lane-backlog; otherwise exit 0.
 # _qc_count <v> — true for `0` or 1-9 digits with no leading zero (a plain count `[ -le ]`
 # compares safely: no sign, no whitespace, no overflow).
 _qc_count() {
@@ -123,6 +124,7 @@ queue_confirm() {
     esac
   done
   if [ "$lane" = 1 ]; then
+    [ "$k" -eq 0 ] || die "queue-confirm: usage: queue-confirm <source> <n> <limit> | --lane-backlog"
     echo "skip — lane backlog written by lane-create from the owner's --parallel command"; return 0
   fi
   [ "$k" -eq 3 ] || die "queue-confirm: usage: queue-confirm <source> <n> <limit> | --lane-backlog"

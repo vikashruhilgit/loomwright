@@ -114,8 +114,9 @@
 # Never merges, never approves, never force-pushes: the only PR write is `gh pr comment`, and the one
 # push it hands a fix worker is the regular explicit-refspec push.
 #
-# Honest limits: a check run's id is read from its `detailsUrl` (`/job/<id>`, a GitHub Actions job id —
-# the check run id); a check with no such URL has no output read, which reads `no_review_lens_posted`
+# Honest limits: a check run's id is read from its `detailsUrl` (only the Actions shape
+# `https://<host>/<owner>/<repo>/actions/runs/<n>/job/<id>`, a GitHub Actions job id — the check run id);
+# a check with no such URL has no output read, which reads `no_review_lens_posted`
 # as ambiguous ⇒ true (fail closed toward running the fallback). File-less annotations (path `.github` —
 # the runner's AND a step's `::error::msg`) are candidate text for an allow-listed check but never by
 # themselves a posted lens; only "Process completed with exit code N." and the runner-images notice are
@@ -492,7 +493,7 @@ EOF
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     name="$(rj "$c" name)"
-    id="$(printf '%s' "$(rj "$c" detailsUrl)" | sed -n 's#.*/job/\([0-9][0-9]*\).*#\1#p')"
+    id="$(printf '%s' "$(rj "$c" detailsUrl)" | sed -n 's#^https://[^/][^/]*/[^/][^/]*/[^/][^/]*/actions/runs/[0-9][0-9]*/job/\([0-9][0-9]*\)\([/?#].*\)\{0,1\}$#\1#p')"
     if [ -z "$id" ]; then
       outputs="$(printf '%s' "$outputs" | "$JQ" -c --arg n "$name" '. + [{name: $n, text: null, aux: null}]')"
       continue
@@ -547,8 +548,10 @@ rh_classify() {
   st_set dismissed_before_round "$(jlen "$(stj dismissed '[]')")"
   rev="$(rh_classify_one "$(stj round_reviews)")"
   thr="$(rh_classify_one "$(stj round_threads)")"
-  # human / unknown-author unresolved threads: surfaced in the notification, never a READY blocker (§U3)
-  st_set human_threads "$(( $(jlen "$(stj round_threads)") - $(jlen "$thr") ))"
+  # human / unknown-author unresolved threads: surfaced in the notification, never a READY blocker (§U3).
+  # Counted by author alone: the classifier re-run with every body set to a review word keeps exactly the
+  # bot-authored threads, so a bot thread with no review marker is not counted as human
+  st_set human_threads "$(( $(jlen "$(stj round_threads)") - $(jlen "$(rh_classify_one "$(stj round_threads | "$JQ" -c 'map(.body = "review")')")") ))"
   com="$(rh_classify_one "$(stj round_comments)")"
   allow="$("$JQ" -c '.review_producing_checks // [] | map(select(type == "string"))' "$USER_DIR/drain-allowlist.json" 2>/dev/null || echo '[]')"
   [ -n "$allow" ] || allow='[]'
@@ -677,12 +680,19 @@ rh_validate() {
   NEXT=rules
 }
 
+# rh_verdict <rules-gate-verdict.sh line> — the line's verdict when it is in the closed set, else
+# `unreadable`; the one allow-list rh_rules and rh_confirm both read the gate through
+rh_verdict() {
+  local v
+  v="$(printf '%s' "$1" | "$JQ" -r 'if type == "object" and (.verdict | type == "string")
+      and (.verdict | IN("ok","none","unstamped","cmd_disabled","fail","unresolved","unreadable")) then .verdict else "unreadable" end' 2>/dev/null)"
+  printf '%s\n' "${v:-unreadable}"
+}
+
 rh_rules() {
   local out verdict failing esc=false seen
   out="$(rh_rules_call | head -n 1)"
-  verdict="$(printf '%s' "$out" | "$JQ" -r 'if type == "object" and (.verdict | type == "string")
-      and (.verdict | IN("ok","none","unstamped","cmd_disabled","fail","unresolved","unreadable")) then .verdict else "unreadable" end' 2>/dev/null)"
-  [ -n "$verdict" ] || verdict=unreadable
+  verdict="$(rh_verdict "$out")"
   st_set rules_gate "$verdict"
   if [ "$verdict" = fail ]; then
     failing="$(printf '%s' "$out" | "$JQ" -c '(.countable // []) as $c | [(.failing // [])[] | tostring | select(. as $i | $c | map(tostring) | index($i))]')"
@@ -751,10 +761,14 @@ rh_decide() {
   st_set last_fixable_count "$((af + nh + rff))"
   if [ "$(st rules_escalates)" = true ]; then
     seen="$(jlen "$(stj rules_failed_seen)")"; unres="$(jlen "$(stj rules_unresolved)")"
-    local m=1; [ "$unres" -gt "$m" ] && m="$unres"; [ "$seen" -gt "$m" ] && m="$seen"
+    # the unstamped branch counts the remembered failures, the unresolved / unreadable branch its own
+    # unresolved rules — each at least 1, neither inflated by the other's list
+    local m=1
     if [ "$(st rules_gate)" = unstamped ]; then
+      [ "$seen" -gt "$m" ] && m="$seen"
       rh_escalate_to rules_fail_then_unstamped other "$((af + nh + m))" "rules_fail_then_unstamped: $(stj rules_failed_seen | "$JQ" -r 'join(", ")') failed earlier, now unstamped"
     else
+      [ "$unres" -gt "$m" ] && m="$unres"
       rh_escalate_to rules_gate_unresolved other "$((af + nh + m))" "rules_gate_unresolved: rules-gate-verdict.sh verdict $(st rules_gate) ($(stj rules_unresolved | "$JQ" -r 'join(", ")'))"
     fi
     return 0
@@ -851,8 +865,7 @@ rh_confirm() {
   esac
   case "$line" in CONTINUE*) st_set cont_arm confirm; CONT=1; return 0 ;; esac
   rules="$(rh_rules_call | head -n 1)"
-  rj_="$(printf '%s' "$rules" | "$JQ" -r 'if type == "object" and (.verdict | type == "string") then .verdict else "unreadable" end' 2>/dev/null)"
-  [ -n "$rj_" ] || rj_=unreadable
+  rj_="$(rh_verdict "$rules")"
   st_set rules_gate "$rj_"
   seen="$(stj rules_failed_seen | "$JQ" -r 'join(",")')"; fixed="$(stj checks_ever_fixed | "$JQ" -r 'join(",")')"
   out="$(rh_round_json | bash "$HERE/drain-subfloor-decision.sh" decide - --sha "$sha" --wait-line "$line" --rules "$rj_" \

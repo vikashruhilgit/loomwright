@@ -518,7 +518,9 @@ jq -S --slurpfile audit "$tmpd/audit.json" --slurpfile hostrows "$tmpd/host-rows
       | ([ $cmd | scan($rv) ] | length) as $mentions
       # inline redirects as [operator, target]. `>&` followed by an fd number / `-` is a duplication
       # (not a write); `>&word` writes <word>; `>>&` is a bash syntax error (unmodelled => unknown).
-      | [ $cmd | scan("(?<![<>&0-9])(?:[0-9]*|&)(>\\||>>?&?)[ \\t]*([^ \\t;|&)<>]*)")
+      # The duplications are blanked first, so a redirect written right after one (`2>&1>f`) is still
+      # read; a newline ends a target (a multi-line command never glues the next line onto a path).
+      | [ $cmd | gsub($fd_dup_re; " ") | scan("(?<![<>&0-9])(?:[0-9]*|&)(>\\||>>?&?)[ \\t]*([^ \\t\\n;|&)<>]*)")
           | select((.[0] | endswith("&") and . != ">>&") and (.[1] | test("^([0-9]+-?|-)$")) | not)
           | if .[0] == ">>&" then "" else .[1] end
           | select(. != "/dev/null" and . != "\"/dev/null\"") ] as $inline
@@ -539,6 +541,7 @@ jq -S --slurpfile audit "$tmpd/audit.json" --slurpfile hostrows "$tmpd/host-rows
            ($s | map(script_cls(.))) as $sc
            | (if ($sc | length) == 0 and ($il | not) then ["unknown"] else $sc end)
              + (if $il then [$inline_cls] elif ($inline | length) > 0 then ["unknown"] else [] end)
+             + ($iw | map(select(. == "unknown")))
              + $uw
          else ["unknown"] end) as $hc
       | {event: $ev,

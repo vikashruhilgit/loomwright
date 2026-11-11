@@ -57,10 +57,13 @@
 #     (_rs_first_status_open) ⇒ `open` (`unknown` when github is unverified, below); anything
 #     else ⇒ `unknown`, with the offending line or `no status line`.
 # GITHUB: exactly two reads per pass, `gh pr list --state merged|open --limit $_BL_PR_LIMIT`. Either
-# failing (or not JSON) ⇒ `github: unverified`: every item's pr_state reads `unverified`, step 2's PR
+# failing (or not JSON, or a full $_BL_PR_LIMIT-entry page that may be truncated) ⇒ `github: unverified`: every item's pr_state reads `unverified`, step 2's PR
 # lookup is skipped, a claim stays `in_flight` (never `pr_open`), and an item that would read `open`
 # reads `unknown` with `(merged-PR lookup unverified)` in its evidence — no item reads `open` or
 # `pr_open` because of the failure, and `--verify-list` says its candidates are unverified.
+# HONEST LIMIT: the read is one page, not paged. A repo with $_BL_PR_LIMIT or more merged PRs fills that
+# page on every pass, so its board reads `github: unverified` permanently and every would-be `open`
+# item reads `unknown`. That fails safe, but no flag lifts it; only paging the merged read would.
 # RIGHT-SIZE (board only): ONE `right-size <item list> --json --root <root>` call over the whole item
 # list, joined on its `item` display name; any failure ⇒ the column reads `unknown`, nothing else.
 # OFFLINE (board only, `backlog --offline`, any mode): neither gh read runs and no right-size job
@@ -93,6 +96,9 @@ _BL_RE_PROPOSED='^## Status:[[:space:]]*proposed([^A-Za-z0-9_-]|$)'
 _BL_RE_SHIPPED='^## Status:[[:space:]]*brief-shipped([^A-Za-z0-9_-]|$)'
 
 _bl_fail() { echo "$1: $2" >&2; exit 1; }
+# release backlog-stamp's item lock: ownership (_BL_LK, read by its exit trap) is dropped BEFORE the
+# file goes, so the trap can never remove a lock another stamp took after this release
+_bl_unlock() { _BL_LK=""; rm -f "$1"; }
 
 # _bl_clean <text> — sets BL_C: one line, tabs and separator bytes as spaces (a field never splits).
 _bl_clean() {
@@ -328,7 +334,10 @@ _bl_context() {
   fi
   _BL_GH=unverified
   if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] \
-     && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j1" && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j2"; then
+     && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j1" && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j2" \
+     && "$JQ" -e --argjson l "$_BL_PR_LIMIT" 'length < $l' >/dev/null 2>&1 <<<"$j1" \
+     && "$JQ" -e --argjson l "$_BL_PR_LIMIT" 'length < $l' >/dev/null 2>&1 <<<"$j2"; then
+    # a list of exactly _BL_PR_LIMIT entries may be truncated (older PRs dropped): it stays unverified
     _BL_GH=verified
     "$JQ" -r '.[] | [(.number | tostring), (.url // ""), (.headRefName // ""), ((.title // "") | gsub("[\t\r\n\u001d-\u001f]"; " "))] | @tsv' <<<"$j1" > "$_BL_TMP/merged.tsv" 2>/dev/null
     "$JQ" -r '.[] | [(.number | tostring), (.url // ""), (.headRefName // ""), ((.title // "") | gsub("[\t\r\n\u001d-\u001f]"; " "))] | @tsv' <<<"$j2" > "$_BL_TMP/open.tsv" 2>/dev/null
@@ -645,6 +654,19 @@ backlog_board() {
 
 # backlog-stamp <item> <mode> … --confirm (usage above). Validation first, then the --confirm guard,
 # then ONE append through a temp copy + mv.
+# _bl_calendar_day <YYYY-MM-DD> — true when the (already shape-checked) date names a real day: the
+# month's length, February 29 only in a Gregorian leap year. Pure shell arithmetic, so it reads the
+# same under BSD and GNU `date`.
+_bl_calendar_day() {
+  local y m d max=31
+  y=$((10#${1%%-*})); m="${1#*-}"; d=$((10#${m#*-})); m=$((10#${m%%-*}))
+  case "$m" in
+    4|6|9|11) max=30 ;;
+    2) max=28
+       if [ $((y % 4)) -eq 0 ] && { [ $((y % 100)) -ne 0 ] || [ $((y % 400)) -eq 0 ]; }; then max=29; fi ;;
+  esac
+  [ "$d" -le "$max" ]
+}
 backlog_stamp() {
   local root="" given="" mode="" owed="" reason="" sup="" date="" today confirm=0 a f rel prs="" block brief="" tmp em lk n
   em="$(printf '\342\200\224')"
@@ -690,6 +712,7 @@ backlog_stamp() {
       today="$(date -u +%Y-%m-%d)"
       [ -n "$date" ] || date="$today"
       grep -qE '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$' <<<"$date" || _bl_fail backlog-stamp "refused — --date is not YYYY-MM-DD (nothing written)"
+      _bl_calendar_day "$date" || _bl_fail backlog-stamp "refused — --date $date is not a calendar day (nothing written)"
       # a marker settles every row dated on or before it, so a future date would settle rows from
       # runs that have not happened yet (D-conflict-1: a later run's row must raise the conflict again)
       [ "$((10#${date//-/}))" -le "$((10#${today//-/}))" ] || _bl_fail backlog-stamp "refused — --date $date is later than today ($today UTC; nothing written)" ;;
@@ -725,10 +748,17 @@ backlog_stamp() {
     [ "$n" -le 100 ] || _bl_fail backlog-stamp "refused — $rel is locked by another backlog-stamp (${lk#"$root"/}; nothing written)"
     sleep 0.1
   done
-  if is_done "$f"; then rm -f "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
-  tmp="$(mktemp "$f.XXXXXX")" || { rm -f "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
+  # the lock is ours from here: an exit or a kill before the release below removes it (only ours —
+  # _BL_LK is set after the O_EXCL create succeeded, and every release goes through _bl_unlock,
+  # which clears it before the file is removed)
+  _BL_LK="$lk"
+  trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"' EXIT
+  trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"; trap - EXIT; exit 130' INT
+  trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"; trap - EXIT; exit 143' TERM
+  if is_done "$f"; then _bl_unlock "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
+  tmp="$(mktemp "$f.XXXXXX")" || { _bl_unlock "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
   if cp -p "$f" "$tmp" && printf '%s\n' "$block" >> "$tmp" && mv -f "$tmp" "$f"; then
-    rm -f "$lk"
+    _bl_unlock "$lk"
     case "$mode" in
       kept-open) printf 'backlog-stamp: stamped %s — Kept open %s, supersedes %s\n' "$rel" "$date" "$sup" ;;
       abandoned) printf 'backlog-stamp: stamped %s — done_with_escalation %s ABANDONED\n' "$rel" "$em" ;;
@@ -736,6 +766,6 @@ backlog_stamp() {
     esac
     return 0
   fi
-  rm -f "$tmp" "$lk"
+  rm -f "$tmp"; _bl_unlock "$lk"
   _bl_fail backlog-stamp "write failed for $rel (the item is unchanged)"
 }

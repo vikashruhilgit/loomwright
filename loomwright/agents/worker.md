@@ -9,8 +9,8 @@ color: "#32CD32"
 disallowedTools: Task, TaskOutput, WebSearch, WebFetch
 hooks:
   # NOTE: Claude Code ignores frontmatter hooks for plugin-distributed agents —
-  # hooks.json is authoritative at runtime. This copy mirrors hooks.json for
-  # ~/.claude/agents/ compatibility; keep the two in sync.
+  # hooks.json is authoritative at runtime. This entry keeps only the result
+  # validator for ~/.claude/agents/ installs; it is not a mirror of hooks.json.
   SubagentStop:
     - type: command
       command: 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-worker-result.py" || true'

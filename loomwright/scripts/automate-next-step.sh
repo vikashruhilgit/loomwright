@@ -237,7 +237,8 @@
 #                               given, is read as the drain report
 #   NEXT_STEP_UNTIL=<step>      stop after <step> finishes (a golden case that ends mid-tail): no
 #                               instruction is printed, the sidecar keeps the next step
-#   NEXT_STEP_CLOSEOUT_OUT=<f>  `sync` reads closeout's output from <f> instead of running closeout
+#   NEXT_STEP_CLOSEOUT_OUT=<f>  `sync`, RECONCILE's merged close-out and the superseded drain read
+#                               closeout's output from <f> instead of running closeout
 #                               (the golden leftover case supplies it as fixed input)
 #
 # Exit codes: 0 an instruction printed (or a NEXT_STEP_UNTIL stop); 1 a helper / writer failure
@@ -360,7 +361,7 @@ ns_cm_configured() {
   case "$v" in
     -) return 0 ;;
     =*) v="${v#=}"; ns_cm_listed "$v" && { NS_CM_CONF="$v"; return 0; }
-        ns_err "coordinator_model_invalid — '$(printf '%s' "$v" | head -n 1 | cut -c1-80)' is not session | claude-haiku-5-5 | claude-sonnet-5-5 — coordinator_model resolves session" ;;
+        ns_err "coordinator_model_invalid — '$(printf '%s' "$v" | head -n 1 | cut -c1-80)' is not $(printf '%s\n' "$NS_CM_VALUES" | awk 'NR > 1 { printf " | " } { printf "%s", $0 }') — coordinator_model resolves session" ;;
     *) ns_err "coordinator_model_invalid — $CFG_PATH is not a JSON object — coordinator_model resolves session" ;;
   esac
   NS_CM_CONF=session
@@ -1710,7 +1711,9 @@ ns_after_reconcile_step() { if [ "$(st resume_status_due)" = true ]; then echo r
 ns_classify_complete() { [ "$1" = complete ]; }
 # ns_classify_or_leftover <rc> <answer> <run> <item> <pr> — closeout-classify's answer, or — when it exited
 # non-zero or printed nothing — ONE leftover row naming that (fail CLOSED: a crashed or silent classify is
-# never read as a resolved close-out); the row keeps the `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` shape
+# never read as a resolved close-out); the row keeps the `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` shape.
+# RECONCILE's caller (ns_reconcile_merged) already returns 1 on a non-zero exit, so from there only the
+# printed-nothing branch is reachable; both fail CLOSED
 ns_classify_or_leftover() {
   if [ "$1" -eq 0 ] && [ -n "$2" ]; then printf '%s' "$2"; return 0; fi
   ns_err "automate-helpers.sh closeout-classify exited $1$([ -n "$2" ] || printf ' with no answer') for $4 ($5) — kept as a leftover"
@@ -2699,7 +2702,9 @@ ns_superseded() {
   ns_once once_sp_line ns_progress "$(ns_ts) drain superseded_by_merge — PR merged before a terminal REVIEW_HEAL_RESULT" || return 1
   # NO review-heal sidecar, NO learning-emit, NO GATE / decision step: close the item out as RECONCILE does
   if [ "$(st once_sp_closeout)" != true ]; then
-    out="$(bash "$H" closeout "$RF" "$ITEM" "$pr" ${SID:+--session-id "$SID"} 2>/dev/null)"
+    # the same closeout seam ns_sync and RECONCILE read (a golden case supplies closeout's output)
+    if [ -n "${NEXT_STEP_CLOSEOUT_OUT:-}" ]; then out="$(cat "$NEXT_STEP_CLOSEOUT_OUT")"
+    else out="$(bash "$H" closeout "$RF" "$ITEM" "$pr" ${SID:+--session-id "$SID"} 2>/dev/null)"; fi
     cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$ITEM" --pr "$pr" --record "$RF" 2>/dev/null)"; rc=$?
     [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh closeout-classify exited $rc"; NS_RC="$rc"; return 1; }
     st_set once_sp_closeout true
@@ -2859,7 +2864,7 @@ ns_validation() {
         out="$(bash "$H" validation-gate "$RF" "$ITEM" "$PR" --waive "$vn" --words "$note" 2>&1)"; rc=$?
         if [ "$rc" -ne 0 ]; then
           ns_err "validation-gate --waive refused (treated as Keep parked): $out"
-          st_set waive_refusal "$out"; st_del vg_line; ns_validation_escalate "$vg"; return
+          st_del vg_line; ns_validation_escalate "$vg"; return
         fi
         ns_validation_judge "$(bash "$H" validation-gate "$RF" "$ITEM" "$PR" 2>/dev/null | tail -n 1)"
         return ;;
@@ -3680,7 +3685,9 @@ pending="$(st pending_text)"; PENDING_TEXT="$pending"
 # --session-id) inherits THIS session's identity — never the session that printed the instruction. A call
 # that gives neither (or gives the identity already stored) writes nothing.
 ns_reprint() {
-  # a replay re-prints: it is not a coordinator run, so it never reaches the coordinator-model ledger
+  # a replay re-prints: it is not a coordinator run, so it never reaches the coordinator-model ledger.
+  # Byte for byte (only a fresh spawn's launch line is rebuilt): a re-print carries the coordinator_model
+  # resolved when the instruction was first printed, never a value re-read after a config / valve change
   NS_VALVE_ARMED=0
   local sid own l ch=0 out="$pending"
   sid="${SID:-$(st flag_session_id)}"; own="$OWNER_CMD"

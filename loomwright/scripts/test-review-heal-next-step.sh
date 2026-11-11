@@ -901,6 +901,40 @@ drv "$DRIVER" --result "{\"pushed\":true,\"pushed_sha\":\"$SHA_B\",\"self_review
   && ! grep -q termination_reason < <(b_block) && grep -q 'rules_fail_then_unstamped: R7 failed earlier, now unstamped' "$C/comments.log" \
   && ok "B: a remembered countable fail turning unstamped ⇒ ESCALATED rules_fail_then_unstamped, termination_reason unset" \
   || no "B: fail-then-unstamped ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision, message}' 2>/dev/null)"
+# two countable rules FAIL in round 1, then the gate reads `unresolved` naming one rule ⇒ the unresolved
+# branch counts its own unresolved rules (1), never the remembered failures (2)
+setup_case "$FIX/fallback-no-review-lens"
+{ printf '%s\n' '{"verdict":"fail","selected":["R7","R8"],"countable":["R7","R8"],"advisory":[],"passed":[],"failing":["R7","R8"],"unresolved":[],"checks_passed":"0/2"}'
+  printf '%s\n' '{"verdict":"unresolved","selected":["R1"],"countable":["R1"],"advisory":[],"passed":[],"failing":[],"unresolved":["R1"],"checks_passed":null}'; } > "$C/seq/rules.lines"
+drv "$DRIVER" --start drain
+drv "$DRIVER" --result "{\"pushed\":true,\"pushed_sha\":\"$SHA_B\",\"self_review\":\"self_review: ordering, run-once guards — clean\"}"
+[ "$(printf '%s' "$OUT" | jq -r '.do')" = done ] && grep -qx '  rules_gate: unresolved' < <(b_block) && grep -qx '  remaining_issues: 1' < <(b_block) \
+  && ok "B: rules gate unresolved after two remembered failures ⇒ remaining_issues counts the unresolved rule only" \
+  || no "B: unresolved remaining_issues ⇒ $(printf '%s' "$OUT" | jq -c '{do, message}' 2>/dev/null) $(b_block | grep remaining_issues)"
+# the confirming pass reads an off-list verdict ⇒ stored and reported as `unreadable`, never the raw string
+setup_case "$FIX/sub-floor-converged-ready"
+{ cat "$FIX/_common/rules.lines"; printf '%s\n' '{"verdict":"totally-fine","selected":[],"countable":[],"advisory":[],"passed":[],"failing":[],"unresolved":[],"checks_passed":null}'; } > "$C/seq/rules.lines"
+drv "$DRIVER" --start drain; drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-1.json"
+drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-2.json"
+# (the verdict is not passable either way, so the round churns on; the raw string must never be stored)
+[ -d "$C_ROOT/.supervisor" ] && ! grep -q 'totally-fine' "$C/last.out" && ! grep -rq 'totally-fine' "$C_ROOT/.supervisor" \
+  && grep -rq '"rules_gate": *"unreadable"' "$C_ROOT/.supervisor" \
+  && ok "B: an off-list rules verdict at the confirming pass reads unreadable (the shared allow-list)" \
+  || no "B: confirm off-list verdict ⇒ $(grep -rho '"rules_gate": *"[^"]*"' "$C_ROOT/.supervisor" | tr '\n' ' ')"
+# a bot-authored unresolved thread with no review marker is not a human thread
+setup_case "$FIX/converged-ready"
+gh_row 'api graphql *' 0 '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"claude[bot]","__typename":"Bot"},"body":"Thanks, that looks right now"}]}}]}}}}}'
+drv "$DRIVER" --start drain; drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+[ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && ! grep -q 'unresolved human' "$C/side.log" \
+  && ok "B: a marker-less bot thread is never counted as an unresolved human thread" \
+  || no "B: marker-less bot thread ⇒ $(grep -o 'surfaced[^,]*' "$C/side.log" | head -n 1)"
+# a non-Actions detailsUrl carrying /job/<digits> is never read as a check-run id
+setup_case "$FIX/converged-ready"
+gh_row 'pr view * --json statusCheckRollup*' 0 "$(sed 's#https://github.com/acme/widgets/actions/runs/1002/job/2002#https://ci.example.invalid/acme/job/2002#' "$FIX/_common/core-green.json")"
+drv "$DRIVER" --start drain
+! grep -q 'check-runs/2002' "$C/calls.log" && grep -q 'check-runs/2001' "$C/calls.log" \
+  && ok "B: a /job/<digits> URL outside the Actions shape is not read as a check-run id (an Actions one is)" \
+  || no "B: non-Actions job URL ⇒ $(grep -o 'check-runs/[0-9]*' "$C/calls.log" | sort -u | tr '\n' ' ')"
 
 # --------------------------------------------------------------------------------------
 # P — prose pins (automate-speed/12 AC6): every review-heal inventory row that stays in prose and names this

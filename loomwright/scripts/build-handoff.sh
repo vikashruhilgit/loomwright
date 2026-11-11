@@ -316,7 +316,9 @@ if [ -s "$index" ]; then
         # flexible whitespace, exactly one `#`) via the mirrored RUN_TITLE_ERE defined near the
         # top of this file. The index loop above admits only files with a title line, so the
         # basename fallback below is defensive only (e.g. a file rewritten between index and render).
-        title="$(env LC_ALL=C sed -nE "s/${RUN_TITLE_ERE}[[:space:]]*//p" "$path" 2>/dev/null | head -1)"
+        # The s command's delimiter is the 0x01 control byte, which the ERE can never contain (a `/`
+        # in it would otherwise end the pattern and every title would fall back to the basename).
+        title="$(_d="$(printf '\001')"; env LC_ALL=C sed -nE "s${_d}${RUN_TITLE_ERE}[[:space:]]*${_d}${_d}p" "$path" 2>/dev/null | head -1)"
         [ -n "$title" ] || title="$(basename "$path" .md)"
         a_status="$(sed -nE 's/^##[[:space:]]*Status:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
         a_source="$(awk '/^##[[:space:]]*Source/{f=1;next} f&&/^## /{exit} f&&/^-[[:space:]]/{sub(/^-[[:space:]]*/,"");print;exit}' "$path" 2>/dev/null)"

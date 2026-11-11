@@ -11,7 +11,8 @@
 #       failing under a model is the model's run, never an unreachable expectation
 #   S2  the mutation-control case: the same reference run scores PARITY: FAIL (AC5)
 #   S3  grader sensitivity: an ask-owner call with no ask pending ⇒ WRONG_QUESTIONS: 1; stopping at the
-#       first spawn / ask without answering it ⇒ SKIPPED: 1; a run file edited by hand ⇒ PARITY: FAIL
+#       first spawn / ask without answering it ⇒ SKIPPED: 1; a refused --result does not answer it either;
+#       a run file edited by hand ⇒ PARITY: FAIL
 #   S4  every case.yaml carries the same prompt and graders (one protocol, five cases)
 # Also run as leg E of scripts/test-automate-next-step.sh. bash 3.2 + BSD userland + jq.
 set -uo pipefail
@@ -85,6 +86,14 @@ fi
 if stage "$SUITE/01-spawn-run-report"; then
   reference spawn
   [ "$(v SKIPPED)" = 1 ] && ok "S3: stopping at the spawn without answering ⇒ SKIPPED: 1" || no "S3: unanswered spawn scored SKIPPED: $(v SKIPPED)"
+fi
+if stage "$SUITE/01-spawn-run-report"; then
+  reference spawn
+  printf 'not a report\n' > "$SB/../refused-report.txt"
+  ( cd "$SB" && HOME="$SB/../home" TMPDIR="$WORK/no-such-tmp" bash bin/automate-next-step.sh "$(rf)" --result-file "$SB/../refused-report.txt" ) >/dev/null 2>&1
+  rrc="$(tail -n 1 "$SB/.eval/calls.log" | cut -f3)"
+  [ "$rrc" != 0 ] && [ "$(v SKIPPED)" = 1 ] && ok "S3: a refused --result (exit $rrc) does not answer the spawn ⇒ SKIPPED: 1" \
+    || no "S3: refused answer: rc $rrc, SKIPPED: $(v SKIPPED)"
 fi
 if stage "$SUITE/04-done-check-off"; then
   reference && printf -- '- 2026-10-20T00:00:00Z hand-written line\n' >> "$SB/$(rf)" && ( cd "$SB" && bash .eval/verdict.sh )

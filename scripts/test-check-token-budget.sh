@@ -27,7 +27,10 @@
 #       files at the skills root are not skill dirs; a leading-zero ("08")
 #       agent/skill/command budget and divisor never false-green (octal
 #       $((...)) abort); a symlinked skill dir, a symlink inside a skill dir and
-#       a dangling symlinked command doc fail CLOSED, a live one is measured
+#       a dangling symlinked command doc fail CLOSED, a live one is measured; a
+#       command-doc symlink to a directory is named as such, a .md in a commands
+#       subdirectory fails CLOSED, an empty skills dir AND an empty commands dir
+#       are both reported in one run, and an empty or newline-bearing key is an ERROR
 #   8.  THREE-TABLE MIRROR — skill/command budget drift, measured drift, missing
 #       row and ghost row each fail CLOSED; a valid agents+skills+commands mirror
 #       passes together (the agent-table parse is bounded, so skill/command rows
@@ -485,6 +488,46 @@ printf '# template\n' > "$S7m/SKILL_TEMPLATE.md"
 mk_tables "$TMP/c7m.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"
 run_gate "$A7" "$S7m" "$TMP/c7m.json"
 check "case7m loose skills-root files need no entry (exits 0)" 0 "$RC"
+
+# 7s — a command-doc symlink pointing at a DIRECTORY is an ERROR named as such,
+# never mislabelled a dangling symlink.
+C7s="$TMP/c7s/commands"; mkdir -p "$C7s" "$TMP/c7s/a-dir"
+printf '# noop\n' > "$C7s/noop.md"
+ln -s "$TMP/c7s/a-dir" "$C7s/dirlink.md"
+mk_tables "$TMP/c7s.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"', "dirlink": { "budget": 10, "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c7s.json" "" "$C7s"
+check "case7s command-doc symlink to a directory exits 1" 1 "$RC"
+contains_line "case7s ERROR says symlink to a non-file, not dangling" "$OUT" "dirlink" "is a symlink to a non-file"
+
+# 7t — a .md in a commands SUBDIRECTORY (a namespaced command) is measured by no
+# row, so it fails CLOSED instead of being silently skipped.
+C7t="$TMP/c7t/commands"; mkdir -p "$C7t/ns"
+printf '# noop\n' > "$C7t/noop.md"
+printf '# nested\n' > "$C7t/ns/nested.md"
+mk_tables "$TMP/c7t.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"
+run_gate "$A7" "$S7" "$TMP/c7t.json" "" "$C7t"
+check "case7t a .md under a commands subdirectory exits 1" 1 "$RC"
+contains_line "case7t ERROR names the commands subdirectory" "$OUT" "ns" "commands subdirectory"
+
+# 7u — EMPTY skills dir AND EMPTY commands dir in one run: both are reported
+# (the zero-dir guards no longer stop at the first one).
+mkdir -p "$TMP/c7u/skills" "$TMP/c7u/commands"
+mk_tables "$TMP/c7u.json" '' ''
+run_gate "$A7" "$TMP/c7u/skills" "$TMP/c7u.json" "" "$TMP/c7u/commands"
+check "case7u empty skills and commands dirs exit 1" 1 "$RC"
+contains "case7u names the empty skills dir" "$OUT" "no skill dirs found"
+contains "case7u ALSO names the empty commands dir" "$OUT" "no command .md files found"
+
+# 7v — an EMPTY-string or newline-bearing budget key cannot be matched by the
+# line-by-line key loops (skipped / split), so it is an ERROR up front.
+mk_tables "$TMP/c7v.json" '"shared": { "budget": 9999, "measured": 0 }, "": { "budget": 10, "measured": 0 }' "$NOOP_CMD"
+run_gate "$A7" "$S7" "$TMP/c7v.json"
+check "case7v an empty-string .skills key exits 1" 1 "$RC"
+contains_line "case7v ERROR names the empty key" "$OUT" '.skills[""]' "empty or newline-bearing key"
+mk_tables "$TMP/c7v-nl.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"', "a\nb": { "budget": 10, "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c7v-nl.json"
+check "case7v a newline-bearing .commands key exits 1" 1 "$RC"
+contains_line "case7v ERROR names the newline-bearing key" "$OUT" '.commands["a\nb"]' "empty or newline-bearing key"
 
 # ---------------------------------------------------------------------------
 # Case 8 — THREE-TABLE MIRROR. Fixture: c1's alpha (250 / 200) and `shared`

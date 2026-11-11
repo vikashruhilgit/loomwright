@@ -177,7 +177,7 @@ Ready for: `/orchestrator goal: "BD-XX"`
 2. **Running system — [what is shown]:** [the outcome observed live, e.g. a hook firing, an agent's live answer, a UI flow; only when nothing static can show it; its output goes in `docs/evidence/<slug>.md` with its declared verdict line]
 
 ## Depends on
-none
+<none, or one story id or relative .md path per line>
 
 ## Touches
 src/scheduling/
@@ -194,7 +194,7 @@ src/notifications/shift-assigned.ts
 - **`## Touches` comes from your own file-impact reasoning.** List every path the story's Scope names or plainly implies — the files and directories the change will edit or create. Write the sole line `unknown` only when you truly cannot name the change site (e.g. a capability with no code yet to point at), never as a placeholder. Add what the shared-file sweep below finds.
 - **Shared-file sweep.** When the story adds a new symbol, route, setting or category, find an existing similar feature and list the existing files that register, dispatch, configure or test it (an index, a policy table, wiring, the test that pins the list): the files the story plugs into, not only those it creates. No similar feature ⇒ say so in Assumptions and list what you can name (`unknown` only when you truly cannot). A file a `.agent/companions.json` rule already adds need not be listed again; a shared file every story of a kind needs belongs in such a rule (`{"when": "<glob>", "add": ["<path>"]}`), which the planner then adds on its own — propose it to the owner, never write the file. A contract change the sweep finds (a response shape, an accepted input form, a refusal a test pins) goes in the Acceptance Criteria, never as a Touches-only file; when the required form is unclear, ask the owner (Product Owner: a contract-change flag at Responsibilities 3a).
 - **No prose inside the section, ever.** A condition ("only if a test exposes a defect"), a part label ("(part B)"), a comma list or a bullet makes the WHOLE section unknown. Put conditions in Scope; keep one bare path per line here.
-- **Always write `## Depends on`** — `none` when the story depends on nothing. A missing section is not "none"; it makes the story wait for every earlier story.
+- **Always write `## Depends on`** — `none` when the story depends on nothing. A missing section is not "none"; it makes the story wait for every earlier story. The template's `<none, or …>` line is a placeholder, not a default: `--lint` refuses it until you choose.
 - **Check before handing off:** `automate-helpers.sh plan-waves <file|dir> --lint` (the `/automate` engine's helper script) prints `ok` / `ok (declared unknown)` or the exact bad line, its number and the reason for both sections, and exits 1 when either is missing or unparsable.
 
 Keep them as the story's last sections (or follow them with another `##` heading): an `###` heading does not end an H2 section, so its text would be read as a bad `Touches` line. The prose `### Dependencies` block stays for humans and is never parsed — `## Depends on` / `## Touches` are the machine-read declarations.

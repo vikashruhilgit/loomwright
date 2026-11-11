@@ -16,6 +16,30 @@ for cm_leg in setting every resume threshold persist badledger delete refusal st
   if "leg_cm_$cm_leg" "$DRIVER"; then ok "CM $cm_leg: $d_"; else no "CM $cm_leg: $LEG_MSG"; fi
 done
 
+# the invalid-value message names exactly NS_CM_VALUES (derived from it, never a hand copy)
+cm_join="$(sed -n "/^NS_CM_VALUES='/,/'\$/p" "$DRIVER" | sed "s/^NS_CM_VALUES='//; s/'\$//" | awk 'NR > 1 { printf " | " } { printf "%s", $0 }')"
+cm_run "$DRIVER" escalated-park '{"coordinator_model":"gpt-9"}' - "$ESC_CALL"$'\nexpect: park'
+if [ -n "$cm_join" ] && grep -qF "is not $cm_join — coordinator_model resolves session" < <(cm_last_err) \
+   && grep -q 'NS_CM_VALUES' < <(grep 'coordinator_model_invalid — .* is not ' "$DRIVER"); then
+  ok "CM message: coordinator_model_invalid lists NS_CM_VALUES ($cm_join), built from it"
+else no "CM message: '$(cm_last_err | grep coordinator_model_invalid | head -n 1)' vs NS_CM_VALUES '$cm_join'"; fi
+
+# ns_checkout_of's other branch: a --resume dir NOT ending in .supervisor/automate resolves the checkout
+# holding it through git, never the driver's cwd (--root, whose config names a different model)
+cm_co_ok=0
+if new_scratch "$FIX/escalated-park"; then
+  rm -f "$CASE_RF"; printf '{"coordinator_model":"claude-haiku-5-5"}\n' > "$CASE_ROOT/.supervisor/config.json"
+  cm_co="$CASE_DIR/other"; mkdir -p "$cm_co/runs" "$cm_co/.supervisor"
+  ( cd "$cm_co" && git init -q . ) && printf '{"coordinator_model":"claude-sonnet-5-5"}\n' > "$cm_co/.supervisor/config.json"
+  # --root names the case checkout (haiku), so the driver's cwd is NOT the checkout holding the --resume dir
+  printf '%s\n' 'env: AD= RUN_ID=' "call-bare: --resume \"$cm_co/runs\" --root \"$CASE_ROOT\" --session-id cm-resume" 'expect: done' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$DRIVER" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(printf '%s' "$LAST_OUT" | jq -r .choice)" = start_new ] && [ "$(cm_model)" = claude-sonnet-5-5 ] && cm_co_ok=1
+fi
+if [ "$cm_co_ok" = 1 ]; then
+  ok "CM resume-elsewhere: a --resume dir outside .supervisor/automate takes the coordinator_model of the git checkout holding it"
+else no "CM resume-elsewhere: '$LAST_OUT' model '$(cm_model)' ($DRIVE_ERR)"; fi
+
 echo "-- E. the coordinator-model eval suite, model-free (automate-speed/10)"
 # its reference coordinator must score every A/B case PASS and the mutation control FAIL, and its graders
 # must notice a wrong question / a skipped instruction / a hand edit — so a red case under a model is the model

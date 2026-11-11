@@ -90,7 +90,7 @@
 #     `"cc_session_id"` in `<logs>/<sid>.jsonl`, and <sid> itself (a lane run
 #     records the Claude Code id directly — so does the fresh-phase driver's own
 #     `session_id <sid> (<item>) phase=driver` line, the /automate coordinator
-#     session); a `run created (session <uuid>)` line adds <uuid>. Transcripts: `<projects>/*/<cc id>.jsonl` (main thread)
+#     session); a `run created (session <uuid>, …)` (or `…<uuid>)`) line adds <uuid>. Transcripts: `<projects>/*/<cc id>.jsonl` (main thread)
 #     and `<projects>/*/<cc id>/subagents/agent-*.jsonl` (agent type from the
 #     sibling `agent-*.meta.json` `agentType`, last `:` segment).
 #     <projects> = --projects-dir, else $LOOMWRIGHT_CC_PROJECTS_DIR, else the
@@ -338,7 +338,8 @@ pi_cc_ids() {
   )"
   {
     printf '%s' "$ptj" | "$JQ" -r '.cc_session_id // empty | strings' 2>/dev/null
-    grep -oE 'run created \(session [A-Za-z0-9_-]+\)' "$rf" 2>/dev/null | sed 's/^run created (session //; s/)$//'
+    # the engine writes `run created (session <uuid>, plugin …)`: the id ends at `,` or `)`
+    grep -oE 'run created \(session [A-Za-z0-9_-]+[,)]' "$rf" 2>/dev/null | sed 's/^run created (session //; s/[,)]$//'
     while IFS= read -r sid; do
       [ -n "$sid" ] || continue
       printf '%s\n' "$sid"

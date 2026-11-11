@@ -123,6 +123,7 @@ ROOT_ABS="$(cd "$ROOT" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)
 [ -n "$ROOT_ABS" ] && [ -d "$ROOT_ABS" ] || die "root_not_git"
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
+PIPE_HOLD="$(printf '\001')"
 unesc() { local s="$1" r=""; while :; do case "$s" in *'\|'*) r="$r${s%%\\|*}|"; s="${s#*\\|}" ;; *) break ;; esac; done; printf '%s' "$r$s"; }
 
 # ---- the section's table lines (heading outside a fence; ends at the next `#`/`##` heading) -------
@@ -330,8 +331,11 @@ while IFS= read -r line <&3; do
   inner="$(trim "$line")"; inner="${inner#|}"; inner="${inner%|}"
   case "$(trim "$inner")" in '') continue ;; *[!:\|[:space:]-]*) ;; *) continue ;; esac   # blank / |---|---| rows
   idx=$((idx + 1))
-  pin_cell="$(trim "${inner%%|*}")"
-  mut_cell="$(trim "${inner#*|}")"
+  # split on the first UNESCAPED pipe: a `\|` (an escaped pipe, in either cell) is set aside as a 0x01
+  # byte for the split and put back after it, so unesc still reads it as `|`
+  prot="${inner//\\|/$PIPE_HOLD}"
+  pin_cell="$(trim "${prot%%|*}")"; pin_cell="${pin_cell//$PIPE_HOLD/\\|}"
+  mut_cell="$(trim "${prot#*|}")"; mut_cell="${mut_cell//$PIPE_HOLD/\\|}"
   row_text="$(trim "$line")"
 
   kind=""; lit_a=""; lit_b=""; tpath=""

@@ -193,7 +193,8 @@ park_ask_gate() {
     case "$1" in
       --wait)
         [ "$#" -ge 2 ] || die "park-ask-gate: --wait needs a value"
-        case "$2" in ''|*[!0-9]*) die "park-ask-gate: --wait must be a whole number of seconds: '$2'" ;; esac
+        # at most 5 digits: a longer value would overflow `[ -lt ]` (stderr noise, one judge only)
+        case "$2" in ''|*[!0-9]*|??????*) die "park-ask-gate: --wait must be a whole number of seconds (at most 5 digits): '$2'" ;; esac
         wait="$2"; shift 2 ;;
       -*) die "park-ask-gate: unknown option '$1' (usage: park-ask-gate <runfile> <item> <pr_url> [--wait <seconds>])" ;;
       *) k=$((k + 1))
@@ -221,6 +222,8 @@ park_ask_gate() {
     echo "ask — fix-now unavailable: PR state unreadable"; return 0
   fi
   state="$(printf '%s' "$view" | "$JQ" -r '.state // empty | strings' 2>/dev/null || true)"
+  # more than one document (more than one line) is no single state: unreadable, never a two-line answer
+  case "$state" in *$'\n'*) state="" ;; esac
   case "$state" in
     OPEN) echo "ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed" ;;
     MERGED|CLOSED) echo "ask — fix-now unavailable: PR $state" ;;
