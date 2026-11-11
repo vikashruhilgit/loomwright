@@ -498,16 +498,24 @@ jq '.[0:999]' "$BL/fix14/gh/merged.json" > "$BL/fix14/gh/m" && mv "$BL/fix14/gh/
 BL_FIXDIR_OVR="$BL/fix14" bl_run "$H" backlog --json --root "$T0"
 bl_is "BL14 one entry under the --limit ⇒ github verified" "$(jq -r '.github' <<<"$BL_OUT")" "verified"
 # ---- BL15 a backlog-stamp killed while it holds the item lock removes that lock (its exit trap)
-T15="$(bl_tree t15)"; mkdir -p "$BL/slowbin"
+. "$HERE/wait-lib.sh"
+# the cp stub parks on a gate file (clock-bounded) instead of a fixed sleep: the lock is held for as
+# long as the leg needs, and the gate opens only after the TERM is sent
+T15="$(bl_tree t15)"; mkdir -p "$BL/slowbin"; BL_GATE15="$BL/slowbin/gate"; BL_CPPID15="$BL/slowbin/cp.pid"
 printf '#!/usr/bin/env bash
-sleep 2
+echo $$ > %s
+end=$(( $(date +%%s) + 30 ))
+while [ ! -e %s ] && [ "$(date +%%s)" -lt "$end" ]; do sleep 0.05; done
 exec %s "$@"
-' "$(command -v cp)" > "$BL/slowbin/cp"; chmod +x "$BL/slowbin/cp"
+' "$BL_CPPID15" "$BL_GATE15" "$(command -v cp)" > "$BL/slowbin/cp"; chmod +x "$BL/slowbin/cp"
 PATH="$BL/slowbin:$PATH" bash "$H" backlog-stamp bl/14-open abandoned --reason gone --root "$T15" --confirm >/dev/null 2>&1 &
-BL_PID=$!; BL_LK15="$T15/.supervisor/requirements/bl/14-open.md.backlog-stamp.lock"; n=0
-while [ ! -e "$BL_LK15" ] && [ "$n" -lt 100 ]; do sleep 0.05; n=$((n + 1)); done
+BL_PID=$!; BL_LK15="$T15/.supervisor/requirements/bl/14-open.md.backlog-stamp.lock"
+wait_for_cmd 10 test -e "$BL_LK15"
 BL_HELD="$([ -e "$BL_LK15" ] && echo held || echo never)"
-kill -TERM "$BL_PID" 2>/dev/null; wait "$BL_PID" 2>/dev/null
+# bash runs the TERM trap only once its foreground child returns, so the gate opens after the kill
+# and before the wait (the fixed sleep this replaces released the child the same way, by time)
+kill -TERM "$BL_PID" 2>/dev/null; : > "$BL_GATE15"; wait "$BL_PID" 2>/dev/null
+[ -s "$BL_CPPID15" ] && wait_for_pid_gone "$(cat "$BL_CPPID15")" 35
 bl_is "BL15 a TERM while backlog-stamp holds the lock ⇒ the lock is removed (a later stamp is not refused)" \
   "$BL_HELD $([ -e "$BL_LK15" ] && echo left || echo removed)" "held removed"
 # ---- BL16 positive control for the calendar check: a leap-year February 29 is stamped

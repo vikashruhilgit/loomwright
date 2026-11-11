@@ -19,8 +19,8 @@ done
 # the invalid-value message names exactly NS_CM_VALUES (derived from it, never a hand copy)
 cm_join="$(sed -n "/^NS_CM_VALUES='/,/'\$/p" "$DRIVER" | sed "s/^NS_CM_VALUES='//; s/'\$//" | awk 'NR > 1 { printf " | " } { printf "%s", $0 }')"
 cm_run "$DRIVER" escalated-park '{"coordinator_model":"gpt-9"}' - "$ESC_CALL"$'\nexpect: park'
-if [ -n "$cm_join" ] && cm_last_err | grep -qF "is not $cm_join — coordinator_model resolves session" \
-   && grep 'coordinator_model_invalid — .* is not ' "$DRIVER" | grep -q 'NS_CM_VALUES'; then
+if [ -n "$cm_join" ] && grep -qF "is not $cm_join — coordinator_model resolves session" < <(cm_last_err) \
+   && grep -q 'NS_CM_VALUES' < <(grep 'coordinator_model_invalid — .* is not ' "$DRIVER"); then
   ok "CM message: coordinator_model_invalid lists NS_CM_VALUES ($cm_join), built from it"
 else no "CM message: '$(cm_last_err | grep coordinator_model_invalid | head -n 1)' vs NS_CM_VALUES '$cm_join'"; fi
 

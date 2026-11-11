@@ -1,8 +1,10 @@
 # Dismissed follow-ups bundle 04a + 04b — dispositions
 
-Every finding was re-checked against the code it cites on base `83a4549`. Each `fixed` line names the leg
-that goes red on the base code and green on the fix. Each such leg was proven by running its suite with the
-base copy of the fixed script swapped in, then restored. A doc- or comment-only fix carries no leg. Each disposition line below has exactly one form; where a
+Every finding was re-checked against the code it cites on base `83a4549`. Each behaviour-changing `fixed`
+line names the leg that goes red on the base code and green on the fix; each such leg was proven by running
+its suite with the base copy of the fixed script swapped in, then restored. Two kinds of `fixed` line are
+not of that kind: the 7 marked `(doc/comment only)` carry no leg, and the 2 test-only fixes (F183, F069,
+see the Notes) name a leg that pins code that was already right, so it passes on the base too. Each disposition line below has exactly one form; where a
 leg lives in a split test file (`test-automate-helpers.d/<n>.sh`) the line names that file, and several
 legs of one file share one parenthesis.
 

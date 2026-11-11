@@ -61,6 +61,9 @@
 # lookup is skipped, a claim stays `in_flight` (never `pr_open`), and an item that would read `open`
 # reads `unknown` with `(merged-PR lookup unverified)` in its evidence — no item reads `open` or
 # `pr_open` because of the failure, and `--verify-list` says its candidates are unverified.
+# HONEST LIMIT: the read is one page, not paged. A repo with $_BL_PR_LIMIT or more merged PRs fills that
+# page on every pass, so its board reads `github: unverified` permanently and every would-be `open`
+# item reads `unknown`. That fails safe, but no flag lifts it; only paging the merged read would.
 # RIGHT-SIZE (board only): ONE `right-size <item list> --json --root <root>` call over the whole item
 # list, joined on its `item` display name; any failure ⇒ the column reads `unknown`, nothing else.
 # OFFLINE (board only, `backlog --offline`, any mode): neither gh read runs and no right-size job
