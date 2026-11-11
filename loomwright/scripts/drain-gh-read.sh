@@ -23,6 +23,7 @@
 #   drain-gh-read.sh check-annotations <owner>/<repo> <check_run_id>   [--jq <expr>]
 #   drain-gh-read.sh check-run         <owner>/<repo> <check_run_id>   [--jq <expr>]
 #   drain-gh-read.sh required-checks   <owner>/<repo> <base_branch>    [--jq <expr>]
+#     (classic protection ∪ active rulesets — two fixed GETs, see required_checks below)
 #
 # These are exactly the reads skills/review-heal/SKILL.md §U1 (b)/(c)/(d) and
 # §U2 need; adding an operation means adding a READ here, never a write.
@@ -40,6 +41,8 @@
 set -u
 
 GH="${GH:-gh}"
+JQ="${JQ:-jq}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   printf 'usage: drain-gh-read.sh {issue-comments|review-threads|check-annotations|check-run|required-checks} <owner>/<repo> <id> [--jq <expr>]\n' >&2
@@ -74,6 +77,49 @@ case "$op" in
   *) usage ;;
 esac
 
+# required_checks <owner> <repo> <base> — classic protection's required list UNIONED with every
+# active ruleset's (required-checks-rulesets.sh; issue #874). Two fixed GETs, both read-only.
+#   classic readable            ⇒ its JSON, `.contexts` widened to classic contexts ∪ checks ∪ rulesets
+#   classic 404 + ruleset list  ⇒ {"contexts":[<ruleset contexts>]}
+#   classic 404 + no ruleset    ⇒ classic's own failure, unchanged (the caller escalates)
+#   classic any other failure   ⇒ classic's own failure, unchanged — the paid-plan refusal included
+#   rulesets unreadable         ⇒ exit 1 with the rules error: a ruleset that could not be read may
+#                                 require a check the drain would otherwise skip, so never a list
+# --jq applies to that merged JSON (jq -r, as gh's own --jq prints).
+required_checks() {
+  local owner="$1" repo="$2" base="$3" out err_f err rc=0 merged
+  . "$HERE/required-checks-rulesets.sh" || { echo "drain-gh-read: required-checks-rulesets.sh missing" >&2; return 1; }
+  err_f="$(mktemp)" || return 1
+  out="$("$GH" api --method GET "repos/$owner/$repo/branches/$base/protection/required_status_checks" 2>"$err_f")" || rc=$?
+  err="$(cat "$err_f")"; rm -f "$err_f"
+  if [ "$rc" -ne 0 ] && { [ "$(gh_http_status "$err")" != 404 ] || protection_paid_plan_refusal "$out $err"; }; then
+    printf '%s' "$out"; [ -z "$err" ] || printf '%s\n' "$err" >&2
+    return "$rc"
+  fi
+  rulesets_required_read "$GH" "$JQ" "$owner" "$repo" "$base"
+  if [ "$RSR_STATE" = unreadable ]; then
+    printf 'drain-gh-read: ruleset read failed for %s: %s\n' "$base" "$RSR_ERR" >&2
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    if [ "$RSR_STATE" != list ]; then
+      printf '%s' "$out"; [ -z "$err" ] || printf '%s\n' "$err" >&2
+      return "$rc"
+    fi
+    merged="$("$JQ" -cn --argjson r "$RSR_CONTEXTS" '{contexts: $r}')" || return 1
+  else
+    merged="$(printf '%s' "$out" | "$JQ" -c --argjson r "$RSR_CONTEXTS" '
+      .contexts = (((.contexts // []) + [(.checks // [])[] | .context] + $r)
+                   | map(select(type == "string")) | unique)' 2>/dev/null)" \
+      || { echo "drain-gh-read: classic required_status_checks body is not JSON" >&2; return 1; }
+  fi
+  if [ "${#jq_args[@]}" -gt 0 ]; then
+    printf '%s' "$merged" | "$JQ" -r "${jq_args[1]}"
+  else
+    printf '%s\n' "$merged"
+  fi
+}
+
 case "$op" in
   issue-comments)
     exec "$GH" api --method GET "repos/$owner/$repo/issues/$id/comments?per_page=100" ${jq_args[@]+"${jq_args[@]}"} ;;
@@ -83,7 +129,7 @@ case "$op" in
     # the check run itself — its `output.{title,summary,text}` (§U1's check-output text)
     exec "$GH" api --method GET "repos/$owner/$repo/check-runs/$id" ${jq_args[@]+"${jq_args[@]}"} ;;
   required-checks)
-    exec "$GH" api --method GET "repos/$owner/$repo/branches/$id/protection/required_status_checks" ${jq_args[@]+"${jq_args[@]}"} ;;
+    required_checks "$owner" "$repo" "$id"; exit $? ;;
   review-threads)
     # A fixed `query` document — never a caller-supplied one, so this can never
     # carry a mutation.

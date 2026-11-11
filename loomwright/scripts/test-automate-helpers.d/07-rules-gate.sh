@@ -202,7 +202,7 @@ r9_dir() {  # r9_dir <sed-expr> <marker-regex> — prints a gated mutant dir, or
   sed "$1" "$GWD/automate-helpers.sh" > "$d/automate-helpers.sh"
   if [ -s "$d/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$d/automate-helpers.sh" \
      && bash -n "$d/automate-helpers.sh" 2>/dev/null && grep -q "$2" "$d/automate-helpers.sh"; then
-    cp "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$d/"
+    cp "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$d/"
     printf '%s' "$d"
   else
     rm -rf "$d"
@@ -226,7 +226,7 @@ if [ -n "$M_PARK" ] && [ -n "$M_CALL" ]; then
     no "R9 mutant (ii) wrong (out='$R9_OUT' merges=$(merges) called=$([ -f "$GH_STUB_DIR/rules-called.log" ] && echo yes || echo no))"
   fi
   # Positive control on the UN-mutated copy.
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$CTRL/"
   r9_run "$CTRL"
   R9_FAIL_OUT="$R9_OUT"; R9_FAIL_MERGES="$(merges)"
   rules_fixture ok '["r-lint"]' '[]' '[]'
@@ -252,7 +252,7 @@ TAB_CHAR="$(printf '\t')"
 reset_live
 rm -f "$GH_STUB_DIR/rules.json"
 IWD="$(mktemp -d)"; IWD="$(cd "$IWD" && pwd -P)"
-cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$IWD/"
+cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$IWD/"
 cp "$HERE/rules-gate-verdict.sh" "$HERE/rules-check.sh" "$HERE/rules-replay-lib.sh" "$IWD/"
 r10_store() {  # r10_store <name> <check> — a committed temp repo + stamped store; prints "<repo>\t<home>"
   local r="$IWD/$1" h="$IWD/home-$1"
@@ -542,7 +542,7 @@ M_FLAGSRC="$(r9_dir 's/ || root_flags_rc=\$?$/ || : # R11N-MUTANT-FLAGSRC/' 'R11
 M_UNTRC="$(r9_dir 's/ || root_unt_rc=\$?$/ || : # R11N-MUTANT-UNTRC/' 'R11N-MUTANT-UNTRC')"
 M_IGNRC="$(r9_dir 's/ || root_ign_rc=\$?$/ || : # R11N-MUTANT-IGNRC/' 'R11N-MUTANT-IGNRC')"
 if [ -n "$M_FLAGSRC" ] && [ -n "$M_UNTRC" ] && [ -n "$M_IGNRC" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$CTRL/"
   for R11N_M in v o oi; do
     case "$R11N_M" in v) R11N_MD="$M_FLAGSRC"; R11N_L="root_flags_rc" ;; o) R11N_MD="$M_UNTRC"; R11N_L="root_unt_rc" ;; *) R11N_MD="$M_IGNRC"; R11N_L="root_ign_rc" ;; esac
     reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
@@ -710,7 +710,7 @@ r11_sm_clean || no "R11l: the submodule fixture was NOT restored"
 M_HEAD="$(r9_dir 's/^  if \[ "\$root_head_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-HEAD/' 'R11-MUTANT-HEAD')"
 M_DIRTY="$(r9_dir 's/^  if \[ "\$root_dirt_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-DIRTY/' 'R11-MUTANT-DIRTY')"
 if [ -n "$M_HEAD" ] && [ -n "$M_DIRTY" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$CTRL/"
   # stale-HEAD leg: original parks, mutant merges.
   E_PR_HEAD="$E_TIP"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
@@ -769,7 +769,7 @@ M_SUBS="$(r9_dir 's/^  if \[ "\$root_subs_rc" -ne 0 \]; then$/  if false; then #
 M_SUBFLAG="$(r9_dir 's/^\(    root_dirt=.* status --porcelain -uall\) --ignore-submodules=none \(.*\)$/\1 \2 # R11-MUTANT-SUBFLAG/' 'R11-MUTANT-SUBFLAG')"
 if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ] && [ -n "$M_INREPO" ] \
    && [ -n "$M_LINK" ] && [ -n "$M_LEX" ] && [ -n "$M_SUBS" ] && [ -n "$M_SUBFLAG" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$CTRL/"
   r11g "$M_FLAGS" "assume-unchanged read deleted" \
     'git -C "$E_ROOT" update-index --assume-unchanged sub/a; echo more >> "$E_ROOT/sub/a"' \
     'git -C "$E_ROOT" update-index --no-assume-unchanged sub/a; git -C "$E_ROOT" checkout -q -- sub/a'
@@ -814,7 +814,7 @@ rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/no
 # R11h XDG leg PARKs again (the iteration-1 behaviour), while the un-mutated copy MERGEs it.
 M_XF="$(r9_dir 's/^    if \[ -n "\$ge_xf" \] && \[ -f "\$ge_xf" \] && \[ -r "\$ge_xf" \]; then ge_xargs=.*$/    : # R11-MUTANT-XF/' 'R11-MUTANT-XF')"
 if [ -n "$M_XF" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$CTRL/"
   reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   printf 'notes.local\n' > "$R11_XDG/git/ignore"; export XDG_CONFIG_HOME="$R11_XDG"; echo n > "$E_ROOT/notes.local"
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
@@ -836,7 +836,7 @@ rm -rf "${M_XF:-/nonexistent-r11}"
 # include), while the un-mutated copy MERGEs it.
 M_INC="$(r9_dir 's/ config --global --includes --path --get core\.excludesFile / config --global --path --get core.excludesFile /;s/^\(    ge_xf=.*core\.excludesFile .*\)$/\1 # R11-MUTANT-INC/' 'R11-MUTANT-INC')"
 if [ -n "$M_INC" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$CTRL/"
   reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   printf '[include]\n\tpath = %s\n' "$WD/gx-inc" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"

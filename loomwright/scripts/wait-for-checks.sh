@@ -116,7 +116,8 @@
 #     `required=unknown` means the branch-protection read that would name the
 #     required contexts FAILED for a reason other than a verified "genuinely
 #     unprotected" 404 or GitHub's paid-plan refusal (other 403/5xx/network/
-#     garbage) — per skills/review-heal/SKILL.md §U2's fail-CLOSED rule, the
+#     garbage), or the ruleset read (required-checks-rulesets.sh — rulesets'
+#     required checks are unioned with classic protection's) failed — per skills/review-heal/SKILL.md §U2's fail-CLOSED rule, the
 #     caller MUST treat `unknown` exactly like an unresolved/in-flight check,
 #     never like `green`.
 #     The paid-plan refusal (protection-paid-plan.sh) means the repo cannot have
@@ -145,6 +146,10 @@ JQ_BIN="${JQ:-jq}"
 WFC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # A missing library reads the refusal as any other 403: required=unknown, fail CLOSED.
 . "$WFC_DIR/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
+# Rulesets are a second protection store (issue #874). A missing library reads every ruleset as
+# unreadable: required=unknown, fail CLOSED.
+. "$WFC_DIR/required-checks-rulesets.sh" 2>/dev/null \
+  || rulesets_required_read() { RSR_STATE=unreadable; RSR_CONTEXTS='[]'; RSR_REVIEWS=0; RSR_ERR=missing; }
 
 # ---- Parse args --------------------------------------------------------------
 PR_URL=""
@@ -367,12 +372,28 @@ if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
       ((.required_status_checks.contexts // []) + ((.required_status_checks.checks // []) | map(.context))) | unique
     ' 2>/dev/null || echo '[]')"
     [ -n "$required_contexts_json" ] || required_contexts_json="[]"
+    # Classic protection and rulesets can both apply to one branch: the union is required.
+    rulesets_required_read "$GH_BIN" "$JQ_BIN" "$OWNER" "$REPO" "$BASE_REF"
+    if [ "$RSR_STATE" = unreadable ]; then
+      log "ruleset read failed for $BASE_REF — required checks unknown"
+      protection_unknown=1
+    else
+      required_contexts_json="$(printf '%s' "$required_contexts_json" | "$JQ_BIN" -c --argjson r "$RSR_CONTEXTS" '(. + $r) | unique' 2>/dev/null || echo "$required_contexts_json")"
+    fi
   elif [ "$_prot_rc" -ne 0 ] && protection_paid_plan_refusal "$_prot"; then
     no_required_list=1
   else
     case "$_prot" in
       *"Branch not protected"*|*"HTTP 404"*)
-        required_contexts_json="[]" ;;  # verified: genuinely no protection
+        # No classic protection — the branch may still be protected by a ruleset (issue #874).
+        rulesets_required_read "$GH_BIN" "$JQ_BIN" "$OWNER" "$REPO" "$BASE_REF"
+        case "$RSR_STATE" in
+          list) required_contexts_json="$RSR_CONTEXTS" ;;
+          none) required_contexts_json="[]" ;;  # verified: no classic protection, no ruleset check
+          *)    log "ruleset read failed for $BASE_REF — required checks unknown"
+                protection_unknown=1
+                required_contexts_json="[]" ;;  # unreadable — NOT verified empty
+        esac ;;
       *)
         protection_unknown=1
         required_contexts_json="[]" ;;  # unreadable — NOT verified empty

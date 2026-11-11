@@ -48,6 +48,7 @@ fi
 GWD="$WD/gharness"; mkdir -p "$GWD"
 cp "$H" "$GWD/automate-helpers.sh"
 cp "$HERE/resolve-base-branch.sh" "$GWD/resolve-base-branch.sh"   # cond 6's base: the REAL one resolver
+cp "$HERE/required-checks-rulesets.sh" "$HERE/protection-paid-plan.sh" "$GWD/"   # cond 4: the REAL ruleset reader
 cat > "$GWD/classify-risk.sh" <<'RISK'
 #!/usr/bin/env bash
 set -u
@@ -111,6 +112,7 @@ reset_live() {
   rm -f "$GH_STUB_DIR/graphql-fail"
   printf '{"required_pull_request_reviews":{"required_approving_review_count":1},"required_status_checks":{"contexts":["ci"]}}\n' > "$GH_STUB_DIR/protection.json"
   rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail" "$GH_STUB_DIR/protection-error"
+  rm -f "$GH_STUB_DIR/rulesets.json" "$GH_STUB_DIR/rulesets-fail" "$GH_STUB_DIR/rulesets.log"
   printf '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
   rm -f "$GH_STUB_DIR/merge-fail" "$GH_STUB_DIR/merge-time-head" "$GH_STUB_DIR/risk-called.log"
   printf '%s\n' "$RULES_NONE" > "$GH_STUB_DIR/rules.json"

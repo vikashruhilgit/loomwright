@@ -40,9 +40,6 @@ run check-annotations acme/widget 9001
 run check-run acme/widget 9001
 [ "$RC" -eq 0 ] && [ "$(argv_line)" = "api --method GET repos/acme/widget/check-runs/9001 " ] \
   && ok "check-run → GET .../check-runs/9001" || no "check-run argv wrong ($(argv_line))"
-run required-checks acme/widget release/2.x
-[ "$RC" -eq 0 ] && [ "$(argv_line)" = "api --method GET repos/acme/widget/branches/release/2.x/protection/required_status_checks " ] \
-  && ok "required-checks → GET .../branches/release/2.x/protection/required_status_checks" || no "required-checks argv wrong ($(argv_line))"
 
 echo "== 2. review-threads sends a fixed query document — never a mutation =="
 run review-threads acme/widget 42
@@ -86,6 +83,88 @@ rm -f "$ARGV"; GH="$STUB" STUB_RC=1 bash "$SUT" issue-comments acme/widget 42 >/
 [ "$RC" -eq 1 ] && ok "gh exit 1 → wrapper exit 1 (channel UNKNOWN, never read as clean)" || no "gh failure swallowed (rc=$RC)"
 rm -f "$ARGV"; GH="$STUB" STUB_RC=4 bash "$SUT" review-threads acme/widget 42 >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 4 ] && ok "gh exit 4 → wrapper exit 4" || no "gh exit status not preserved (rc=$RC)"
+
+echo "== 6. required-checks: classic protection ∪ active rulesets (issue #874) =="
+# A routing stub: the classic read answers per $CLASSIC, the ruleset read per $RULES; every argv
+# line is appended to $CALLS so the test can see both reads were fixed GETs.
+RSTUB="$T/gh-rc"; CALLS="$T/calls"
+cat > "$RSTUB" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CALLS"
+case "$*" in
+  *"/protection/required_status_checks"*)
+    case "$CLASSIC" in
+      ok)   echo '{"url":"u","strict":true,"contexts":["ci"],"checks":[{"context":"ci","app_id":1},{"context":"lint","app_id":2}]}' ;;
+      404)  echo '{"message":"Branch not protected","status":"404"}'; echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1 ;;
+      paid) echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}'
+            echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2; exit 1 ;;
+      500)  echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;
+    esac ;;
+  *"/rules/branches/"*)
+    case "$RULES" in
+      list)    echo '[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"e2e"},{"context":"ci"}]}}]' ;;
+      paged)   echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"e2e"}]}}]'
+               echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"unit"}]}}]' ;;
+      none)    echo '[{"type":"deletion"},{"type":"pull_request","parameters":{"required_approving_review_count":1}}]' ;;
+      empty)   echo '[]' ;;
+      404)     echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+      paid)    echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}'
+               echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2; exit 1 ;;
+      403)     echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;
+      garbage) echo '{"message":"oops"}' ;;
+    esac ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+EOF
+chmod +x "$RSTUB"; export CALLS
+rc_run() { # <classic> <rules> [extra args] — sets OUT ERR RC
+  rm -f "$CALLS"
+  OUT="$(CLASSIC="$1" RULES="$2" GH="$RSTUB" bash "$SUT" required-checks acme/widget release/2.x "${@:3}" 2>"$T/err")"; RC=$?
+  ERR="$(cat "$T/err")"
+}
+ctx() { printf '%s' "$OUT" | jq -c '.contexts' 2>/dev/null; }
+
+rc_run ok empty
+if [ "$RC" -eq 0 ] && [ "$(sed -n 1p "$CALLS")" = "api --method GET repos/acme/widget/branches/release/2.x/protection/required_status_checks" ] \
+   && [ "$(sed -n 2p "$CALLS")" = "api --method GET repos/acme/widget/rules/branches/release/2.x?per_page=100 --paginate" ] \
+   && [ "$(wc -l < "$CALLS" | tr -d ' ')" = 2 ]; then
+  ok "required-checks → two fixed GETs: classic required_status_checks, then rules/branches/<base> (paginated)"
+else no "required-checks argv wrong (rc=$RC calls='$(tr '\n' '|' < "$CALLS")')"; fi
+[ "$(ctx)" = '["ci","lint"]' ] && printf '%s' "$OUT" | jq -e '.strict == true' >/dev/null \
+  && ok "classic only (no rulesets): contexts ∪ checks[].context, the rest of classic's JSON kept" || no "classic-only output wrong ($OUT)"
+
+rc_run 404 list
+[ "$RC" -eq 0 ] && [ "$(ctx)" = '["ci","e2e"]' ] \
+  && ok "classic 404 + ruleset with required checks ⇒ exit 0, {contexts: the ruleset's checks}" || no "ruleset-only wrong (rc=$RC out='$OUT' err='$ERR')"
+rc_run 404 paged
+[ "$RC" -eq 0 ] && [ "$(ctx)" = '["e2e","unit"]' ] \
+  && ok "paginated rules (two arrays) are merged" || no "paged rules wrong (rc=$RC out='$OUT')"
+rc_run ok list
+[ "$RC" -eq 0 ] && [ "$(ctx)" = '["ci","e2e","lint"]' ] \
+  && ok "classic and ruleset both present ⇒ the union" || no "union wrong (rc=$RC out='$OUT')"
+rc_run 404 list --jq '.contexts | length'
+[ "$RC" -eq 0 ] && [ "$OUT" = 2 ] && ok "--jq applies to the merged JSON" || no "--jq on merged wrong (rc=$RC out='$OUT')"
+
+for r in none empty 404 paid; do
+  rc_run 404 "$r"
+  if [ "$RC" -eq 1 ] && grep -q 'HTTP 404' <<<"$ERR"; then
+    ok "classic 404 + rules '$r' (no required check) ⇒ classic's own 404 failure, unchanged — never 'every check required'"
+  else no "classic 404 + rules $r wrong (rc=$RC out='$OUT' err='$ERR')"; fi
+done
+for r in 403 garbage; do
+  rc_run 404 "$r"
+  [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -q 'ruleset read failed' <<<"$ERR" \
+    && ok "classic 404 + rules '$r' (unreadable) ⇒ exit 1, no list (fail CLOSED)" || no "classic 404 + rules $r wrong (rc=$RC out='$OUT' err='$ERR')"
+  rc_run ok "$r"
+  [ "$RC" -eq 1 ] && [ -z "$OUT" ] \
+    && ok "classic readable + rules '$r' (unreadable) ⇒ exit 1: a ruleset that cannot be read may require more" || no "classic ok + rules $r wrong (rc=$RC out='$OUT')"
+done
+rc_run paid list
+[ "$RC" -eq 1 ] && grep -q 'Upgrade to GitHub Pro' <<<"$OUT $ERR" && [ "$(wc -l < "$CALLS" | tr -d ' ')" = 1 ] \
+  && ok "classic paid-plan refusal ⇒ passed through unchanged (stdout+stderr), rules never read" || no "paid-plan passthrough wrong (rc=$RC out='$OUT' err='$ERR')"
+rc_run 500 list
+[ "$RC" -eq 1 ] && grep -q 'HTTP 500' <<<"$ERR" && [ "$(wc -l < "$CALLS" | tr -d ' ')" = 1 ] \
+  && ok "classic 500 ⇒ unreadable, passed through; a ruleset list never stands in for it" || no "classic 500 wrong (rc=$RC out='$OUT' err='$ERR')"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

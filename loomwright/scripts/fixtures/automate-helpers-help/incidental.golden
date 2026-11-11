@@ -3,7 +3,7 @@
   gone            — PR is CLOSED-unmerged (neither merged nor open).
   cond 2  `gh pr view <url> --json headRefOid,baseRefName,statusCheckRollup` (this combined
   cond 3  a SEPARATE `gh pr view <url> --json reviewDecision` call (kept apart from cond 2's read
-  cond 4  `gh api repos/<owner>/<repo>/branches/main/protection` — a 404 ⇒ unprotected (false);
+  cond 4  `gh api repos/<owner>/<repo>/branches/<live base>/protection` UNIONED with the base's
   cond 5  required-check greenness from the SAME protection payload's required-context list
   cond 6  the gate ITSELF resolves `<base>` with the sibling
   cond 7  evaluated AFTER cond 6. PIN FIRST (automate-followups/16), before the helper runs:
