@@ -107,6 +107,13 @@ unreadable() {
 
 # 1. Live entries with their categorized rounds. Per-line `fromjson?` so one malformed line is
 #    skipped without losing the rest. Curation exclusion mirrors read-postmortem.sh exactly.
+#    COPIES OF THE CURATION RULE (a rule change must touch every one): the target-set build plus
+#    the automate_key/pr_url exclusion below is copied from read-postmortem.sh's curation-aware
+#    filter; build-insights.sh's corpus-health churn line holds a third copy of the target-set
+#    build (it counts targets, it does not exclude); build-loop-evidence.sh's postmortem corpus only
+#    drops curation records and applies no target exclusion. Parity of this file with
+#    read-postmortem.sh is pinned by test-postmortem-approach-baseline.sh's curation-parity case;
+#    the build-insights.sh copy has no parity test.
 ENTRIES_JSON="$(
   jq -R 'fromjson? // empty' "$LEDGER" 2>/dev/null | jq -s -c --argjson phrases "$APPROACH_PHRASES_JSON" '
     def str: if type == "string" then . elif . == null then "" else tostring end;

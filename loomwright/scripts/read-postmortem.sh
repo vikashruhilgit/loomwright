@@ -170,6 +170,12 @@ summary="$(
         # hit itself, and a data entry whose automate_key OR pr_url is in the curated target
         # set is excluded. Non-string automate_key/pr_url degrade to "" (never a set member —
         # target_key is enforced non-empty above), so a weird value can never crash the query.
+        # COPIES OF THIS RULE (a rule change must touch every one): postmortem-approach-baseline.sh
+        # carries a copy of the target-set build above and of this automate_key/pr_url exclusion;
+        # the corpus-health churn line in build-insights.sh copies the target-set build only (it
+        # counts targets); build-loop-evidence.sh only drops curation records. Parity with the
+        # baseline script is pinned by the curation-parity case in test-postmortem-approach-baseline.sh.
+        # (This comment sits inside a single-quoted jq program: never put an apostrophe in it.)
         | select((($e.source) // "") != "curation")
         | (((($e.automate_key) // "") | if type == "string" then . else "" end)) as $akey
         | (((($e.pr_url) // "") | if type == "string" then . else "" end)) as $purl

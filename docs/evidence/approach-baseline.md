@@ -3,8 +3,8 @@
 Requirement: `.supervisor/requirements/approach-decisions/01-approach-challenged-rounds-are-counted-in-the-postmortem-ledger.md`
 (Validation 3 and 4). Captured 2026-11-11 on macOS (Darwin 25.6.0), branch
 `feature/approach-challenged-postmortem-baseline`, base `a2d9594`. The baseline script is the one
-committed in `b7f241a`; its logic is unchanged at every later commit of this branch (the review-fix commit
-edits only its header comment). Real `gh` (authenticated, read-only
+committed in `b7f241a`; its logic is unchanged at every later commit of this branch (the review-fix commits
+edit only its comments). Real `gh` (authenticated, read-only
 calls only), real ledger.
 
 ## Validation 3 — the baseline number over the real ledger
@@ -147,78 +147,106 @@ does: **a round is flagged when ANY of its findings challenges the approach, eve
 findings** (§"Optional `approach_challenged` flag"). `false` is the default only for a genuinely unclear
 round. Run 2 re-ran the same mechanism under that rule.
 
-### Run 2 — command (the committed review-fix branch)
+### Run 2 — the mixed-round rule, but a table report (superseded)
+
+Run 2 used the same mechanism as Run 3 below on the first review-fix commit, which adds the mixed-round
+rule. It recorded round 4 `approach_challenged: true`, `approach_challenges: 1` and the reader line
+`- approach-challenged rounds: 1 of 6 prior rounds`. But its Step 4 report printed the rounds as a Markdown
+table (round 4's row read `**yes**` in an "approach challenged" column), not the SKILL's
+`round N: … approach_challenged=<bool> …` line format, and Run 1 had done the same. AC 15 asks for that
+per-round line, so Run 2 did not meet that clause. Review flagged it. Step 4 now says to print each round
+literally in the `round N:` form with `true`/`false` values and **never as a Markdown table**. Run 3 re-ran
+the same mechanism under that wording.
+
+### Run 3 — command (the committed second review-fix branch)
 
 ```bash
-git worktree add --detach <scratch>/v4wt HEAD          # the commit carrying the mixed-round rule; .supervisor/postmortem/ absent there
-cp .supervisor/postmortem/results.jsonl <scratch>/ledger-before-v4.jsonl
+git worktree add --detach <scratch>/v4wt HEAD          # the commit carrying the Step 4 line-format rule; .supervisor/postmortem/ absent there
+cp .supervisor/postmortem/results.jsonl <scratch>/ledger-before-v4b.jsonl
 cd <scratch>/v4wt
 claude -p "/loomwright:pr-postmortem https://github.com/vikashruhilgit/loomwright/pull/440" \
   --plugin-dir "<scratch>/v4wt/loomwright" \
   --permission-mode dontAsk --allowedTools "Read,Bash" \
   --disallowedTools "Edit,Write,NotebookEdit,WebFetch,WebSearch,Task"
 bash loomwright/scripts/read-postmortem.sh .claude-plugin/README.md   # a path PR #440 changed, run in the worktree
-cmp <scratch>/ledger-before-v4.jsonl <main checkout>/.supervisor/postmortem/results.jsonl   # exit 0
+cmp <scratch>/ledger-before-v4b.jsonl <main checkout>/.supervisor/postmortem/results.jsonl   # exit 0
 git worktree remove --force <scratch>/v4wt
 ```
 
-The run used Claude Code 2.1.319 and ran 2026-11-11T13:49:33Z → 13:51:11Z (the appended line's `ts`). It
-exited 0 with stderr empty. The `--plugin-dir` copy is this branch's `loomwright/` at the review-fix commit,
-the one that adds the mixed-round rule. The installed plugin has no `approach_challenged` column and no
-`approach_challenges` field, so their presence shows the branch copy ran.
+The run used Claude Code 2.1.319 and ran 2026-11-11T14:14:27Z → 14:16:39Z. It exited 0 with stderr empty.
+The `--plugin-dir` copy is this branch's `loomwright/` with the Step 4 line-format wording that this
+evidence is about; the commit that wording ships in leaves `pr-postmortem/SKILL.md` byte-identical to the
+copy that ran. The installed plugin has no `approach_challenged` token and no `approach_challenges` field,
+so their presence shows the branch copy ran.
 
-### Run 2 — Step 4 report: the per-round lines
+### Run 3 — Step 4 report: the per-round lines (verbatim)
 
-The report again printed the per-round breakdown as a Markdown table, not the SKILL's
-`round N: class=…  approach_challenged=<bool> …` line format. The columns are round, class, missed by
-self-heal, approach challenged, stage and evidence. Round 4 is the one flagged:
+The report printed six plain-text lines in a fenced block, one per round, in the SKILL's format:
 
 ```text
-| 4 | execution_bug | **yes** | **yes** | self_heal | CI bot on `a3736394`: the `owner_wait` interval end wasn't clamped to the window, the `item_timing` dedupe depended on glob order, and `pty_feed` re-built a tick-counted wait instead of using this PR's own `wait-lib.sh` |
+round 1: class=execution_bug  self_heal_miss=false  approach_challenged=false  flow_stage=worker     evidence="iteration 1 — phase-timing.sh unguarded `shift 2` spins forever when a value flag is last"
+round 2: class=execution_bug  self_heal_miss=false  approach_challenged=false  flow_stage=worker     evidence="iteration 2 — fixed-sleep counter leaked do/heredoc state from quoted text; item_timing append not idempotent"
+round 3: class=execution_bug  self_heal_miss=false  approach_challenged=false  flow_stage=worker     evidence="iteration 3 — drain-subfloor-decision split check names on whitespace (`build (ubuntu-latest)`)"
+round 4: class=execution_bug  self_heal_miss=true   approach_challenged=true   flow_stage=self_heal  evidence="claude[bot]: owner_wait never clamped to hi; capabilities.json writes[]; pty_feed reimplements what wait-lib.sh replaces; item_timing dedupe by glob order"
+round 5: class=execution_bug  self_heal_miss=true   approach_challenged=false  flow_stage=self_heal  evidence="fix-now, owner decision — Phase 4.5 round-3 findings dismissed below_severity_floor (--call-max fails open, empty flag swallows next flag, one bad date / one malformed line aborts the reader)"
+round 6: class=quality_gap    self_heal_miss=true   approach_challenged=false  flow_stage=self_heal  evidence="claude[bot]: rule 14 heal_loop_ran=false branch untested; README missing the answered-hook bullet"
 ```
 
-The other five rounds read `no` in the approach column. The report's run summary says "1 approach challenge".
-The `class` stays `execution_bug`: the flag did not change the class or `flow_stage`.
+The per-round line AC 15 asks for is round 4's:
 
-### Run 2 — the appended ledger line (worktree ledger, 1 line, 7361 bytes)
+```text
+round 4: class=execution_bug  self_heal_miss=true   approach_challenged=true   flow_stage=self_heal  evidence="claude[bot]: owner_wait never clamped to hi; capabilities.json writes[]; pty_feed reimplements what wait-lib.sh replaces; item_timing dedupe by glob order"
+```
+
+The `class` stays `execution_bug`: the flag did not change the class or `flow_stage`. The report's run
+summary says "1 approach challenge".
+
+### Run 3 — the appended ledger line (worktree ledger, 1 line, 7470 bytes)
 
 Projection (`jq -c '{schema_version, ts, number, review_rounds, approach_challenges, self_heal_misses, flow_stages, plugin_version, cats:[.categories[]|{round,class,approach_challenged,flow_stage}]}'`):
 
 ```json
-{"schema_version":1,"ts":"2026-11-11T13:51:11Z","number":440,"review_rounds":6,"approach_challenges":1,"self_heal_misses":2,"flow_stages":{"launch_pad":0,"worker":4,"self_heal":2,"unknowable":0},"plugin_version":"17.36.2","cats":[{"round":1,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":2,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":3,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":4,"class":"execution_bug","approach_challenged":true,"flow_stage":"self_heal"},{"round":5,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":6,"class":"quality_gap","approach_challenged":false,"flow_stage":"self_heal"}]}
+{"schema_version":1,"ts":"2026-11-11T14:16:12Z","number":440,"review_rounds":6,"approach_challenges":1,"self_heal_misses":3,"flow_stages":{"launch_pad":0,"worker":3,"self_heal":3,"unknowable":0},"plugin_version":"17.36.2","cats":[{"round":1,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":2,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":3,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":4,"class":"execution_bug","approach_challenged":true,"flow_stage":"self_heal"},{"round":5,"class":"execution_bug","approach_challenged":false,"flow_stage":"self_heal"},{"round":6,"class":"quality_gap","approach_challenged":false,"flow_stage":"self_heal"}]}
 ```
 
 Round 4 in full:
 
 ```json
-{"round":4,"class":"execution_bug","self_heal_miss":true,"dismissed_then_raised":false,"approach_challenged":true,"flow_stage":"self_heal","evidence":"claude[bot] on a3736394: phase-timing owner_wait end never clamped to window hi; item_timing dedupe keeps glob-order last; pty_feed reimplements tick-counted wait instead of this PR own wait-lib.sh"}
+{"round":4,"class":"execution_bug","self_heal_miss":true,"dismissed_then_raised":false,"approach_challenged":true,"flow_stage":"self_heal","evidence":"claude[bot] on a3736394/7a89c8f5: phase-timing owner_wait never clamped to hi; capabilities.json answered writes[]; pty_feed reimplements the anti-pattern wait-lib.sh exists to eliminate; item_timing dedupe by glob order"}
 ```
 
-### Run 2 — reader line (run in the worktree)
+The ledger's round-4 `evidence` is a longer wording of the same finding than the report line's snippet; the
+two are written by the same run in Step 4 and Step 5.
+
+### Run 3 — reader line (run in the worktree)
 
 ```text
 - approach-challenged rounds: 1 of 6 prior rounds
 ```
 
 The live checkout's ledger was byte-identical before and after (`cmp` exit 0). The worktree, and the
-worktree-only ledger with it, was removed afterwards. The appended line exists only in that removed worktree;
-the live ledger was not touched (the report offered to append it there; that was not done).
+worktree-only ledger with it, was removed afterwards (`git worktree list` no longer names it). The appended
+line exists only in that removed worktree; the live ledger was not touched (the report offered to append it
+there; that was not done).
 
 ### Result
 
-AC 15 asks for a round recorded `approach_challenged=true`, `approach_challenges: 1`, and a reader line
-`1 of …`. Run 2 produced all three on PR #440: round 4 `approach_challenged: true`, `approach_challenges: 1`,
-and `- approach-challenged rounds: 1 of 6 prior rounds`. N is 1, as AC 15 expects.
+AC 15 asks for a per-round line carrying `approach_challenged=true`, an appended line with
+`approach_challenges: 1`, and a reader line `1 of …`. Run 3 produced all three on PR #440: the round 4 line
+above, `approach_challenges: 1`, and `- approach-challenged rounds: 1 of 6 prior rounds`. N is 1, as AC 15
+expects.
 
 Honest limits:
 
 - The flagged round is a mixed round. Its approach finding (`pty_feed` re-implementing the wait this PR's
-  `wait-lib.sh` replaces) shares round 4 with two correctness findings. It is flagged under the mixed-round
-  rule above. Run 1 on the same PR, before the rule existed, left it `false`.
-- The flag is a model judgment. One run on one PR shows the rule is followed; it does not measure agreement
-  across runs.
-- Step 4 printed a table rather than the `round N:` line format, both times. Each row still carries the flag.
-- The run also recorded round 5 at `flow_stage: worker` where Run 1 recorded `self_heal`, so `flow_stages`
-  differs between the runs. That is run-to-run variance in the stage attribution and is not part of this item.
+  `wait-lib.sh` replaces) shares round 4 with correctness findings. It is flagged under the mixed-round rule
+  above. Run 1 on the same PR, before the rule existed, left it `false`. Run 3's own report calls the flag
+  "a judgment call": the finding swaps the mechanism for one function rather than challenging the PR's
+  overall approach.
+- The flag and the report layout are model behaviour. Runs 2 and 3 show the current wording is followed once
+  each; they do not measure agreement across runs.
+- `self_heal_misses` and `flow_stages` differ across the runs (Run 2: 2 misses, round 5 at `worker`; Run 3:
+  3 misses, round 5 at `self_heal`). That is run-to-run variance in the attribution and is not part of this
+  item.
 
-Verdict: PASS for Validation 4 — under the stated mixed-round rule, PR #440 round 4 recorded `approach_challenged: true`, the line carries `approach_challenges: 1`, and the reader printed `1 of 6 prior rounds`
+Verdict: PASS for Validation 4 — under the stated mixed-round rule and the Step 4 line format, PR #440's report printed `round 4: class=execution_bug  self_heal_miss=true   approach_challenged=true …`, the appended line carries `approach_challenges: 1`, and the reader printed `1 of 6 prior rounds`

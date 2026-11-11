@@ -121,7 +121,7 @@ Human-readable, to stdout. Include:
 - **PR identity:** `repo#number — title`, and `agent_generated_guess`.
 - **Size:** `additions`/`deletions`/`changed_files`.
 - **review_rounds** total.
-- **Per-round lines:** `round N: class=<class>  self_heal_miss=<bool>  approach_challenged=<bool>  flow_stage=<stage>  evidence="<snippet>"` — one per categorized round; when Step 3 omitted any no-evidence rounds, say how many (e.g. `2 of 5 rounds omitted: no concrete finding`) so the gap between `review_rounds` and the listed rounds is explained, not silent.
+- **Per-round lines:** `round N: class=<class>  self_heal_miss=<bool>  approach_challenged=<bool>  flow_stage=<stage>  evidence="<snippet>"` — one per categorized round, printed literally in this plain-text form with `true`/`false` values; **never render the rounds as a Markdown table** or any other layout (a table loses the `key=value` tokens); when Step 3 omitted any no-evidence rounds, say how many (e.g. `2 of 5 rounds omitted: no concrete finding`) so the gap between `review_rounds` and the listed rounds is explained, not silent.
 - **Root-cause narrative:** 2–4 sentences answering *why this PR needed back-and-forth* — the dominant class, whether self-heal should have caught it, and the stage most implicated.
 
 ### Step 5 — Append exactly ONE POSTMORTEM_RESULT trend line (fail-safe)
