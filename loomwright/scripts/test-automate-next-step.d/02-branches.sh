@@ -17,6 +17,22 @@ if [ -z "$DRIVE_ERR" ] && printf '%s' "$LAST_OUT" | jq -e '.escalation_cause == 
    && grep -qF -- 'validation-gate: unrun — V3 Running system' "$CASE_RF" && ! grep -q 'validation waived' "$CASE_RF"; then
   ok "B2: AUT-WAIVE Keep parked ⇒ escalated park, escalation_cause validation_unrun, no waiver written"
 else no "B2: Keep parked wrong: $DRIVE_ERR"; grep -E 'escalation_cause|validation' "$CASE_RF" | sed 's/^/    /'; fi
+# B2' — AUT-WAIVE answered Waive with words validation-gate --waive refuses ⇒ the same escalated park, the
+# refusal named on stderr, no waiver written and no write-only sidecar key left behind
+inline_run gate-validation-waive "$(printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"8f8a52d\"}'" \
+  "expect: ask" "call: --result '{\"answers\":[\"Waive this step\"],\"note\":\"ran it by hand | looked fine\"}'" "expect: park")"
+if [ -z "$DRIVE_ERR" ] && printf '%s' "$LAST_OUT" | jq -e '.escalation_cause == "validation_unrun"' >/dev/null \
+   && grep -q 'validation-gate --waive refused (treated as Keep parked)' "$CASE_DIR"/call*.err && ! grep -q 'validation waived' "$CASE_RF" \
+   && ! grep -rq 'waive_refusal' "$CASE_ROOT/.supervisor"; then
+  ok "B2': a refused waiver ⇒ escalated park validation_unrun, the refusal on stderr, no waiver line, no write-only sidecar key"
+else no "B2': refused waiver wrong: $DRIVE_ERR $(grep -rl waive_refusal "$CASE_ROOT/.supervisor" 2>/dev/null | head -n 1)"; fi
+# B2'' — the superseded drain's close-out reads the NEXT_STEP_CLOSEOUT_OUT seam (a partial removal ⇒ leftover)
+inline_run drain-superseded-by-merge "$(printf '%s\n' "file: \"\$ROOT/closeout.out\" 'closeout: removed — worktree /tmp/wt; kept branch feature/x'" \
+  "env: NEXT_STEP_FROM=drain-result NEXT_STEP_CLOSEOUT_OUT=\$ROOT/closeout.out" \
+  "call: --session-id bec3aeba-75d5-447b-9d54-88f8a6d4593c --non-interactive --result '{\"no_terminal_block\":true}'" "expect: park")"
+if [ -z "$DRIVE_ERR" ] && grep -qF 'closeout leftover kept' "$CASE_RF" && grep -qF 'kept branch feature/x' "$CASE_RF"; then
+  ok "B2'': the superseded drain's close-out reads the closeout seam (its partial removal is a leftover)"
+else no "B2'': superseded closeout seam not read: $DRIVE_ERR"; grep -E 'closeout|leftover' "$CASE_RF" | tail -n 3 | sed 's/^/    /'; fi
 # B3 — a --result that answers nothing valid exits 2 and writes nothing; the ask stays pending
 inline_run park-first-ready-park "$(printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"028cbed6b8e3588f93731d6b862f0bc334de1d96\"}'" "expect: ask")"
 ask1="$LAST_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/seams.none"

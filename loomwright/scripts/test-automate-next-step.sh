@@ -937,7 +937,8 @@ EOF
 # leg_run_idem <driver> — the /autonomous and owned-drain spawns re-print on a no-result call (and on a re-sent
 # --start run) and write nothing; the RUN report re-sent byte-identical at the owned-drain spawn (or at the
 # no-PR `done`) is a replay — the pending instruction re-prints, nothing written — while a different RUN
-# report there ⇒ exit 2; --start run while the drain spawn is pending ⇒ run_already_started
+# report there ⇒ exit 2; --start run while the drain spawn is pending ⇒ run_already_started; the RUN report
+# re-sent at the rate-limit park re-prints the park and writes nothing
 leg_run_idem() {
   local drv="$1" s0 sp
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
@@ -964,6 +965,14 @@ leg_run_idem() {
   ns_call "$drv" --result "$R_NOPR"; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the no-PR RUN report re-sent ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
   ns_call "$drv" --result "$(printf '%s' "$R_NOPR" | jq -c '.no_pr_why = "another why"')"
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a different no-PR RUN report ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
+  # a RUN that ends at the rate-limit park: its byte-identical re-send re-prints the park and writes nothing
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch (rate limit)"; return 1; }
+  mkdir -p "$CASE_ROOT/.supervisor/logs"
+  printf '%s\n' '{"event":"agent_lifecycle","state":"failed","session_id":"s-run","agent_scope":"main","reason":"rate_limit","ts":"2026-10-14T10:00:00Z"}' > "$CASE_ROOT/.supervisor/logs/s-run.jsonl"
+  ns_call "$drv" --start run --session-id s-run
+  ns_call "$drv" --result "$R_RUN"; sp="$NC_OUT"; s0="$(snapshot)"
+  printf '%s' "$sp" | jq -e '.do == "park"' >/dev/null 2>&1 || { LEG_MSG="a rate-limited RUN report ⇒ '${sp:0:80}' (expected the park)"; return 1; }
+  ns_call "$drv" --result "$R_RUN"; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the RUN report re-sent at the rate-limit park ⇒ exit $NC_RC '${NC_OUT:0:80}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
   return 0
 }
 # leg_rate_hint <driver> — an `unknown` failed row with a 429 in its session's closest-preceding STOP_FAILURE line
