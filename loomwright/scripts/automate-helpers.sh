@@ -160,7 +160,7 @@ abort() { echo "automate-helpers: ABORT: $*" >&2; exit 2; }
 _ah_source() {
   local _ah_f
   _ah_f="$(dirname "$0")/automate-helpers.d/$1.sh"
-  { [ -f "$_ah_f" ] && [ -r "$_ah_f" ]; } || die "missing family file: automate-helpers.d/$1.sh"
+  { [ -f "$_ah_f" ] && [ -r "$_ah_f" ] && [ -s "$_ah_f" ]; } || die "missing family file: automate-helpers.d/$1.sh"
   . "$_ah_f"
 }
 # _ah_bundle [<dispatcher>] — print <dispatcher> (default: this script) with every `_ah_source <name>`
@@ -192,9 +192,12 @@ _ah_usage() {
   _ah_bundle "$@" | awk -v order="$_AH_HELP_SEGMENTS" '
     function bad(m) { err = err "automate-helpers: --help: " m "\n" }
     /^# >>> automate-helpers\.d\/[a-z][a-z-]*\.sh$/ {
-      fam = $3; sub(/^automate-helpers\.d\//, "", fam); sub(/\.sh$/, "", fam); hdr = ""; next }
+      fam = $3; sub(/^automate-helpers\.d\//, "", fam); sub(/\.sh$/, "", fam); hdr = ""; fams[fam] = 1; next }
     /^# <<< automate-helpers\.d\// { fam = ""; next }
-    /^#:@ [a-z][a-z-]*$/ { if (fam != "") bad("segment marker inside family " fam ": " $0); else hdr = $2; next }
+    /^#:@ [a-z][a-z-]*$/ {
+      if (fam != "") { bad("segment marker inside family " fam ": " $0); next }
+      if ($2 in hdrs) bad("segment group repeated: " $2)
+      hdr = $2; hdrs[hdr] = 1; next }
     /^#:  [a-z]/ {
       seg = (fam != "") ? fam : hdr
       if (seg == "") { bad("usage line outside any segment: " $0); next }
@@ -209,6 +212,7 @@ _ah_usage() {
         if (!(s[i] in buf)) bad("segment has no usage line: " s[i])
       }
       for (k in buf) if (!(k in listed)) bad("usage lines in an unlisted segment: " k)
+      for (k in hdrs) if (k in fams) bad("segment group named like a family: " k)
       if (err != "") { printf "%s", err > "/dev/stderr"; exit 1 }
       for (i = 1; i <= n; i++) printf "%s", buf[s[i]]
     }'

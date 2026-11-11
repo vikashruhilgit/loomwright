@@ -33,14 +33,14 @@ qc_le()    { qc "$1" backlog 5 5; }            # n == limit still skips (D1: "�
 qc_lt()    { qc "$1" backlog 3 5; }
 qc_gt()    { qc "$1" backlog 6 5; }            # n > limit asks
 qc_src()   { printf '%s|%s|%s' "$(qc "$1" folder 1 5)" "$(qc "$1" prompt 0 5)" "$(qc "$1" nonsense 1 5)"; }
-qc_lane()  { printf '%s|%s' "$(qc "$1" --lane-backlog)" "$(qc "$1" backlog 9 1 --lane-backlog)"; }
+qc_lane()  { printf '%s|%s|%s' "$(qc "$1" --lane-backlog)" "$(qc "$1" backlog 9 1 --lane-backlog | cut -c1-4)" "$(qc "$1" --lane-backlog x y z w | cut -c1-4)"; }
 qc_bad()   { printf '%s|%s|%s|%s|%s' "$(qc "$1" backlog -1 5)" "$(qc "$1" backlog abc 5)" "$(qc "$1" backlog 3 x)" "$(qc "$1" backlog 08 9)" "$(qc "$1" backlog 1234567890 5)"; }
 qc_max()   { printf '%s|%s' "$(qc "$1" backlog 123456789 999999999)" "$(qc "$1" backlog 999999999 5)"; }  # 9 digits is the largest accepted count
 qc_usage() { printf '%s|%s|%s' "$(qc "$1" backlog 3 2>/dev/null | cut -c1-4)" "$(qc "$1" 2>/dev/null | cut -c1-4)" "$(qc "$1" backlog 1 2 3 | cut -c1-4)"; }
 E_LE="rc=0 skip — backlog queue 5 ≤ limit 5"
 E_GT="rc=0 ask"
 E_SRC="rc=0 ask|rc=0 ask|rc=0 ask"
-E_LANE="rc=0 $QC_LANE|rc=0 $QC_LANE"
+E_LANE="rc=0 $QC_LANE|rc=1|rc=1"
 E_BAD="rc=0 ask|rc=0 ask|rc=0 ask|rc=0 ask|rc=0 ask"
 E_USAGE="rc=1|rc=1|rc=1"
 E_MAX="rc=0 skip — backlog queue 123456789 ≤ limit 999999999|rc=0 ask"
@@ -48,7 +48,7 @@ qg_is "QG1a queue-confirm backlog n == limit ⇒ exactly 'skip — backlog queue
 qg_is "QG1a' queue-confirm backlog 3 ≤ 5 ⇒ skip line names both numbers" "$(qc_lt "$H")" "rc=0 skip — backlog queue 3 ≤ limit 5"
 qg_is "QG1b queue-confirm backlog n > limit ⇒ ask" "$(qc_gt "$H")" "$E_GT"
 qg_is "QG1c queue-confirm folder / prompt / unknown source ⇒ ask at any count" "$(qc_src "$H")" "$E_SRC"
-qg_is "QG1d queue-confirm --lane-backlog ⇒ the lane skip text exactly (positional args ignored)" "$(qc_lane "$H")" "$E_LANE"
+qg_is "QG1d queue-confirm --lane-backlog ⇒ the lane skip text exactly; any positional beside it ⇒ usage error, exit 1" "$(qc_lane "$H")" "$E_LANE"
 qg_is "QG1e queue-confirm non-integer / signed / leading-zero / >9-digit count ⇒ ask, nothing on stderr" "$(qc_bad "$H")" "$E_BAD"
 qg_is "QG1e' queue-confirm 9-digit counts are accepted (the length-cap boundary): 123456789 ≤ 999999999 skips, 999999999 > 5 asks" "$(qc_max "$H")" "$E_MAX"
 qg_is "QG1f queue-confirm missing or extra argument ⇒ usage error exit 1" "$(qc_usage "$H")" "$E_USAGE"
@@ -134,6 +134,10 @@ qg_parked; chmod 000 "$QG_RF"
 if [ -r "$QG_RF" ]; then ok "QG2h' unreadable-run-file leg not applicable (running as a user that reads mode-000 files)"
 else qg_is "QG2h' park-ask-gate unreadable run file ⇒ refuse" "$(pag "$H" "$QG_RF" "$QG_ITEM" "$QG_PR")" "rc=0 refuse — run file not found or unreadable: $QG_RF"; fi
 chmod 644 "$QG_RF"
+p_bigwait() { qg_parked; qg_state OPEN; local e; e="$(env PATH="$QG/bin:$PATH" GH_STUB_DIR="$QG/ghstub" bash "$1" park-ask-gate "$QG_RF" "$QG_ITEM" "$QG_PR" --wait 123456789012345678901 2>&1 >/dev/null)"; printf 'rc=%s %s' "$?" "$(grep -c 'integer' <<<"$e")"; }
+p_multidoc() { qg_parked; printf '{"state":"OPEN"}\n{"state":"OPEN"}\n' > "$QG/ghstub/pr-view.json"; rm -f "$QG/ghstub/pr-view-fail"; pag "$1" "$QG_RF" "$QG_ITEM" "$QG_PR"; }
+qg_is "QG2l park-ask-gate --wait longer than 5 digits ⇒ usage error (exit 1), never an integer-overflow warning" "$(p_bigwait "$H")" "rc=1 0"
+qg_is "QG2m park-ask-gate multi-document gh output ⇒ one line, fix-now unavailable: state unreadable" "$(p_multidoc "$H")" "rc=0 ask — fix-now unavailable: PR state unreadable"
 qg_is "QG2i park-ask-gate usage errors (missing pr, non-integer --wait, unknown option, --wait without a value, a 4th positional) ⇒ exit 1, nothing on stdout" "$(p_usage "$H")" "$P_USAGE"
 QG_T0="$(date +%s)"; QG_GOT="$(p_delayed "$H")"; QG_DT=$(( $(date +%s) - QG_T0 ))
 qg_is "QG2j park-ask-gate --wait 5 with the marker written ~2s later ⇒ ask (the watcher's async marker race)" "$QG_GOT" "$P_OPEN"

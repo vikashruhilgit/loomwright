@@ -301,6 +301,10 @@ bl_refuse "a --pr that is not a /pull/<n> url" bl/14-open done --pr https://gith
 bl_refuse "a kept-open --date later than today (it would settle future runs' rows)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2099-01-01
 bl_refuse "a --date with an impossible month" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-13-01
 bl_refuse "a --date with no value" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date
+bl_refuse "a --date that is no calendar day (February 31)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-02-31
+bl_refuse "a --date that is no calendar day (April 31)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-04-31
+bl_refuse "a --date of February 29 outside a leap year" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2025-02-29
+bl_refuse "a --date of February 29 in a century non-leap year" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 1900-02-29
 bl_refuse "a control character in --reason" bl/14-open abandoned --reason "$(printf 'gone\033[2J')"
 bl_refuse "a multi-line --owed" bl/14-open done_with_escalation --pr https://github.com/acme/widgets/pull/1 --owed "$(printf 'a\n## Status: done')"
 bl_s9d() { bl_run "$1" backlog-stamp bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2099-01-01 --root "$T9" --confirm; printf '%s %s' "$BL_RC" "$([ "$(bl_sum "$T9")" = "$BL_B9" ] && echo unchanged || echo written)"; }
@@ -485,4 +489,29 @@ LOOMWRIGHT_FOLLOWUP_NOW="$BL_FUN" bl_run "$H" backlog --json --offline --state f
 bl_is "BL13 --state follow_up lists only the follow-up draft, totals whole-tree" \
   "$(jq -r '"\([.items[].item] | join(",")) \(.totals | add) \(.state_filter)"' <<<"$BL_OUT")" "$BL_FU 27 follow_up"
 bl_is "BL13 the board never printed an absolute path for a follow-up row" "$(grep -c "$BL" <<<"$BL_OUT")" "0"
+# ---- BL14 a merged-PR read of exactly _BL_PR_LIMIT entries may be truncated ⇒ github: unverified
+mkdir -p "$BL/fix14" && cp -R "$BL_FIX/." "$BL/fix14/"
+jq -n '[range(0; 1000) | {number: (. + 5000), url: ("https://github.com/acme/widgets/pull/" + ((. + 5000) | tostring)), title: "old", headRefName: ("old-" + tostring)}]' > "$BL/fix14/gh/merged.json"
+BL_FIXDIR_OVR="$BL/fix14" bl_run "$H" backlog --json --root "$T0"
+bl_is "BL14 a merged-PR list as long as the read's --limit ⇒ github unverified (it may be truncated), never verified" "$(jq -r '.github' <<<"$BL_OUT")" "unverified"
+jq '.[0:999]' "$BL/fix14/gh/merged.json" > "$BL/fix14/gh/m" && mv "$BL/fix14/gh/m" "$BL/fix14/gh/merged.json"
+BL_FIXDIR_OVR="$BL/fix14" bl_run "$H" backlog --json --root "$T0"
+bl_is "BL14 one entry under the --limit ⇒ github verified" "$(jq -r '.github' <<<"$BL_OUT")" "verified"
+# ---- BL15 a backlog-stamp killed while it holds the item lock removes that lock (its exit trap)
+T15="$(bl_tree t15)"; mkdir -p "$BL/slowbin"
+printf '#!/usr/bin/env bash
+sleep 2
+exec %s "$@"
+' "$(command -v cp)" > "$BL/slowbin/cp"; chmod +x "$BL/slowbin/cp"
+PATH="$BL/slowbin:$PATH" bash "$H" backlog-stamp bl/14-open abandoned --reason gone --root "$T15" --confirm >/dev/null 2>&1 &
+BL_PID=$!; BL_LK15="$T15/.supervisor/requirements/bl/14-open.md.backlog-stamp.lock"; n=0
+while [ ! -e "$BL_LK15" ] && [ "$n" -lt 100 ]; do sleep 0.05; n=$((n + 1)); done
+BL_HELD="$([ -e "$BL_LK15" ] && echo held || echo never)"
+kill -TERM "$BL_PID" 2>/dev/null; wait "$BL_PID" 2>/dev/null
+bl_is "BL15 a TERM while backlog-stamp holds the lock ⇒ the lock is removed (a later stamp is not refused)" \
+  "$BL_HELD $([ -e "$BL_LK15" ] && echo left || echo removed)" "held removed"
+# ---- BL16 positive control for the calendar check: a leap-year February 29 is stamped
+T16="$(bl_tree t16)"
+bl_run "$H" backlog-stamp bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2024-02-29 --root "$T16" --confirm
+bl_is "BL16 kept-open --date 2024-02-29 (a leap day) ⇒ stamped" "$BL_RC $(grep -c '^- \*\*Kept open:\*\* 2024-02-29 ' "$T16/.supervisor/requirements/bl/11-conflict.md")" "0 1"
 rm -rf "$BL"

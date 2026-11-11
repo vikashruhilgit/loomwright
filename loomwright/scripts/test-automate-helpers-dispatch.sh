@@ -28,8 +28,9 @@
 #      A NEW FAMILY also needs its name in the dispatcher's _AH_HELP_SEGMENTS and in SEGMENTS here.
 #   6. each remaining _ah_usage fail-closed branch (segment marker inside a family, usage line
 #      outside any segment, malformed `#:` line, segment listed twice, usage lines in an unlisted
-#      segment) — one gated mutant copy each ⇒ --help exits non-zero, prints NOTHING on stdout, and
-#      names the reason on stderr.
+#      segment, a repeated `#:@` group, a `#:@` group named like a family) — one gated mutant copy
+#      each ⇒ --help exits non-zero, prints NOTHING on stdout, and names the reason on stderr. Also an
+#      EMPTY family file: the real dispatcher's _ah_source refuses it as missing (_ah_bundle's rule).
 # Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -269,6 +270,22 @@ usage_mutant "segment listed twice" "$D" "$C" "segment listed twice: $f1"
 C="$(mk_copy)"
 sed "s/^_AH_HELP_SEGMENTS=\"$f1 /_AH_HELP_SEGMENTS=\"/" "$D" >"$C"
 usage_mutant "usage lines in an unlisted segment" "$D" "$C" "usage lines in an unlisted segment: $f1"
+# (f) a `#:@` group name repeated in the dispatcher — refused, never merged into the first group
+C="$(mk_copy)"
+awk '{ print } /^#:@ hdr-gate$/ && !d { getline; print; print "#:@ hdr-gate"; print "#:  zz-repeat"; d = 1 }' "$D" >"$C"
+usage_mutant "segment group repeated" "$D" "$C" "segment group repeated: hdr-gate"
+# (g) a `#:@` group named like a family — refused, never merged into that family's lines
+C="$(mk_copy)"
+sed "s/^#:@ hdr-trail$/#:@ $f1/" "$D" >"$C"
+usage_mutant "segment group named like a family" "$D" "$C" "segment group named like a family: $f1"
+# (h) an EMPTY family file — the real dispatcher (_ah_source) refuses it as missing, like _ah_bundle
+f="$(head -1 <<<"$FAMS")"; C="$(mk_copy)"; : >"$(dirname "$C")/automate-helpers.d/$f.sh"
+if [ -f "$(dirname "$C")/automate-helpers.d/$f.sh" ] && [ ! -s "$(dirname "$C")/automate-helpers.d/$f.sh" ]; then
+  err="$(cd "$T/cwd" && bash "$C" is-run-file /dev/null 2>&1 >/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -qF "missing family file: automate-helpers.d/$f.sh" <<<"$err"; then
+    ok "empty $f.sh ⇒ the dispatcher exits $rc naming it (the same empty-is-missing rule as _ah_bundle)"
+  else no "empty $f.sh ⇒ rc=$rc err='$err' (expected non-zero naming the file)"; fi
+else no "empty family file: not planted"; fi
 
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"

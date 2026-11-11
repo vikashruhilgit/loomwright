@@ -328,7 +328,10 @@ _bl_context() {
   fi
   _BL_GH=unverified
   if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] \
-     && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j1" && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j2"; then
+     && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j1" && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j2" \
+     && "$JQ" -e --argjson l "$_BL_PR_LIMIT" 'length < $l' >/dev/null 2>&1 <<<"$j1" \
+     && "$JQ" -e --argjson l "$_BL_PR_LIMIT" 'length < $l' >/dev/null 2>&1 <<<"$j2"; then
+    # a list of exactly _BL_PR_LIMIT entries may be truncated (older PRs dropped): it stays unverified
     _BL_GH=verified
     "$JQ" -r '.[] | [(.number | tostring), (.url // ""), (.headRefName // ""), ((.title // "") | gsub("[\t\r\n\u001d-\u001f]"; " "))] | @tsv' <<<"$j1" > "$_BL_TMP/merged.tsv" 2>/dev/null
     "$JQ" -r '.[] | [(.number | tostring), (.url // ""), (.headRefName // ""), ((.title // "") | gsub("[\t\r\n\u001d-\u001f]"; " "))] | @tsv' <<<"$j2" > "$_BL_TMP/open.tsv" 2>/dev/null
@@ -645,6 +648,19 @@ backlog_board() {
 
 # backlog-stamp <item> <mode> … --confirm (usage above). Validation first, then the --confirm guard,
 # then ONE append through a temp copy + mv.
+# _bl_calendar_day <YYYY-MM-DD> — true when the (already shape-checked) date names a real day: the
+# month's length, February 29 only in a Gregorian leap year. Pure shell arithmetic, so it reads the
+# same under BSD and GNU `date`.
+_bl_calendar_day() {
+  local y m d max=31
+  y=$((10#${1%%-*})); m="${1#*-}"; d=$((10#${m#*-})); m=$((10#${m%%-*}))
+  case "$m" in
+    4|6|9|11) max=30 ;;
+    2) max=28
+       if [ $((y % 4)) -eq 0 ] && { [ $((y % 100)) -ne 0 ] || [ $((y % 400)) -eq 0 ]; }; then max=29; fi ;;
+  esac
+  [ "$d" -le "$max" ]
+}
 backlog_stamp() {
   local root="" given="" mode="" owed="" reason="" sup="" date="" today confirm=0 a f rel prs="" block brief="" tmp em lk n
   em="$(printf '\342\200\224')"
@@ -690,6 +706,7 @@ backlog_stamp() {
       today="$(date -u +%Y-%m-%d)"
       [ -n "$date" ] || date="$today"
       grep -qE '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$' <<<"$date" || _bl_fail backlog-stamp "refused — --date is not YYYY-MM-DD (nothing written)"
+      _bl_calendar_day "$date" || _bl_fail backlog-stamp "refused — --date $date is not a calendar day (nothing written)"
       # a marker settles every row dated on or before it, so a future date would settle rows from
       # runs that have not happened yet (D-conflict-1: a later run's row must raise the conflict again)
       [ "$((10#${date//-/}))" -le "$((10#${today//-/}))" ] || _bl_fail backlog-stamp "refused — --date $date is later than today ($today UTC; nothing written)" ;;
@@ -725,10 +742,16 @@ backlog_stamp() {
     [ "$n" -le 100 ] || _bl_fail backlog-stamp "refused — $rel is locked by another backlog-stamp (${lk#"$root"/}; nothing written)"
     sleep 0.1
   done
+  # the lock is ours from here: an exit or a kill before the release below removes it (only ours —
+  # _BL_LK is set after the O_EXCL create succeeded and cleared once released)
+  _BL_LK="$lk"
+  trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"' EXIT
+  trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"; trap - EXIT; exit 130' INT
+  trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"; trap - EXIT; exit 143' TERM
   if is_done "$f"; then rm -f "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
   tmp="$(mktemp "$f.XXXXXX")" || { rm -f "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
   if cp -p "$f" "$tmp" && printf '%s\n' "$block" >> "$tmp" && mv -f "$tmp" "$f"; then
-    rm -f "$lk"
+    rm -f "$lk"; _BL_LK=""
     case "$mode" in
       kept-open) printf 'backlog-stamp: stamped %s — Kept open %s, supersedes %s\n' "$rel" "$date" "$sup" ;;
       abandoned) printf 'backlog-stamp: stamped %s — done_with_escalation %s ABANDONED\n' "$rel" "$em" ;;
