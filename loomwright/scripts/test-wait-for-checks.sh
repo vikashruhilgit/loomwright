@@ -95,6 +95,7 @@ case "\$*" in
     exit 0
     ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then
   printf '{"required_status_checks":{"contexts":["ci"]}}\n'
   exit 0
@@ -156,6 +157,7 @@ case "\$*" in
     exit 0
     ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then
   printf '{"required_status_checks":{"contexts":["ci"]}}\n'
   exit 0
@@ -191,6 +193,7 @@ case "\$*" in
     exit 0
     ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then
   printf '{"required_status_checks":{"contexts":["ci"]}}\n'
   exit 0
@@ -236,6 +239,7 @@ case "\$*" in
     exit 0
     ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then
   printf '{"required_status_checks":{"contexts":["ci"]}}\n'
   exit 0
@@ -267,6 +271,7 @@ case "\$*" in
     exit 0
     ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then
   printf '{"required_status_checks":{"contexts":["ci"]}}\n'
   exit 0
@@ -331,6 +336,7 @@ case "\$*" in
     exit 0
     ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then
   echo "$errline" >&2
   exit 1
@@ -370,6 +376,8 @@ rm -rf "$D10"
 # ----------------------------------------------------------------------------
 # write_names_stub <dir> <rollup_json> [<protection_contexts_json>] — one fixed
 # rollup for every poll; branch protection names the given contexts (default ["ci"]).
+# Markers in <dir>: prot-404 (classic protection 404s), rulesets.json (the rules/branches
+# body, default `[]`), rulesets-fail (the rules read 403s).
 write_names_stub() {
   local dir="$1" rollup="$2" ctx="${3:-[\"ci\"]}"
   printf '%s\n' "$rollup" > "$dir/rollup.json"
@@ -380,6 +388,11 @@ case "\$*" in
   *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
   *headRefOid*) cat "$dir/rollup.json"; exit 0 ;;
 esac
+case "\$*" in *"/rules/branches/"*)
+  [ -f "$dir/rulesets-fail" ] && { echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1; }
+  if [ -f "$dir/rulesets.json" ]; then cat "$dir/rulesets.json"; else echo '[]'; fi; exit 0 ;;
+esac
+[ "\$1" = "api" ] && [ -f "$dir/prot-404" ] && { echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1; }
 [ "\$1" = "api" ] && { cat "$dir/prot.json"; exit 0; }
 exit 0
 EOF
@@ -483,6 +496,7 @@ case "\$*" in
   *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
   *headRefOid*) printf '{"headRefOid":"$SHA","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""}]}\n'; exit 0 ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 [ "\$1" = "api" ] && printf '{"required_status_checks":{"contexts":["ci"]}}\n'
 exit 0
 EOF
@@ -530,6 +544,7 @@ case "\$*" in
     printf '{"headRefOid":"$SHA","statusCheckRollup":[{"name":"ci","status":"%s","conclusion":"%s","state":""}]}\n' "\$st" "\$c"
     exit 0 ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 [ "\$1" = "api" ] && printf '{"required_status_checks":{"contexts":["ci"]}}\n'
 exit 0
 EOF
@@ -721,6 +736,7 @@ case "\$*" in
   *baseRefName*) [ -n '$base' ] && printf '%s\n' '$base'; exit 0 ;;
   *headRefOid*) printf '{"headRefOid":"$SHA","statusCheckRollup":[]}\n'; exit 0 ;;
 esac
+case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 if [ "\$1" = "api" ]; then printf '%s\n' "\$2" >> "$dir/api.log"; echo "gh: Branch not protected (HTTP 404)" >&2; exit 1; fi
 exit 0
 EOF
@@ -978,6 +994,29 @@ if [ -s "$M42" ] && ! cmp -s "$SUT" "$M42" && bash -n "$M42"; then
   else ok "case 42 MUTATION CONTROL: without the sleep clamp the call overshoots ($WHY42)"; fi
 else no "case 42 mutant invalid (empty / identical / bash -n)"; fi
 rm -rf "$(dirname "$M42")"
+
+# ----------------------------------------------------------------------------
+# Cases 43-48 (issue #874): rulesets are a second protection store. A ruleset-only base answers
+# the classic read 404; its required checks must still be required (never "verified empty"), the
+# two stores' lists union, and an unreadable ruleset read is required=unknown, never green.
+# ----------------------------------------------------------------------------
+RS_ROLL='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS","state":""},{"name":"e2e","status":"COMPLETED","conclusion":"FAILURE","state":""}]}'
+RS_E2E='[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"e2e"}]}}]'
+rs_case() { # <num> <title> <expect-regex> <classic ctx json|404> <rulesets json|fail|none>
+  local d; d="$(fresh_stub_dir)"
+  if [ "$4" = 404 ]; then write_names_stub "$d" "$RS_ROLL"; touch "$d/prot-404"; else write_names_stub "$d" "$RS_ROLL" "$4"; fi
+  case "$5" in fail) touch "$d/rulesets-fail" ;; none) : ;; *) printf '%s\n' "$5" > "$d/rulesets.json" ;; esac
+  echo "== $1. $2 =="
+  local o; o="$(GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names)"
+  if grep -qE "$3" <<<"$o"; then ok "$2 ($o)"; else no "$2 wrong: '$o'"; fi
+  rm -rf "$d"
+}
+rs_case 43 "classic 404 + ruleset requiring a red check => required=red, the check named" '^SETTLED sha=deadbeef00 required=red .*red_names=e2e' 404 "$RS_E2E"
+rs_case 44 "classic 404 + no ruleset check => required=green (verified empty, unchanged)" '^SETTLED sha=deadbeef00 required=green ' 404 none
+rs_case 45 "classic 404 + unreadable ruleset read => required=unknown, NEVER green" '^SETTLED sha=deadbeef00 required=unknown ' 404 fail
+rs_case 46 "classic [ci] alone => required=green (e2e not required)" '^SETTLED sha=deadbeef00 required=green ' '["ci"]' none
+rs_case 47 "classic [ci] + ruleset [e2e] => the union: required=red on e2e" '^SETTLED sha=deadbeef00 required=red .*red_names=e2e' '["ci"]' "$RS_E2E"
+rs_case 48 "classic [ci] + unreadable ruleset read => required=unknown" '^SETTLED sha=deadbeef00 required=unknown ' '["ci"]' fail
 
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi

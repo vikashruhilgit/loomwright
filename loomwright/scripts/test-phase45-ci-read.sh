@@ -46,6 +46,7 @@ case "$*" in
   "pr view "*"--json baseRefName"*) echo '{"baseRefName":"main"}' ;;
   "api repos/o/r/branches/main/protection") emit protection.json ;;
   "api --method GET repos/o/r/branches/main/protection/required_status_checks") emit reqchecks.json ;;
+  "api --method GET repos/o/r/rules/branches/main?per_page=100 --paginate") if [ -f "$fx/rulesets.json" ]; then emit rulesets.json; else echo '[]'; fi ;;
   "api repos/o/r/commits/"*"/check-runs"*) emit checkruns.json ;;
   "api repos/o/r/actions/runs/"*"/jobs") r="${2#repos/o/r/actions/runs/}"; emit "jobs-${r%/jobs}.json" ;;
   "run view "*"--log-failed"*) emit "log-$3.txt" ;;

@@ -455,7 +455,10 @@ _ge_protection_class() {
 #           fail-CLOSED "absent file ⇒ nobody trusted" resolution as `wrap-external-text.sh`, no
 #           `bot_author_re` fallback here) blocks; `hasNextPage` (truncated >100 threads) blocks;
 #           any GraphQL read error blocks.
-#   cond 4  `gh api repos/<owner>/<repo>/branches/main/protection` — a 404 ⇒ unprotected (false);
+#   cond 4  `gh api repos/<owner>/<repo>/branches/<live base>/protection` UNIONED with the base's
+#           active rulesets (`rules/branches/<base>`, required-checks-rulesets.sh): a ruleset that
+#           requires a check or >=1 approving review is enforceable, its checks join cond 5's list,
+#           and an unreadable ruleset read parks `protection_unreadable`. Classic: a 404 ⇒ unprotected (false);
 #           the 404 is matched by gh's `(HTTP 404)` status token, never a bare `404` substring.
 #           GitHub's paid-plan refusal (a 403 whose own `gh: ` line carries the paid-plan refusal
 #           message — a private repo on GitHub Free cannot have branch protection) likewise reads
@@ -742,8 +745,12 @@ GEPARTS
   # (matched by gh's `(HTTP 404)` status token) or GitHub's paid-plan 403 means
   # nothing is enforced (false); ANY OTHER error is unreadable ⇒ PARK (never
   # silently treated as either protected or unprotected).
+  # The base read is the PR's live baseRefName (cond 2 has already required it to be `main`).
+  # Rulesets are read too (required-checks-rulesets.sh, issue #874): an active ruleset that
+  # requires a check or an approving review is enforceable protection, and its required checks
+  # join cond 5's list. An unreadable ruleset read parks protection_unreadable.
   local prot_raw prot_rc=0 protection_enforceable="false" required_contexts_json="[]"
-  prot_raw="$("$GH" api "repos/$owner/$repo/branches/main/protection" 2>&1)" || prot_rc=$?
+  prot_raw="$("$GH" api "repos/$owner/$repo/branches/$live_base/protection" 2>&1)" || prot_rc=$?
   if [ "$prot_rc" -ne 0 ]; then
     case "$(_ge_protection_class "$prot_raw")" in
       not_enforceable) protection_enforceable="false" ;;
@@ -764,6 +771,18 @@ GEPARTS
       echo "PARK: protection_unreadable"; return 0
     fi
   fi
+  if ! command -v rulesets_required_read >/dev/null 2>&1; then
+    . "$(dirname "$0")/required-checks-rulesets.sh" 2>/dev/null \
+      || { echo "PARK: protection_unreadable"; return 0; }
+  fi
+  rulesets_required_read "$GH" "$JQ" "$owner" "$repo" "$live_base"
+  case "$RSR_STATE" in
+    unreadable) echo "PARK: protection_unreadable"; return 0 ;;
+    list)       protection_enforceable="true"
+                required_contexts_json="$(printf '%s' "$required_contexts_json" | "$JQ" -c --argjson r "$RSR_CONTEXTS" '(. + $r) | unique' 2>/dev/null)"
+                [ -n "$required_contexts_json" ] || { echo "PARK: protection_unreadable"; return 0; } ;;
+  esac
+  if [ "${RSR_REVIEWS:-0}" -ge 1 ] 2>/dev/null; then protection_enforceable="true"; fi
   local trust; trust="$(J '.trust_unprotected')"
   if [ "$protection_enforceable" != "true" ] && [ "$trust" != "true" ]; then
     echo "PARK: unprotected_branch"; return 0

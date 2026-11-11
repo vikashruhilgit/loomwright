@@ -16,6 +16,7 @@ case "$*" in
   *"--json headRefOid,statusCheckRollup"*|*"--json statusCheckRollup"*)
     [ -f "$d/rollup.json" ] || exit 1; cat "$d/rollup.json"; exit 0 ;;
   *"--json changedFiles,files"*) [ -f "$d/files.json" ] || exit 1; cat "$d/files.json"; exit 0 ;;
+  *"/rules/branches/"*) if [ -f "$d/rulesets.json" ]; then cat "$d/rulesets.json"; else echo '[]'; fi; exit 0 ;;
   *"--paginate"*) [ -f "$d/paginate.txt" ] || exit 1; cat "$d/paginate.txt"; exit 0 ;;
   "api repos/"*"/protection")
     [ -f "$d/prot.err" ] && { cat "$d/prot.err" >&2; exit 1; }

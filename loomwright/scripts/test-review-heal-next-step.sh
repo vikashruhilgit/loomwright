@@ -788,6 +788,29 @@ setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/b
 drv "$DRIVER" --start drain --required-checks all-non-neutral
 [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] \
   && ok "B: --required-checks all-non-neutral proceeds without the metadata" || no "B: all-non-neutral ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+# a ruleset-protected base (issue #874): classic protection 404s, the rules endpoint names the required check ⇒
+# required_mode protected and the drain goes on; a 404 with no ruleset check still escalates, unchanged
+RS_ROW='api --method GET repos/acme/widgets/rules/branches/main*'
+setup_case "$FIX/converged-ready"
+gh_row 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' 1 '{"message":"Branch not protected","status":"404"}'
+printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 0 '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"ci"}]}}]'
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] && grep -q '^wait ' "$C/calls.log" \
+  && ok "B: classic 404 + ruleset requiring ci ⇒ required list read from the ruleset, the drain waits and reads (no escalation)" \
+  || no "B: ruleset-only protection ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+setup_case "$FIX/converged-ready"
+gh_row 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' 1 '{"message":"Branch not protected","status":"404"}'
+printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: classic 404 + no ruleset check ⇒ required_checks_unavailable, unchanged (never 'every check required')" \
+  || no "B: classic 404 + empty rulesets ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+setup_case "$FIX/converged-ready"; gh_row "$RS_ROW" 1
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: classic readable + unreadable ruleset read ⇒ required_checks_unavailable before the wait (fail closed)" \
+  || no "B: unreadable rulesets ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
 # a SETTLED wait line carrying required=unknown still escalates (unless all-non-neutral)
 setup_case "$FIX/converged-ready"
 echo "SETTLED sha=$SHA_A required=unknown review_producing=settled" > "$C/seq/wait.lines"
