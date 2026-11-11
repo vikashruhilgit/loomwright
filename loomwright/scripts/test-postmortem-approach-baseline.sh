@@ -132,7 +132,7 @@ PROG="$(awk '
   $0 == "        '"'"'{" { f = 1; print "{"; next }
   f && /^         }'"'"'/ { print "}"; exit }
   f { print }' "$SKILL")"
-if [ -n "$PROG" ] && printf '%s' "$PROG" | grep -q 'schema_version: 1'; then
+if [ -n "$PROG" ] && grep -q 'schema_version: 1' <<<"$PROG"; then
   ok "extracted the Step 5 jq object literal from the SKILL ($(printf '%s\n' "$PROG" | wc -l | tr -d ' ') lines)"
 else
   no "could not extract the Step 5 jq object literal from the SKILL"
