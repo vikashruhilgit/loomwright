@@ -7,6 +7,12 @@ committed in `b7f241a`; its logic is unchanged at every later commit of this bra
 edit only its comments). Real `gh` (authenticated, read-only
 calls only), real ledger.
 
+**Status in one line:** Validation 3's artifacts are recorded, and its number is a phrase-match guess with
+the limits stated below. Validation 4 is declared PASS, but it carries an open owner decision: AC 15 asks
+for a PR picked from the AC 14 TSV, that TSV has 0 `true` rows, and AC 15's own fallback for that case is
+`Verdict: BLOCKED for Validation 4` plus an owner decision. The run used a hand-picked PR (#440) instead.
+See "Open owner decision" under Validation 4's verdict.
+
 ## Validation 3 — the baseline number over the real ledger
 
 ### Command
@@ -124,6 +130,10 @@ The entry is in the file's one-paragraph form and says no `schema_version` bump 
 `bash loomwright/scripts/test-result-schemas-split.sh` passes (14 passed, 0 failed).
 
 Verdict: PASS for Validation 3
+Scope of this verdict: AC 14 asks for the run, its summary line, the ledger size, the `build-floor.sh`
+re-grep and the schema-doc grep, and all of them are recorded above. The PASS does not claim the measured
+rate. The script's guess is 0 of 423. The hand-corrected figure is at most 1 fixed round in 192 PRs. Which
+of the two story `02` cites is for the owner to decide.
 
 ## Validation 4 — the flag on a real postmortem
 
@@ -133,7 +143,10 @@ The AC 14 TSV holds no `true` row, so the candidate could not be picked from it.
 found one fixed review round with an approach challenge in it: PR #440
 (https://github.com/vikashruhilgit/loomwright/pull/440, merged). The CI review's finding 3 says `pty_feed`
 "reimplements the exact anti-pattern this same PR's `wait-lib.sh` exists to eliminate", and a later round fixed
-it by switching to `wait_for_cmd`. That was the best candidate available, so the run used it.
+it by switching to `wait_for_cmd`. That was the best candidate available, so the run used it. This
+departs from AC 15. AC 15 says to pick the PR from the AC 14 TSV, and where no such PR can be identified
+its own fallback is `Verdict: BLOCKED for Validation 4` plus an owner decision. Whether this substitution
+satisfies AC 15 is raised as an open owner decision under the verdict below.
 
 ### Run 1 — before the mixed-round rule (superseded)
 
@@ -234,7 +247,8 @@ there; that was not done).
 AC 15 asks for a per-round line carrying `approach_challenged=true`, an appended line with
 `approach_challenges: 1`, and a reader line `1 of …`. Run 3 produced all three on PR #440: the round 4 line
 above, `approach_challenges: 1`, and `- approach-challenged rounds: 1 of 6 prior rounds`. N is 1, as AC 15
-expects.
+expects. These three outputs hold only on a PR chosen outside AC 15's pick rule (see "PR choice" and the
+open owner decision below the verdict).
 
 Honest limits:
 
@@ -250,3 +264,4 @@ Honest limits:
   item.
 
 Verdict: PASS for Validation 4 — under the stated mixed-round rule and the Step 4 line format, PR #440's report printed `round 4: class=execution_bug  self_heal_miss=true   approach_challenged=true …`, the appended line carries `approach_challenges: 1`, and the reader printed `1 of 6 prior rounds`
+Open owner decision: does this substitution satisfy AC 15? PR #440 was hand-picked from a wider read-only scan of full review text, outside the AC 14 TSV, which had 0 `true` rows. AC 15's literal fallback for that case is `Verdict: BLOCKED for Validation 4`. The mixed-round rule that flags round 4 was added to the SKILL after Run 1 on this PR returned `false`, and Run 3's own report calls the flag "a judgment call". If the owner rules that it does not, the verdict above should read `Verdict: BLOCKED for Validation 4`, and the PR is not merge-ready until the owner decides.
