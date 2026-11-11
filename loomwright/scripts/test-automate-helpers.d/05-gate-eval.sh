@@ -253,6 +253,63 @@ else
 fi
 reset_live
 
+# --- Condition 4/5 — rulesets (issue #874). Classic protection and repository rulesets are separate
+# GitHub stores: a ruleset-only base answers the classic endpoint 404, so the gate also reads
+# rules/branches/<base>. A ruleset requiring a check or an approving review is enforceable, its
+# checks join cond 5's list (unioned with classic), and an unreadable ruleset read parks. ---
+RS_CI='[{"type":"deletion"},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"ci","integration_id":15368}]}}]'
+RS_E2E='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"e2e"}]}}]'
+RS_REVIEW='[{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":false}}]'
+RS_TOOTHLESS='[{"type":"deletion"},{"type":"non_fast_forward"}]'
+touch "$GH_STUB_DIR/protection-404"; printf '%s\n' "$RS_CI" > "$GH_STUB_DIR/rulesets.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && grep -q '/rules/branches/main?per_page=100' "$GH_STUB_DIR/rulesets.log" 2>/dev/null; then
+  ok "gate: classic 404 + ruleset requiring a green check ⇒ enforceable, MERGE (rules/branches/<live base> read)"
+else
+  no "gate ruleset-only protection wrong (out='$RUN_OUT' merges=$(merges) log='$(cat "$GH_STUB_DIR/rulesets.log" 2>/dev/null)')"
+fi
+reset_live
+touch "$GH_STUB_DIR/protection-404"; printf '%s\n' "$RS_E2E" > "$GH_STUB_DIR/rulesets.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: a ruleset-required check absent from the rollup ⇒ PARK: checks_not_green (its list feeds cond 5)"
+else
+  no "gate ruleset required-check wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+printf '%s\n' "$RS_E2E" > "$GH_STUB_DIR/rulesets.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: classic [ci] ∪ ruleset [e2e] — e2e missing ⇒ PARK: checks_not_green (the union is required)"
+else
+  no "gate classic+ruleset union wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/protection-404"; printf '%s\n' "$RS_REVIEW" > "$GH_STUB_DIR/rulesets.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: classic 404 + ruleset requiring 1 approving review ⇒ enforceable, MERGE"
+else
+  no "gate ruleset review-only wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/protection-404"; printf '%s\n' "$RS_TOOTHLESS" > "$GH_STUB_DIR/rulesets.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: classic 404 + a ruleset with no check/review rule ⇒ PARK: unprotected_branch"
+else
+  no "gate toothless ruleset wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/rulesets-fail"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: protection_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: an unreadable ruleset read ⇒ PARK: protection_unreadable, even with --trust-unprotected"
+else
+  no "gate ruleset-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
 # --- Condition 4 — how a FAILED protection read is classified. GitHub's paid-plan 403 (a private
 # repo on GitHub Free cannot have branch protection) reads as not enforceable, so only
 # --trust-unprotected lets it merge; a 404 is matched by gh's `(HTTP 404)` status token, never a
@@ -426,7 +483,7 @@ else
 fi
 git -C "$E_ROOT" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null 2>&1
 reset_live
-NORBB="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$NORBB/"
+NORBB="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$GWD/required-checks-rulesets.sh" "$GWD/protection-paid-plan.sh" "$NORBB/"
 printf '%s' "$(pass_ctx)" > "$WD/ctx.json"; rm -f "$GH_STUB_DIR/merge.log"
 RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" GIT_CEILING_DIRECTORIES="$WD" bash "$NORBB/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$E_ROOT" 2>/dev/null )"
 if [ "$RUN_OUT" = "PARK: base_branch_unresolved" ] && [ "$(merges)" -eq 0 ]; then

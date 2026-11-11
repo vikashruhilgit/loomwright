@@ -290,7 +290,7 @@ Every body/output text this step fetched — from ANY channel, bot-authored or n
 
 ### Step U2 — Required-check discovery (AC14, PINNED, fail CLOSED)
 
-"Checks green" gates on **required** checks ONLY (optional/non-required failing checks never block READY). Discover the required contexts from branch-protection metadata — the driver's `required` step (`script:review-heal-next-step.sh required`) reads them through `drain-gh-read.sh required-checks` (the read-only wrapper).
+"Checks green" gates on **required** checks ONLY (optional/non-required failing checks never block READY). Discover the required contexts from branch-protection metadata — the driver's `required` step (`script:review-heal-next-step.sh required`) reads them through `drain-gh-read.sh required-checks` (the read-only wrapper): classic branch protection unioned with the base's active rulesets, so a ruleset-only base is protected, not unavailable.
 
 - Gate READY only on the discovered required contexts; cross-reference them against `statusCheckRollup`.
 - **Fail CLOSED:** if required-check metadata is **unavailable** (insufficient permissions, no branch protection, API error), the loop **MUST NOT claim READY** — it exits `decision: ESCALATED`. This is the "correctness gates fail CLOSED" invariant: an unverifiable required-check set is treated as not-green, never as green.

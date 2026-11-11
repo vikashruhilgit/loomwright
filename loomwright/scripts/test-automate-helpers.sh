@@ -271,6 +271,8 @@ make_stub_bin() {
 #                                                     refused (MERGE_REFUSED, exit 1), and a merge
 #                                                     WITHOUT the flag goes through regardless
 #   api graphql -f query=...                       -> cat graphql.json (or exit 1 if graphql-fail marker)
+#   api --method GET repos/.../rules/branches/<b>?… -> cat rulesets.json (default `[]`), logged to rulesets.log;
+#                                                      a rulesets-fail marker exits 1 with an HTTP 500
 #   api repos/.../branches/main/protection          -> cat protection.json; protection-404 marker exits 1
 #                                                      with "Not Found (HTTP 404)"; protection-fail
 #                                                      marker exits 1 with an unrelated (non-404) error;
@@ -313,6 +315,12 @@ fi
 if [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ]; then
   if [ -f "$GH_STUB_DIR/graphql-fail" ]; then exit 1; fi
   cat "$GH_STUB_DIR/graphql.json"
+  exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "--method" ] && case "${4:-}" in */rules/branches/*) true ;; *) false ;; esac; then
+  echo "${4:-}" >> "$GH_STUB_DIR/rulesets.log"
+  if [ -f "$GH_STUB_DIR/rulesets-fail" ]; then echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; fi
+  if [ -f "$GH_STUB_DIR/rulesets.json" ]; then cat "$GH_STUB_DIR/rulesets.json"; else echo '[]'; fi
   exit 0
 fi
 if [ "${1:-}" = "api" ]; then
