@@ -1,6 +1,7 @@
 # Bundle — next-step/review-heal drivers and gate tooling defects (dismissed-followups 04a + 04b)
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/880
 
 > Owner decision 2026-10-30: `dismissed-followups/04a-next-step-and-review-heal-driver-defects.md`, `dismissed-followups/04b-gate-tooling-defects.md` merged into ONE item / ONE PR to share the fixed per-item pipeline cost
 > (`proposed/bundle-small-items-per-lane.md`: ~35M tokens per item regardless of diff size). Each source is kept below as a Part,
@@ -466,3 +467,9 @@ changelog.d/dismissed-followups-04b-gate-tooling-defects.md
 - `automate-2026-10-15-163325-L25--18-lock-the-gains-cbc1c4--dismissed-summary.md`
 - `automate-2026-10-15-163325-L4--17-prompt-size-ratchet-94542a--dismissed-summary.md`
 - `automate-2026-10-26-193127--01-module-layout-standard-091a74--dismissed-summary.md`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-11T10:32:39Z
+- **Brief:** .supervisor/jobs/done/2026-11-11-bundle-04ab-drivers-and-gate-tooling.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/880
