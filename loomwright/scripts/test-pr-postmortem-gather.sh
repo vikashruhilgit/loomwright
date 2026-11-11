@@ -979,7 +979,7 @@ fi
 
 echo "== 13. first commit is never a review-fix => commits[0] false, adds no round; a later match still counts =="
 # Single-commit PR: "feat: self-heal sweep" matches review_fix_re, but it is the commit
-# that OPENED the PR — no review can precede it. Pre-fix this read is_review_fix:true
+# that OPENED the PR (the oldest commit on the current head). Pre-fix this read is_review_fix:true
 # and review_rounds 1 (source fix_commits): the PR #43 phantom round. It must read
 # false and contribute nothing (no reviews, no comments => review_rounds 0, source
 # none). agent_generated_guess stays true: agent_commit_re still sees "self-heal".

@@ -885,7 +885,7 @@ setup_case "$FIX/fallback-no-review-lens"
   printf '%s\n' '{"verdict":"unresolved","selected":["R1"],"countable":["R1"],"advisory":[],"passed":[],"failing":[],"unresolved":["R1"],"checks_passed":null}'; } > "$C/seq/rules.lines"
 drv "$DRIVER" --start drain
 drv "$DRIVER" --result "{\"pushed\":true,\"pushed_sha\":\"$SHA_B\",\"self_review\":\"self_review: ordering, run-once guards — clean\"}"
-[ "$(printf '%s' "$OUT" | jq -r '.message')" = rules_gate_unresolved ] && grep -qx '  remaining_issues: 1' < <(b_block) \
+[ "$(printf '%s' "$OUT" | jq -r '.do')" = done ] && grep -qx '  rules_gate: unresolved' < <(b_block) && grep -qx '  remaining_issues: 1' < <(b_block) \
   && ok "B: rules gate unresolved after two remembered failures ⇒ remaining_issues counts the unresolved rule only" \
   || no "B: unresolved remaining_issues ⇒ $(printf '%s' "$OUT" | jq -c '{do, message}' 2>/dev/null) $(b_block | grep remaining_issues)"
 # the confirming pass reads an off-list verdict ⇒ stored and reported as `unreadable`, never the raw string

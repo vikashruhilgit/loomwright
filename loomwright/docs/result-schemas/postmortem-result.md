@@ -45,8 +45,8 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 - `number` — integer PR number (from gather).
 - `agent_generated_guess` — boolean; best-effort agent-PR heuristic (from gather).
 - `review_rounds` — integer; total review-and-fix rounds (from gather). The gather derives it as the
-  MAX of three signals: review-fix commit headlines (never the PR's first commit — no review can precede
-  it), formal churn-review submissions, and
+  MAX of three signals: review-fix commit headlines (never the oldest commit on the current head — normally the
+  one that opened the PR; after a force-push or squash it can postdate a review, a bounded miss), formal churn-review submissions, and
   **bot-authored issue-comment review rounds** (a comment from a review-bot author — login `claude`,
   `github-actions*`, or any `*[bot]` — whose body
   carries a review marker — a word-bounded review stem ("review"/"reviewed"/"reviewer"/"reviewing"/"reviews") or

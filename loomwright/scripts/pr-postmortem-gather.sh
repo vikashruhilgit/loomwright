@@ -86,8 +86,11 @@
 #     optional "code" is the same spirit — the literal word "review" stays
 #     mandatory, so "findings" ALONE still never matches (test-pinned).
 #     The PR's first commit is never a review-fix: commits[0].is_review_fix is
-#     ALWAYS false, whatever its subject says, because no review can precede the
-#     commit that opened the PR — there was nothing yet to fix. Without this, a
+#     ALWAYS false, whatever its subject says: commits[0] is the oldest commit on
+#     the current head, normally the one that opened the PR, before which there was
+#     nothing yet to fix. Honest limit: after a force-push or squash that commit can
+#     postdate a review, so its round is missed (bounded — review_rounds is a MAX of
+#     three signals). Without this, a
 #     feature commit whose subject merely mentions a matching phrase ("feat:
 #     self-heal sweep") booked a phantom review round (churn-ledger PR #43 round 1,
 #     a "counting artifact" the classifier then filed as flow_stage unknowable).
@@ -353,7 +356,7 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   | (.body // "")               as $body
   | ([ .commits[]? | (.messageHeadline // (.message // "" | split("\n")[0]) // "") ]) as $headlines
   # The first commit is never a review-fix (header doc): index 0 is pinned false,
-  # because no review can precede the commit that opened the PR.
+  # because the oldest commit on the current head normally opened the PR (force-push limit: header).
   | ([ $headlines | to_entries[]
         | { headline: .value,
             is_review_fix: ((.key > 0) and (.value | test(review_fix_re; "i"))) } ]) as $commits

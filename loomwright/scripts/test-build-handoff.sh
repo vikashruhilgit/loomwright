@@ -633,6 +633,19 @@ for v in _RUN_TITLE_BOM RUN_TITLE_ERE; do
     no "(r) $v drifted between automate-helpers.sh ('$a') and build-handoff.sh ('$b')"
   fi
 done
+# A `/` in the shared ERE must not break the title reader: a scratch copy whose RUN_TITLE_ERE carries
+# an empty-matching `(/){0}` still renders the title, never the basename fallback.
+MUTR="$(mktmp)"; cp "$HERE/resolve-loomwright-root.sh" "$MUTR/resolve-loomwright-root.sh"
+sed 's|^RUN_TITLE_ERE="^(${_RUN_TITLE_BOM})?|RUN_TITLE_ERE="^(${_RUN_TITLE_BOM})?(/){0}|' "$BUILD" > "$MUTR/build-handoff.sh"
+if [ -s "$MUTR/build-handoff.sh" ] && ! cmp -s "$BUILD" "$MUTR/build-handoff.sh" && bash -n "$MUTR/build-handoff.sh" 2>/dev/null \
+   && grep -q '^RUN_TITLE_ERE=.*(/){0}' "$MUTR/build-handoff.sh"; then
+  run_build "$RR" "$MUTR/build-handoff.sh" >/dev/null 2>&1
+  grep -qxF "### Tolerant Title R" "$DIGR" 2>/dev/null \
+    && ok "(r) a '/' in RUN_TITLE_ERE still reads the title (the s command's delimiter is not '/')" \
+    || no "(r) a '/' in RUN_TITLE_ERE broke the title reader; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+else
+  no "(r) slash-in-ERE scratch copy not gated (empty, identical, bash -n failed, or no '/' planted)"
+fi
 
 # ============================================================================
 echo "== (s) AUTOMATE listing indexes only run files: result sidecars are skipped =="

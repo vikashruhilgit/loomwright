@@ -597,6 +597,13 @@ for res_case in \
     && ok "$res_name after the first park ⇒ window to the later parked line (11110) + work_after_park; phase <= item" \
     || no "$res_name after park: row=$(pi_row '| **q.md** |') err=$PI_ERR"
 done
+# the engine's real primary-run line carries more after the id: `(session <uuid>, plugin …, branch mode …)`
+res_cc='- 2026-10-15T00:59:00Z run created (session cccccccc-0000-4000-8000-00000000000a, plugin 15.124.0, branch mode off)\n'
+printf "# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n${res_cc}- 2026-10-15T01:00:00Z picked q.md\n- 2026-10-15T01:08:00Z ran /autonomous → PR https://github.com/a/b/pull/1\n- 2026-10-15T01:10:00Z parked escalated — resume to re-run\n- 2026-10-15T02:00:00Z picked q.md (resume)\n- 2026-10-15T03:50:00Z parked awaiting_merge\n" > "$PI/res/run.md"
+pi_run "$SUT" --per-item "$PI/res/run.md" --root "$PI/res" --projects-dir "$PI/res/proj"
+[ "$(pi_row '| **q.md** |')" = "$res_want" ] \
+  && ok "a real 'run created (session <uuid>, plugin …)' line resolves the engine session (its transcript is read)" \
+  || no "real run-created line: row=$(pi_row '| **q.md** |') err=$PI_ERR"
 
 echo "== FP. fresh phases (automate-speed/09): the driver's three phase session_id lines — --run-id sums one ledger per phase, --per-item resolves all three ids =="
 # The run file is WRITTEN BY automate-next-step.sh (its plan-result / run-record / drain-result steps, each run
