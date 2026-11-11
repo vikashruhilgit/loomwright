@@ -96,6 +96,9 @@ _BL_RE_PROPOSED='^## Status:[[:space:]]*proposed([^A-Za-z0-9_-]|$)'
 _BL_RE_SHIPPED='^## Status:[[:space:]]*brief-shipped([^A-Za-z0-9_-]|$)'
 
 _bl_fail() { echo "$1: $2" >&2; exit 1; }
+# release backlog-stamp's item lock: ownership (_BL_LK, read by its exit trap) is dropped BEFORE the
+# file goes, so the trap can never remove a lock another stamp took after this release
+_bl_unlock() { _BL_LK=""; rm -f "$1"; }
 
 # _bl_clean <text> — sets BL_C: one line, tabs and separator bytes as spaces (a field never splits).
 _bl_clean() {
@@ -746,15 +749,16 @@ backlog_stamp() {
     sleep 0.1
   done
   # the lock is ours from here: an exit or a kill before the release below removes it (only ours —
-  # _BL_LK is set after the O_EXCL create succeeded and cleared once released)
+  # _BL_LK is set after the O_EXCL create succeeded, and every release goes through _bl_unlock,
+  # which clears it before the file is removed)
   _BL_LK="$lk"
   trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"' EXIT
   trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"; trap - EXIT; exit 130' INT
   trap '[ -z "${_BL_LK:-}" ] || rm -f "$_BL_LK"; trap - EXIT; exit 143' TERM
-  if is_done "$f"; then rm -f "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
-  tmp="$(mktemp "$f.XXXXXX")" || { rm -f "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
+  if is_done "$f"; then _bl_unlock "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
+  tmp="$(mktemp "$f.XXXXXX")" || { _bl_unlock "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
   if cp -p "$f" "$tmp" && printf '%s\n' "$block" >> "$tmp" && mv -f "$tmp" "$f"; then
-    rm -f "$lk"; _BL_LK=""
+    _bl_unlock "$lk"
     case "$mode" in
       kept-open) printf 'backlog-stamp: stamped %s — Kept open %s, supersedes %s\n' "$rel" "$date" "$sup" ;;
       abandoned) printf 'backlog-stamp: stamped %s — done_with_escalation %s ABANDONED\n' "$rel" "$em" ;;
@@ -762,6 +766,6 @@ backlog_stamp() {
     esac
     return 0
   fi
-  rm -f "$tmp" "$lk"
+  rm -f "$tmp"; _bl_unlock "$lk"
   _bl_fail backlog-stamp "write failed for $rel (the item is unchanged)"
 }
