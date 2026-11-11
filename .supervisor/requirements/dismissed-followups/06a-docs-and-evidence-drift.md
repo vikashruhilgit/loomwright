@@ -243,3 +243,9 @@ scripts/bump-version.sh
 - `automate-2026-10-22-123646-L8--39f-janitor-command-fd1e55--dismissed-summary.md`
 - `automate-2026-10-22-123646-L9--25-backlog-board-feeds-b22457--dismissed-summary.md`
 - `automate-2026-10-26-193127--01-module-layout-standard-091a74--dismissed-summary.md`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-11T11:42:43Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/873
