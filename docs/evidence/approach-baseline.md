@@ -8,10 +8,10 @@ edit only its comments). Real `gh` (authenticated, read-only
 calls only), real ledger.
 
 **Status in one line:** Validation 3's artifacts are recorded, and its number is a phrase-match guess with
-the limits stated below. Validation 4 is declared PASS, but it carries an open owner decision: AC 15 asks
-for a PR picked from the AC 14 TSV, that TSV has 0 `true` rows, and AC 15's own fallback for that case is
-`Verdict: BLOCKED for Validation 4` plus an owner decision. The run used a hand-picked PR (#440) instead.
-See "Open owner decision" under Validation 4's verdict.
+the limits stated below. Validation 4 is PASS by owner decision: AC 15 asks for a PR picked from the AC 14
+TSV, that TSV has 0 `true` rows, and the run used a hand-picked PR (#440) instead. The owner accepted the
+substitution on 2026-11-12 as proof the flag works end to end, not as proof it classifies well. See "Owner
+decision" under Validation 4's verdict.
 
 ## Validation 3 — the baseline number over the real ledger
 
@@ -146,7 +146,7 @@ found one fixed review round with an approach challenge in it: PR #440
 it by switching to `wait_for_cmd`. That was the best candidate available, so the run used it. This
 departs from AC 15. AC 15 says to pick the PR from the AC 14 TSV, and where no such PR can be identified
 its own fallback is `Verdict: BLOCKED for Validation 4` plus an owner decision. Whether this substitution
-satisfies AC 15 is raised as an open owner decision under the verdict below.
+satisfies AC 15 was put to the owner, whose decision is recorded under the verdict below.
 
 ### Run 1 — before the mixed-round rule (superseded)
 
@@ -248,7 +248,7 @@ AC 15 asks for a per-round line carrying `approach_challenged=true`, an appended
 `approach_challenges: 1`, and a reader line `1 of …`. Run 3 produced all three on PR #440: the round 4 line
 above, `approach_challenges: 1`, and `- approach-challenged rounds: 1 of 6 prior rounds`. N is 1, as AC 15
 expects. These three outputs hold only on a PR chosen outside AC 15's pick rule (see "PR choice" and the
-open owner decision below the verdict).
+owner decision below the verdict).
 
 Honest limits:
 
@@ -264,4 +264,5 @@ Honest limits:
   item.
 
 Verdict: PASS for Validation 4 — under the stated mixed-round rule and the Step 4 line format, PR #440's report printed `round 4: class=execution_bug  self_heal_miss=true   approach_challenged=true …`, the appended line carries `approach_challenges: 1`, and the reader printed `1 of 6 prior rounds`
-Open owner decision: does this substitution satisfy AC 15? PR #440 was hand-picked from a wider read-only scan of full review text, outside the AC 14 TSV, which had 0 `true` rows. AC 15's literal fallback for that case is `Verdict: BLOCKED for Validation 4`. The mixed-round rule that flags round 4 was added to the SKILL after Run 1 on this PR returned `false`, and Run 3's own report calls the flag "a judgment call". If the owner rules that it does not, the verdict above should read `Verdict: BLOCKED for Validation 4`, and the PR is not merge-ready until the owner decides.
+Owner decision (2026-11-12): the substitution satisfies AC 15. PR #440 was hand-picked from a wider read-only scan of full review text, outside the AC 14 TSV, which had 0 `true` rows; AC 15's literal fallback for that case was `Verdict: BLOCKED for Validation 4`, and the owner accepted #440 instead.
+Scope of this verdict: it proves the mechanism end to end — the SKILL records the per-round flag, the ledger line carries the counter, and the reader prints the tally. It does NOT prove the flag classifies rounds well: the mixed-round rule that flags round 4 was added to the SKILL after Run 1 on this same PR returned `false`, and Run 3's own report calls the flag "a judgment call". Story `02` must not treat `approach_challenged` as a calibrated signal on this evidence; accuracy needs rounds recorded after this ships.
