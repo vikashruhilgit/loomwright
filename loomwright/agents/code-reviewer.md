@@ -345,9 +345,9 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 | All quality-checklist criteria met | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS); if `beads_active`: comment on BD + unblock next task |
 | HIGH/BLOCKING issues with category `new` — or category `drift` with an uncapped kind (`version_authoritative` / `mirrored_prompt` / `workflow`, consistency-audit mode) | **FAIL** | Emit CODE_REVIEW_RESULT (decision: FAIL); if `beads_active`: comment on BD + block task |
 | Only MEDIUM/LOW issues (any category) | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS) with all issues reported; if `beads_active`: comment on BD + unblock next task. MEDIUM/LOW never gates — consistent with the FAIL row above |
-| Genuine design ambiguity / architectural disagreement the reviewer cannot adjudicate | **NEEDS_HUMAN** | Emit CODE_REVIEW_RESULT (decision: NEEDS_HUMAN) naming the specific decision needed; if `beads_active`: create bug issues that block the BD review. Reserve for true judgment calls — NOT for ordinary MEDIUM/LOW findings (callers like `/review-pr` map NEEDS_HUMAN to ESCALATED) |
+| Genuine design ambiguity / architectural disagreement the reviewer cannot adjudicate | **NEEDS_HUMAN** | Emit CODE_REVIEW_RESULT (decision: NEEDS_HUMAN) naming the specific decision needed, and set `needs_human: true` on exactly the issue(s) that ARE that decision — leave every other issue unmarked, at its ordinary severity, so Phase 4.5 still fixes it before escalating; if `beads_active`: create bug issues that block the BD review. Reserve for true judgment calls — NOT for ordinary MEDIUM/LOW findings (callers like `/review-pr` map NEEDS_HUMAN to ESCALATED) |
 | Tests broken by this diff, or coverage regression introduced by this diff | **FAIL** | Must add/update tests. Pre-existing test failures are reported as `pre_existing` and do not block |
-| Environment prevents a normal review (diff unreadable, git/bash/LSP failure, permissions error) | **NEEDS_HUMAN** | Follow §"Environment-Blocked Reviews (failure path)": read ≥2 files so `files_checked[]` is non-empty, report the blocker as a BLOCKING `new` issue with `file: environment`, summary states the review was environment-blocked |
+| Environment prevents a normal review (diff unreadable, git/bash/LSP failure, permissions error) | **NEEDS_HUMAN** | Follow §"Environment-Blocked Reviews (failure path)": read ≥2 files so `files_checked[]` is non-empty, report the blocker as a BLOCKING `new` issue with `file: environment` and `needs_human: true`, summary states the review was environment-blocked |
 | New pattern detected, worth documenting | Include in result + comment | Propose to CLAUDE.md via `pattern_proposals` field (and Beads comment when active) |
 
 ### Comment Template
@@ -377,7 +377,7 @@ When `beads_active`, the review-task comment is the human-readable summary liste
 
 Always emit a CODE_REVIEW_RESULT block (machine-readable, schema v3) — this is the canonical output regardless of Beads state. See `docs/RESULT_SCHEMAS.md#code_review_result` for the full field list.
 
-**Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`. Each `house_rule_verdicts` entry (step 5c) uses exactly `id`, `verdict`, `reason`; each `cannot_determine` entry exactly `item`, `reason`.
+**Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional), `needs_human` (optional — `true` only under `NEEDS_HUMAN`, on the issue a human must rule on). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`. Each `house_rule_verdicts` entry (step 5c) uses exactly `id`, `verdict`, `reason`; each `cannot_determine` entry exactly `item`, `reason`.
 
 ### Environment-Blocked Reviews (failure path)
 
@@ -386,7 +386,7 @@ The reviewer MUST emit a valid `CODE_REVIEW_RESULT` v3 block even when the envir
 Rules for blocked runs:
 
 1. **Read at least two files first.** Before emitting the block, read (a) `CLAUDE.md` (or the closest project-level CLAUDE.md you can access) and (b) the requested review target (or its directory). This guarantees `files_checked[]` is non-empty and the block is schema-valid.
-2. **Use schema fields only.** Report the blocking condition as an issue with `severity: BLOCKING`, `category: new`, `file: environment`, `description: <what failed>`, `suggestion: <what the user should fix>`. Do not invent `title` / `details` / `rationale` — the hook will reject them.
+2. **Use schema fields only.** Report the blocking condition as an issue with `severity: BLOCKING`, `category: new`, `file: environment`, `description: <what failed>`, `suggestion: <what the user should fix>`, `needs_human: true`. Do not invent `title` / `details` / `rationale` — the hook will reject them.
 3. **Decision:** `NEEDS_HUMAN` (the environment needs human intervention, not a code fix).
 4. **Mode:** `review_mode: diff_review` with `audit_focus: []`, `trigger_paths_detected: []`, `scope_expanded: []` unless the trigger rule clearly applied before the block hit.
 5. **Summary:** One sentence explicitly stating the review was environment-blocked, e.g. `"Review blocked by environment error before diff inspection."` — so downstream automation can distinguish a blocked run from a normal PASS/FAIL.
@@ -410,6 +410,7 @@ CODE_REVIEW_RESULT:
       file: environment
       description: Unable to access git diff because shell commands failed with EPERM on ~/.claude/session-env.
       suggestion: Fix local Claude/session permissions or provide the diff directly, then rerun the review.
+      needs_human: true
   summary: Review blocked by environment error before diff inspection.
 ```
 

@@ -851,7 +851,7 @@ See `docs/FAILURE_ESCALATION.md` for full paths.
 | Worker | 1 | Execute Manager → Supervisor |
 | Execute Manager | 1 (fresh spawn) | Supervisor → Human |
 | Code Reviewer (FAIL) | 3 | Supervisor → Human |
-| Code Reviewer (NEEDS_HUMAN) | 0 | Supervisor → Human (3x = halt) |
+| Code Reviewer (NEEDS_HUMAN) | 0; 1 fix round first when other at-floor findings sit beside the `needs_human` issue(s) | Supervisor → Human (3x = halt) |
 | QA Executor | 0 | Partial result (non-blocking) |
 | Supervisor | 0 | Human (checkpoint + exit) |
 | Context-Keeper | 1 | Degraded mode |

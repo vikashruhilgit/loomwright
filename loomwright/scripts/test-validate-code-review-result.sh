@@ -302,6 +302,18 @@ run_v "$F"; assert_block "(k) a HIGH pre_existing issue cannot carry FAIL" "(v3 
 sub lempty.md v3-diff.md 's.replace("decision: PASS", "decision: NEEDS_HUMAN").split("  issues:")[0] + "  issues: []\n  summary: \"x\"\n```\n"'
 run_v "$F"; assert_block "(l) NEEDS_HUMAN with empty issues" "(v3 rule l)"
 
+echo "== F2. v3 per-issue needs_human (o) — heal-escalation/01 =="
+sub nhok.md v3-diff.md 's.replace("decision: PASS", "decision: NEEDS_HUMAN").replace("isinstance\"\n", "isinstance\"\n      needs_human: true\n")'
+run_v "$F"; assert_pass "(o) NEEDS_HUMAN with the human issue marked needs_human: true"
+sub nhlegacy.md v3-diff.md 's.replace("decision: PASS", "decision: NEEDS_HUMAN")'
+run_v "$F"; assert_pass "(o) legacy NEEDS_HUMAN with NO marked issue stays valid (read as all-human)"
+sub nhfalse.md v3-diff.md 's.replace("isinstance\"\n", "isinstance\"\n      needs_human: false\n")'
+run_v "$F"; assert_pass "(o) needs_human: false is allowed under any decision"
+sub nhpass.md v3-diff.md 's.replace("isinstance\"\n", "isinstance\"\n      needs_human: true\n")'
+run_v "$F"; assert_block "(o) needs_human: true under PASS is rejected" "has needs_human: true but decision=PASS"
+sub nhstr.md v3-diff.md 's.replace("decision: PASS", "decision: NEEDS_HUMAN").replace("isinstance\"\n", "isinstance\"\n      needs_human: yes\n")'
+run_v "$F"; assert_block "(o) a non-boolean needs_human is rejected" "needs_human must be true or false"
+
 echo "== G. import-time fail-safe (R3) =="
 mk probe.md <<'EOF'
 No result block here, so a WORKING validator blocks.

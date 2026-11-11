@@ -273,6 +273,23 @@ else no "pre-existing no-finding draft not retired: $dd_out"; fi
   && ok "the retire pass keeps the summary line last" || no "retire-pass counts: $(printf '%s\n' "$dd_out" | tail -n1)"
 
 # =============================================================================
+echo "== A3e. escalated_unfixed (heal-escalation/01): the #876 shape reaches the owner =="
+# PR #876: Phase 4.5 escalated on one needs_human HIGH with two at-floor MEDIUMs beside it. Before
+# heal-escalation/01 they were only a count (heal_remaining_issues: 3) and the park said "nothing to
+# decide". Phase 4.5 now itemises each as reason escalated_unfixed; each must become its OWN undecided
+# draft, the human item keeping its "needs your ruling: " label verbatim.
+fx 3e
+sup 0 '[{finding: "needs your ruling: gate-configuration lens fires on a comment-only guard-*.sh hunk", reason: escalated_unfixed, source: code_reviewer, severity: HIGH}, {finding: "HOST_EFFECT dropped the every-other-write clause", reason: escalated_unfixed, source: code_reviewer, severity: MEDIUM}, {finding: "pr-postmortem SKILL.md line 13 still says bucket each round", reason: escalated_unfixed, source: code_reviewer, severity: MEDIUM}]'
+drafts
+[ "$dd_rc" -eq 0 ] && [ "$(nfiles)" = "3" ] \
+  && [ "$(printf '%s\n' "$dd_out" | tail -n1)" = "dismissed-drafts: 3 per-finding + 0 summary (0 listed in summary)" ] \
+  && ok "3 escalated_unfixed items ⇒ 3 own drafts, no summary" || no "escalated_unfixed drafts: rc=$dd_rc files=$(nfiles) out=$dd_out"
+[ "$(bash "$H" dismissed-pending "$RF")" = 3 ] && ok "dismissed-pending counts all 3 (the park asks, never 'nothing to decide')" || no "pending: $(bash "$H" dismissed-pending "$RF")"
+EH="$(draft_with 'needs your ruling: gate-configuration lens fires on a comment-only guard-*.sh hunk')"
+[ -n "$EH" ] && grep -qxF -- "- **Reason dismissed:** escalated_unfixed" "$EH" && grep -qxF -- "- **Severity:** HIGH" "$EH" && grep -qxF -- "- **Decision:** undecided" "$EH" \
+  && ok "the human item's draft keeps its 'needs your ruling: ' label, reason escalated_unfixed, HIGH, undecided" || no "human draft: ${EH:-none}"
+
+# =============================================================================
 echo "== A4. canary: finding text is data, never executed =="
 fx 4
 CAN="$TOP/canary"

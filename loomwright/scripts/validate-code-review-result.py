@@ -51,7 +51,11 @@ prompt gave a verbatim reason string, it is reused verbatim.
       non-empty reason that is more than a bare runtime label
       (BARE_RUNTIME_REASONS). The reviewer's admission rule says the reason
       names what would have to run to decide the item; this rule can reject
-      only the empty and the label-only reason, not judge a real one.
+      only the empty and the label-only reason, not judge a real one;
+      (o) OPTIONAL per-issue needs_human (heal-escalation/01) — absent is
+      valid; present ⇒ a boolean, and `true` only under decision=NEEDS_HUMAN.
+      A NEEDS_HUMAN block with NO marked issue stays valid (an older emitter):
+      Phase 4.5 reads it as "every issue needs a human", today's behaviour.
 
 (B) is enforced as present AND non-empty — an empty summary carries nothing a
 caller can act on, and every sibling validator reads "present" that way.
@@ -87,6 +91,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from result_block_parser import (  # noqa: E402
+        as_bool,
         as_int,
         as_text,
         emit,
@@ -131,7 +136,10 @@ CONSISTENCY_KEYS = (
     "mirrored_prompts", "version_strings", "counts", "workflow_alignment", "hooks_parity",
 )
 CONSISTENCY_VALUES = ("pass", "fail", "not_applicable")
-ISSUE_KEYS = ("severity", "category", "drift_kind", "file", "line", "description", "suggestion")
+ISSUE_KEYS = (
+    "severity", "category", "drift_kind", "file", "line", "description", "suggestion",
+    "needs_human",
+)
 ISSUE_REQUIRED = ("severity", "file", "description", "category")
 DRIFT_KINDS = (
     "version_authoritative", "version_secondary", "mirrored_prompt", "count",
@@ -311,8 +319,27 @@ def _check_v3(fields, decision):
         emit(False, "decision=FAIL requires at least one issue with category new or drift "
                     "and severity BLOCKING or HIGH (v3 rule k)")
 
+    _check_needs_human(issues, decision)
     _check_house_rule_verdicts(fields)
     _check_cannot_determine(fields)
+
+
+def _check_needs_human(issues, decision):
+    """(o) OPTIONAL per-issue needs_human. Absent ⇒ allowed. Present ⇒ a boolean;
+    `true` only under decision=NEEDS_HUMAN. Never REQUIRED: an unmarked
+    NEEDS_HUMAN block is the legacy shape and Phase 4.5 reads it as all-human."""
+    for index, issue in enumerate(issues):
+        if "needs_human" not in issue:
+            continue
+        raw = issue.get("needs_human")
+        val, bad = as_bool(raw)
+        if bad is not None:
+            emit(False, "issue[%d] needs_human must be true or false; got %r (v3 rule o)"
+                 % (index, as_text(raw)))
+        if val and decision != "NEEDS_HUMAN":
+            emit(False, "issue[%d] has needs_human: true but decision=%s; only a "
+                        "NEEDS_HUMAN review marks the issue a human must rule on "
+                        "(v3 rule o)" % (index, decision))
 
 
 def _bare_reason(text):

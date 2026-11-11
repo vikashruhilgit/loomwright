@@ -320,7 +320,7 @@ Steps 1–3 — **run by the driver's `execute-result` step** (automate-speed/11
 
 **Exit conditions:**
 - `heal_decision == PASS` (or loop skipped: `heal_loop_ran=false`, valid only with `--skip-self-heal`) → task `completed`; job → `done/`.
-- `heal_decision == ESCALATED` (reviewer NEEDS_HUMAN, max `--heal-iterations` reached, or resume-thrash) → task `completed_with_escalation`; findings posted to the PR as a comment; job → `done/` with escalation fields (heal reason, `heal_remaining_issues`).
+- `heal_decision == ESCALATED` (reviewer NEEDS_HUMAN, max `--heal-iterations` reached, or resume-thrash) → task `completed_with_escalation`; findings posted to the PR as a comment; job → `done/` with escalation fields (heal reason, `heal_remaining_issues`). A NEEDS_HUMAN review first gets ONE fix round for its other at-floor findings (only the `needs_human: true` issues wait for the owner), and every at-floor finding an escalation leaves unfixed is itemised in `heal_dismissed` as `escalated_unfixed` (`skills/self-heal-advisory/SKILL.md`, the heal loop).
 - Hard failure: base-branch mismatch cleanup → `status: failed`, job → `failed/`; fix-task crash / budget exhaustion → `status: checkpoint` pause with resume command; guard violation (below) → `status: failed`, job stays in `in-progress/`; a `write_seat_tampered` stop (Phase 3 §"Write-seat stops", or a tampered Phase 4.5 fix edit) → `status: failed`, job → `failed/`.
 
 **Completion tail (always runs — both when the loop ran and when it was skipped; the numbered procedure steps live in the skill Part 2 completion tail — a range-free pointer, so an added step cannot make it stale. Step 0 — the guard — lives HERE, verbatim):**
@@ -636,7 +636,7 @@ SUPERVISOR_RESULT:
     findings:                                # advisory; failing checks only; severity is info|advisory by construction
       - { check: string, detail: string, severity: enum [info, advisory] }
   heal_dismissed:                            # optional (dismissed-findings-01) — Phase 4.5 findings NOT dispatched to a fixer; empty ⇒ absent (never []). Each item exactly these keys.
-    - { finding: string, reason: enum [pre_existing, nit, drift, below_severity_floor], source: string, severity: string }   # severity optional
+    - { finding: string, reason: enum [pre_existing, nit, drift, below_severity_floor, escalated_unfixed], source: string, severity: string }   # severity optional
 ```
 
 **`knowledge_sources_used` additive field (v14.28.0):** optional and ADVISORY — `schema_version` stays `1`, the SubagentStop hook does not enumerate it, it is never gated on, and an absent field reads as "none used". Two shapes, same data: the nested array above and the FLAT `knowledge_sources_used` array on the `session_end` JSONL line (what `build-insights.sh` reads).
