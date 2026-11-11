@@ -42,7 +42,7 @@
     "mvp-scoping": {"budget": 1850, "measured": 1681, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "pattern-detector": {"budget": 853, "measured": 775, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "playwright-e2e": {"budget": 9017, "measured": 8197, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "pr-postmortem": {"budget": 7015, "measured": 6377, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
+    "pr-postmortem": {"budget": 7836, "measured": 7124, "note": "re-baselined to live measured + ~10% (approach-decisions/01: the approach_challenged flag H3, Step 3-5 fields and the trend-table row); earlier: automate-speed/18"},
     "preflight-sync": {"budget": 5790, "measured": 5263, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "product-discovery": {"budget": 2059, "measured": 1871, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "qa-gates": {"budget": 7238, "measured": 6580, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},

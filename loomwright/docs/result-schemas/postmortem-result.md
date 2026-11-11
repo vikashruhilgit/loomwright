@@ -25,8 +25,9 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   "additions": 312,
   "deletions": 27,
   "changed_files": 9,
-  "categories": [ {"round": 1, "class": "quality_gap", "self_heal_miss": true, "flow_stage": "self_heal", "evidence": "backend missing the numeric guard the frontend has"}, ... ],
+  "categories": [ {"round": 1, "class": "quality_gap", "self_heal_miss": true, "dismissed_then_raised": false, "approach_challenged": false, "flow_stage": "self_heal", "evidence": "backend missing the numeric guard the frontend has"}, ... ],
   "self_heal_misses": 3,
+  "approach_challenges": 0,
   "flow_stages": { "launch_pad": 0, "worker": 1, "self_heal": 3, "unknowable": 0 },
   "summary": "4 rounds; 3 were self-heal misses (validation parity + falsy coercion)",
   "plugin_version": "14.24.0",
@@ -57,15 +58,26 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   `formal_reviews` | `bot_comments` | `none`); that note stays in the gather output and is NOT part of
   this trend line — the schema is unchanged at `schema_version: 1`.
 - `additions` / `deletions` / `changed_files` — integers; PR size (from gather).
-- `categories` — array of per-round objects `{round, class, self_heal_miss, flow_stage, evidence}`, one
+- `categories` — array of per-round objects `{round, class, self_heal_miss, dismissed_then_raised,
+  approach_challenged, flow_stage, evidence}`, one
   per CATEGORIZED review round, classifying each into a root-cause class and the flow stage that should
-  have caught it. It may hold fewer entries than `review_rounds`: a round with no concrete finding (a bot
+  have caught it. `dismissed_then_raised` and `approach_challenged` are **additive & optional** per-round
+  booleans (`false` when the check did not trigger, never omitted on a new `/pr-postmortem` line; absent
+  in older lines, which remain valid — `schema_version` stays `1`). `approach_challenged: true` means the
+  reviewer questioned the chosen approach, library, tool or mechanism rather than the code's
+  correctness, in any one of the round's findings (a round that mixes an approach challenge with
+  correctness findings is flagged); it is NOT a seventh class — the round's `class` stays one of the six
+  (`skills/pr-postmortem/SKILL.md` is the authority). It may hold fewer entries than `review_rounds`: a round with no concrete finding (a bot
   verify/all-clear comment where the only evidence is that a push followed) is attributed from a concrete
   review-fix headline when one exists, otherwise omitted — and omitted rounds are never written as
   `flow_stage: unknowable` entries (`skills/pr-postmortem/SKILL.md` Step 3 is the authority). Consumers
   iterate `categories[]`; none may assume `length(categories) == review_rounds`.
 - `self_heal_misses` — integer; count of rounds flagged `self_heal_miss` (i.e. Phase 4.5 should have
   caught the class but didn't).
+- `approach_challenges` — integer, **additive & optional**; count of rounds flagged `approach_challenged`
+  (`0` when none). Absent in older trend lines, which remain valid and read as `0` — `schema_version`
+  stays `1`. `scripts/postmortem-approach-baseline.sh` estimates the flag for such lines (a printed,
+  labelled guess — never written back to the ledger).
 - `flow_stages` — object tallying rounds per stage `{launch_pad, worker, self_heal, unknowable}` — the four
   keys are unchanged. On a `/pr-postmortem` line it is tallied over `categories[]`, so omitted rounds are
   counted in neither and the sum of its values equals the length of `categories[]` (`build-floor.sh`'s
