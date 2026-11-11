@@ -1,6 +1,7 @@
 # Approach-challenged rounds are counted in the postmortem ledger
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/891
 
 Source: the approach-decisions gap analysis against main `8ec200e` / v17.35.1 (2026-11-10, owner Vikash: "Yes, write it" — approves writing, not building). Sibling of `02-briefs-record-the-chosen-approach-and-the-alternatives-it-beat.md` in this folder; index in `00-overview.md`. This story is the BASELINE the owner's rule requires before story `02` may be queued ("no item without a baseline").
 
@@ -121,3 +122,9 @@ loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 docs/evidence/approach-baseline.md
 changelog.d/approach-baseline.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-11T19:18:46Z
+- **Brief:** .supervisor/jobs/done/2026-11-11-approach-challenged-postmortem-baseline.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/891
