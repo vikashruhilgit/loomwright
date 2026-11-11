@@ -3,7 +3,8 @@
 # `approach_challenged` flag over the postmortem churn ledger (.supervisor/postmortem/results.jsonl).
 #
 # WHY: `/pr-postmortem` records `approach_challenged` (the reviewer questioned the chosen approach,
-# library, tool or mechanism rather than the code's correctness — skills/pr-postmortem/SKILL.md
+# library, tool or mechanism rather than the code's correctness, in any one of the round's findings,
+# even alongside correctness findings — skills/pr-postmortem/SKILL.md
 # §"Optional `approach_challenged` flag") only on lines it writes from now on. Older lines carry no
 # such signal, so this script prints a labelled GUESS for them: a case-insensitive phrase match of
 # each round's `evidence`, OR-ed (unless --no-gh) with the same match over that PR's

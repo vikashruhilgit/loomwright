@@ -3,7 +3,8 @@
 Requirement: `.supervisor/requirements/approach-decisions/01-approach-challenged-rounds-are-counted-in-the-postmortem-ledger.md`
 (Validation 3 and 4). Captured 2026-11-11 on macOS (Darwin 25.6.0), branch
 `feature/approach-challenged-postmortem-baseline`, base `a2d9594`. The baseline script is the one
-committed in `b7f241a`, byte-identical at every later commit of this branch. Real `gh` (authenticated, read-only
+committed in `b7f241a`; its logic is unchanged at every later commit of this branch (the review-fix commit
+edits only its header comment). Real `gh` (authenticated, read-only
 calls only), real ledger.
 
 ## Validation 3 — the baseline number over the real ledger
@@ -134,10 +135,22 @@ found one fixed review round with an approach challenge in it: PR #440
 "reimplements the exact anti-pattern this same PR's `wait-lib.sh` exists to eliminate", and a later round fixed
 it by switching to `wait_for_cmd`. That was the best candidate available, so the run used it.
 
-### Command
+### Run 1 — before the mixed-round rule (superseded)
+
+The first run used this branch at `5966a1f`, where the SKILL did not yet say how to flag a round that mixes an
+approach challenge with correctness findings. Its report showed `**true**` in round 4's `self_heal_miss`
+column and the appended line recorded every round `approach_challenged: false` (`approach_challenges: 0`,
+reader `- approach-challenged rounds: 0 of 6 prior rounds`). The model left round 4 at `false` because the
+SKILL said nothing about mixed rounds. That run recorded `Verdict: BLOCKED`. Review then found the gap: the
+SKILL never stated a rule for mixed rounds, and the evidence had leaned on one it did not state. The SKILL now
+does: **a round is flagged when ANY of its findings challenges the approach, even alongside correctness
+findings** (§"Optional `approach_challenged` flag"). `false` is the default only for a genuinely unclear
+round. Run 2 re-ran the same mechanism under that rule.
+
+### Run 2 — command (the committed review-fix branch)
 
 ```bash
-git worktree add --detach <scratch>/v4wt 5966a1f        # this branch's head; gitignored .supervisor/postmortem/ absent there
+git worktree add --detach <scratch>/v4wt HEAD          # the commit carrying the mixed-round rule; .supervisor/postmortem/ absent there
 cp .supervisor/postmortem/results.jsonl <scratch>/ledger-before-v4.jsonl
 cd <scratch>/v4wt
 claude -p "/loomwright:pr-postmortem https://github.com/vikashruhilgit/loomwright/pull/440" \
@@ -146,66 +159,66 @@ claude -p "/loomwright:pr-postmortem https://github.com/vikashruhilgit/loomwrigh
   --disallowedTools "Edit,Write,NotebookEdit,WebFetch,WebSearch,Task"
 bash loomwright/scripts/read-postmortem.sh .claude-plugin/README.md   # a path PR #440 changed, run in the worktree
 cmp <scratch>/ledger-before-v4.jsonl <main checkout>/.supervisor/postmortem/results.jsonl   # exit 0
-git worktree remove <scratch>/v4wt
+git worktree remove --force <scratch>/v4wt
 ```
 
-The run used Claude Code 2.1.319 and ran 2026-11-11T13:34:54Z → 13:36:22Z (the appended line's `ts`). It exited 0 with stderr empty. The `--plugin-dir` copy is
-this branch's `loomwright/` at `5966a1f`. Two things show that copy ran: the report has an `approach_challenged`
-column, and the appended line carries `approach_challenges`. Neither exists in the installed plugin.
+The run used Claude Code 2.1.319 and ran 2026-11-11T13:49:33Z → 13:51:11Z (the appended line's `ts`). It
+exited 0 with stderr empty. The `--plugin-dir` copy is this branch's `loomwright/` at the review-fix commit,
+the one that adds the mixed-round rule. The installed plugin has no `approach_challenged` column and no
+`approach_challenges` field, so their presence shows the branch copy ran.
 
-### Step 4 report: the per-round lines
+### Run 2 — Step 4 report: the per-round lines
 
-The report printed the per-round breakdown as a Markdown table rather than the SKILL's
-`round N: class=…  approach_challenged=<bool> …` line format. Every round carries the flag. The round that
-holds the approach finding:
+The report again printed the per-round breakdown as a Markdown table, not the SKILL's
+`round N: class=…  approach_challenged=<bool> …` line format. The columns are round, class, missed by
+self-heal, approach challenged, stage and evidence. Round 4 is the one flagged:
 
 ```text
-| 4 | execution_bug | **true** | false | self_heal | CI bot (`claude[bot]`): the owner-wait interval in `phase-timing.sh` is not clamped to the window end, so `machine_seconds` can go negative; wrong `writes[]` in `capabilities.json`; `pty_feed` still uses tick polling even though this PR adds `wait-lib.sh` to replace it |
+| 4 | execution_bug | **yes** | **yes** | self_heal | CI bot on `a3736394`: the `owner_wait` interval end wasn't clamped to the window, the `item_timing` dedupe depended on glob order, and `pty_feed` re-built a tick-counted wait instead of using this PR's own `wait-lib.sh` |
 ```
 
-The columns are round, class, self_heal_miss, approach_challenged, flow_stage and evidence. All six rounds
-read `approach_challenged` `false`.
+The other five rounds read `no` in the approach column. The report's run summary says "1 approach challenge".
+The `class` stays `execution_bug`: the flag did not change the class or `flow_stage`.
 
-### The appended ledger line (worktree ledger, 1 line, 7440 bytes)
+### Run 2 — the appended ledger line (worktree ledger, 1 line, 7361 bytes)
 
 Projection (`jq -c '{schema_version, ts, number, review_rounds, approach_challenges, self_heal_misses, flow_stages, plugin_version, cats:[.categories[]|{round,class,approach_challenged,flow_stage}]}'`):
 
 ```json
-{"schema_version":1,"ts":"2026-11-11T13:36:22Z","number":440,"review_rounds":6,"approach_challenges":0,"self_heal_misses":2,"flow_stages":{"launch_pad":0,"worker":3,"self_heal":3,"unknowable":0},"plugin_version":"17.36.2","cats":[{"round":1,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":2,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":3,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":4,"class":"execution_bug","approach_challenged":false,"flow_stage":"self_heal"},{"round":5,"class":"execution_bug","approach_challenged":false,"flow_stage":"self_heal"},{"round":6,"class":"quality_gap","approach_challenged":false,"flow_stage":"self_heal"}]}
+{"schema_version":1,"ts":"2026-11-11T13:51:11Z","number":440,"review_rounds":6,"approach_challenges":1,"self_heal_misses":2,"flow_stages":{"launch_pad":0,"worker":4,"self_heal":2,"unknowable":0},"plugin_version":"17.36.2","cats":[{"round":1,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":2,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":3,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":4,"class":"execution_bug","approach_challenged":true,"flow_stage":"self_heal"},{"round":5,"class":"execution_bug","approach_challenged":false,"flow_stage":"worker"},{"round":6,"class":"quality_gap","approach_challenged":false,"flow_stage":"self_heal"}]}
 ```
 
 Round 4 in full:
 
 ```json
-{"round":4,"class":"execution_bug","self_heal_miss":true,"dismissed_then_raised":false,"approach_challenged":false,"flow_stage":"self_heal","evidence":"claude[bot] on a3736394: phase-timing.sh owner_wait end never clamped to window hi (machine_seconds negative); capabilities.json writes[]; pty_feed tick-polling despite this PR's wait-lib.sh"}
+{"round":4,"class":"execution_bug","self_heal_miss":true,"dismissed_then_raised":false,"approach_challenged":true,"flow_stage":"self_heal","evidence":"claude[bot] on a3736394: phase-timing owner_wait end never clamped to window hi; item_timing dedupe keeps glob-order last; pty_feed reimplements tick-counted wait instead of this PR own wait-lib.sh"}
 ```
 
-### Reader line (run in the worktree)
+### Run 2 — reader line (run in the worktree)
 
 ```text
-- approach-challenged rounds: 0 of 6 prior rounds
+- approach-challenged rounds: 1 of 6 prior rounds
 ```
 
-The live checkout's ledger was byte-identical before and after (`cmp` exit 0).
+The live checkout's ledger was byte-identical before and after (`cmp` exit 0). The worktree, and the
+worktree-only ledger with it, was removed afterwards. The appended line exists only in that removed worktree;
+the live ledger was not touched (the report offered to append it there; that was not done).
 
 ### Result
 
-The flag's mechanics hold on a real postmortem. The branch's SKILL produced a per-round `approach_challenged`
-on every round and a top-level `approach_challenges` (`schema_version` 1). The reader printed the
-`approach-challenged rounds` line right after the `self_heal_miss` line. The acceptance criterion needs more:
-a round recorded `approach_challenged=true`, `approach_challenges: 1`, and a reader line `1 of …`. This run
-did not produce them.
+AC 15 asks for a round recorded `approach_challenged=true`, `approach_challenges: 1`, and a reader line
+`1 of …`. Run 2 produced all three on PR #440: round 4 `approach_challenged: true`, `approach_challenges: 1`,
+and `- approach-challenged rounds: 1 of 6 prior rounds`. N is 1, as AC 15 expects.
 
-- PR #440 has no round dominated by an approach challenge. The approach finding shares round 4 with two
-  correctness findings (an unclamped interval and wrong `writes[]`). The model classified that round
-  `execution_bug` and left the flag at its documented default, `false`, for a round that is not clearly a
-  challenge to the approach.
-- The ledger has no other candidate. The AC 14 TSV and both hand probes found no PR whose fixed review round
-  is mainly an approach challenge.
+Honest limits:
 
-So no PR meeting AC 15's premise could be identified. This is not a PASS. The owner has to decide what
-happens next. The options are: run `/pr-postmortem` on a merged PR outside the ledger whose review mainly
-asked for a different approach, accept the mechanics evidence above, or widen the gather's 200-character
-snippet cap in a separate item. The PR stays not merge-ready until the owner picks one.
+- The flagged round is a mixed round. Its approach finding (`pty_feed` re-implementing the wait this PR's
+  `wait-lib.sh` replaces) shares round 4 with two correctness findings. It is flagged under the mixed-round
+  rule above. Run 1 on the same PR, before the rule existed, left it `false`.
+- The flag is a model judgment. One run on one PR shows the rule is followed; it does not measure agreement
+  across runs.
+- Step 4 printed a table rather than the `round N:` line format, both times. Each row still carries the flag.
+- The run also recorded round 5 at `flow_stage: worker` where Run 1 recorded `self_heal`, so `flow_stages`
+  differs between the runs. That is run-to-run variance in the stage attribution and is not part of this item.
 
-Verdict: BLOCKED for Validation 4 — no merged PR in the ledger has a review round dominated by an approach challenge; the closest one (#440, round 4) was recorded `approach_challenged=false`, the documented default for a mixed round
+Verdict: PASS for Validation 4 — under the stated mixed-round rule, PR #440 round 4 recorded `approach_challenged: true`, the line carries `approach_challenges: 1`, and the reader printed `1 of 6 prior rounds`

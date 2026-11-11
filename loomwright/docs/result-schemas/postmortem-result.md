@@ -65,7 +65,8 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   booleans (`false` when the check did not trigger, never omitted on a new `/pr-postmortem` line; absent
   in older lines, which remain valid — `schema_version` stays `1`). `approach_challenged: true` means the
   reviewer questioned the chosen approach, library, tool or mechanism rather than the code's
-  correctness; it is NOT a seventh class — the round's `class` stays one of the six
+  correctness, in any one of the round's findings (a round that mixes an approach challenge with
+  correctness findings is flagged); it is NOT a seventh class — the round's `class` stays one of the six
   (`skills/pr-postmortem/SKILL.md` is the authority). It may hold fewer entries than `review_rounds`: a round with no concrete finding (a bot
   verify/all-clear comment where the only evidence is that a push followed) is attributed from a concrete
   review-fix headline when one exists, otherwise omitted — and omitted rounds are never written as
