@@ -100,14 +100,15 @@ loomwright/docs/command-parts"
 # (each alternative is its own pass).
 #   #NNN          `#` + 2–5 digits, not after `&`, a letter, a digit or `_` (no entity, no
 #                 anchor), not before a letter, a digit or `_` (no hex colour `#20B2AA`)
-#   <queue>/<NN>  lowercase slug, `/`, two digits, optional letter suffix, not before a letter
-#                 or a digit (no `pending/2026-…` date path)
+#   <queue>/<NN>  lowercase slug, `/`, two digits, optional letter suffix, not before a letter,
+#                 a digit (no `pending/2026-…` date path), a `/` (a path segment such as
+#                 `/api/users/42/`) or a `[` (a glob such as `requirements/20[0-9][0-9]-*`)
 #   YYYY-MM-DD    a date, not before a digit (an ISO timestamp `…-15T12:00` still counts)
 #   item NN       case-insensitive `item`, two digits, optional letter suffix, not before a
 #                 letter or a digit
 #   vX.Y.Z        a version, not after a letter or a digit, not before a letter, a digit or `_`
 HISTORY_REF_PATTERNS='[A-Za-z0-9_]	[^&A-Za-z0-9_]#[0-9]{2,5}
-[A-Za-z0-9]	[a-z][a-z0-9-]*/[0-9]{2}[a-z]?
+[A-Za-z0-9/[]	[a-z][a-z0-9-]*/[0-9]{2}[a-z]?
 [0-9]	20[0-9]{2}-[0-9]{2}-[0-9]{2}
 [A-Za-z0-9]	[Ii][Tt][Ee][Mm] [0-9]{2}[A-Za-z]?
 [A-Za-z0-9_]	[^A-Za-z0-9]v[0-9]+\.[0-9]+\.[0-9]+'

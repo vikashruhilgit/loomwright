@@ -70,10 +70,16 @@ MARKETPLACE_JSON=".claude-plugin/marketplace.json"
 
 # Print the frontmatter value of key $2 in SKILL.md $1 (empty if none), quotes
 # and whitespace stripped. Reads ONLY the first `--- ... ---` block — never
-# body prose or changelogs.
+# body prose or changelogs. A UTF-8 BOM and leading blank lines are skipped, so
+# such a SKILL.md is still checked instead of silently dropping out of scope.
 frontmatter_field() {
-  awk -v k="$2" '
-    NR == 1 && !/^---[[:space:]]*$/ { exit }   # frontmatter must open on line 1
+  awk -v k="$2" -v bom="$(printf '\357\273\277')" '
+    !s {
+      if (index($0, bom) == 1) $0 = substr($0, length(bom) + 1)
+      if ($0 ~ /^[[:space:]]*$/) next
+      s = 1
+      if ($0 !~ /^---[[:space:]]*$/) exit   # frontmatter must open on the first non-blank line
+    }
     /^---[[:space:]]*$/ { c++; if (c == 2) exit; next }
     c == 1 && index($0, k ":") == 1 {
       sub(/^[^:]*:[[:space:]]*/, "")
@@ -369,6 +375,19 @@ EOF
   out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-nover.md" bash "$0" 2>&1)"; rc=$?
   assert "versionless-skill-skipped" 0 "$rc" "$out"
   rm -rf "$tmp/skills/nover"
+
+  # (a2b) a SKILL.md opening with a UTF-8 BOM, or with blank lines before `---`, is
+  # still in scope: its frontmatter version is read, so a wrong index cell is DRIFT.
+  cp "$tmp/skills/beta/SKILL.md" "$tmp/beta-SKILL.md"
+  { printf '\357\273\277'; cat "$tmp/beta-SKILL.md"; } > "$tmp/skills/beta/SKILL.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-bad-version.md" bash "$0" 2>&1)"; rc=$?
+  assert "bom-skill-still-checked" 1 "$rc" "$out" "DRIFT [version] beta"
+  { printf '\n\n'; cat "$tmp/beta-SKILL.md"; } > "$tmp/skills/beta/SKILL.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-bad-version.md" bash "$0" 2>&1)"; rc=$?
+  assert "leading-blank-skill-still-checked" 1 "$rc" "$out" "DRIFT [version] beta"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index.md" bash "$0" 2>&1)"; rc=$?
+  assert "leading-blank-skill-aligned-passes" 0 "$rc" "$out"
+  cp "$tmp/beta-SKILL.md" "$tmp/skills/beta/SKILL.md"
 
   # (a3) table format changed (zero data rows parsed) → exit 1 tripwire
   printf '# Fixture Index\n\nNo table here anymore.\n' > "$tmp/index-notable.md"
