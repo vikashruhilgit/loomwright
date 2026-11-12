@@ -324,7 +324,7 @@ Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the
 - **Conditional gate:** a trigger is present — T1, a `## Feasibility` CAUTION row naming a new dependency; T2, a File Impact Map CREATE row that is a script or module, not a test, fixture, doc or evidence file; T3–T5, `## Task` names a new external integration, a cross-cutting mechanism, or hand-rolls something the manifest, the harness or a stackpack skill provides. Bug fixes, docs, prompt-only edits and small changes never trigger. No trigger → skip silently.
 - **23a — no entry.** A trigger with no matching `- decision:` entry, or no `## Design decisions` section.
 - **23b — unevidenced dependency.** A T1 entry whose `chosen:` is absent from the manifest and the lockfile (search them with the Grep tool) and that has no `rejected:` line.
-- **23c — reinvention.** Your own search with the Grep and Glob tools (helpers, `scripts/`, `stackpack/skills/SKILLS_INDEX.md`) finds an existing helper or module that does what a CREATE path does, and the entry names it under neither `rejected:` nor `evidence:`. The issue quotes the search pattern and the hit.
+- **23c — reinvention.** Your own search with the Grep and Glob tools (helpers, `scripts/`, and an installed stackpack skills index — stackpack@atelier, when installed; skip that source when it is absent) finds an existing helper or module that does what a CREATE path does, and the entry names it under neither `rejected:` nor `evidence:`. The issue quotes the search pattern and the hit.
 - **23d — unconfirmed.** `status: unconfirmed` on a T1 entry; on a T2–T5 entry it is a LOW note only.
 
 **Issue category:** `approach_unjustified` for 23a, 23b and 23d; `approach_reinvents` for 23c.

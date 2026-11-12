@@ -125,7 +125,9 @@ for t in T3 T4 T5; do
   bhas "$(row $t)" 'the goal or `## Task`' && ok "$t detected from the goal and ## Task" || no "$t detection rule"
 done
 [ "$(printf '%s\n' "$TRIG" | grep -cE '^\| `T[1-5]` \|')" = 5 ] && ok "exactly five trigger rows T1–T5" || no "trigger rows are not exactly T1–T5"
-has "$DD" 'never trigger' && has "$DD" '## Phase 2.7: APPROACH — no trigger' && ok "no-trigger rule and literal" || no "no-trigger rule or literal"
+bhas "$(row T2)" 'not a test, fixture, doc or evidence file' && ok "T2 row carries the not-a-test/fixture/doc/evidence exclusion (the authority the copies restate)" \
+  || no "T2 row lacks the not-a-test/fixture/doc/evidence exclusion"
+has "$DD" 'Bug fixes, docs, prompt-only edits and small changes never trigger' && has "$DD" '## Phase 2.7: APPROACH — no trigger' && ok "no-trigger rule (full sentence) and literal" || no "no-trigger rule or literal"
 C1="$(lineof "$DD" '^1\. \*\*already in the repo\*\*')"; C2="$(lineof "$DD" '^2\. \*\*provided by the platform\*\*')"; C3="$(lineof "$DD" '^3\. \*\*new\*\*')"
 in_order "$C1" "$C2" "$C3" && ok "three candidates, \"already in the repo\" first" || no "candidate order ($C1 $C2 $C3)"
 has "$DD" 'never skip the first' && ok "the first candidate is never skipped" || no "never-skip-the-first clause"
@@ -242,6 +244,10 @@ bhas "$C23" 'T1, a `## Feasibility` CAUTION row naming a new dependency' && bhas
 GATE23="$(printf '%s\n' "$C23" | grep -F -- '- **Conditional gate:**' | head -1)"
 bhas "$GATE23" 'not a test, fixture, doc or evidence file' && bhas "$GATE23" 'Bug fixes, docs, prompt-only edits and small changes never trigger' && ok "Criterion 23 gate carries Launch Pad's T2 exclusion and the never-trigger rule" \
   || no "Criterion 23 gate lacks the T2 exclusion or the never-trigger rule"
+C23C_LINE="$(printf '%s\n' "$C23" | grep -F -- '- **23c' | head -1)"
+bhas "$C23C_LINE" 'an installed stackpack skills index' && bhas "$C23C_LINE" 'skip that source when it is absent' \
+  && ! bhas "$C23C_LINE" 'stackpack/skills/' && ok "23c names the installed stackpack index, skipped when absent, no cwd-relative path" \
+  || no "23c search sources name a cwd-relative stackpack path or lack the skip-when-absent rule"
 bhas "$C23" "\`$DD_RUNTIME\`" && ok "Criterion 23 reads the split file through the install root" \
   || no "Criterion 23 does not read the split file through the install root"
 [ "$(grep -cF '(23c)' "$PR")" = 1 ] && grep -F '(23c)' "$PR" | grep -qE '^\| .*\| \*\*FAIL\*\* \(HIGH `approach_reinvents` issue\) \|$' \
