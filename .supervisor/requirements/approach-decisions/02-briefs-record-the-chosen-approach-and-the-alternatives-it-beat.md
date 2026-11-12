@@ -1,6 +1,7 @@
 # Briefs record the chosen approach and the alternatives it beat
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/895
 
 Source: the approach-decisions gap analysis against main `8ec200e` / v17.35.1 (2026-11-10, owner Vikash: "Yes, write it" — approves writing, not building). Sibling of `01-approach-challenged-rounds-are-counted-in-the-postmortem-ledger.md` in this folder (the baseline this story's success metric reads); index in `00-overview.md`.
 
@@ -149,3 +150,9 @@ loomwright/scripts/test-pr-body-evidence-seam.sh
 loomwright/scripts/test-rule-conformance-seam.sh
 docs/evidence/design-decisions.md
 changelog.d/design-decisions.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-12T17:31:25Z
+- **Brief:** .supervisor/jobs/done/2026-11-12-approach-02-design-decisions.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/895
