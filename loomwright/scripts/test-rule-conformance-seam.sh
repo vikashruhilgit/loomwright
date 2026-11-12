@@ -122,9 +122,9 @@ bhas "$C17" '**Advisory rules never FAIL.**' && ok "17: advisory never FAILs" ||
 bhas "$C17" '**Issue category:** `rule_conformance`' && ok "17: rule_conformance category" || no "17 category"
 bhas "$C17" 'HIGH for 17a and 17b' && ok "17: HIGH severity" || no "17 severity"
 has "$PR" '| lane_overlap | rule_conformance |' && ok "output-format category enum lists rule_conformance" || no "category enum"
-has "$PR" '## 22 Review Criteria' && lacks "$PR" '## 21 Review Criteria' && has "$PR" 'All 22 review criteria must be checked' \
-  && has "$PR" '(22 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, and 22 conditional)' && has "$PR" 'All 22 criteria checked' \
-  && ok "criteria count 22 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" '## 23 Review Criteria' && lacks "$PR" '## 22 Review Criteria' && has "$PR" 'All 23 review criteria must be checked' \
+  && has "$PR" '(23 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, and 23 conditional)' && has "$PR" 'All 23 criteria checked' \
+  && ok "criteria count 23 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
 
 echo "PART 2b — Plan Reviewer Criterion 18 + the section it checks"
 C18="$(block "$PR" '^### 18\. Touched-File Invariants' '^### 19\. ')"
@@ -246,7 +246,7 @@ bhas "$C17" 'description starts `17c:`' && ok "17c: issue description prefix" ||
 bhas "$C17" 'MEDIUM for 17c' && ok "17c: MEDIUM severity" || no "17c severity"
 bhas "$C17" 'never relaxes 17a or 17b' && ok "17c: an override never relaxes a must rule" || no "17c must-rule clause"
 grep -qE '^\| Criterion 17c .*\*\*NEEDS_HUMAN\*\*' "$PR" && ok "decision matrix: 17c ⇒ NEEDS_HUMAN" || no "decision matrix 17c row"
-CHK="$(grep -F -- '- [ ] All 22 criteria checked' "$PR")"
+CHK="$(grep -F -- '- [ ] All 23 criteria checked' "$PR")"
 grep -qF '17c' <<<"$CHK" && ok "quality checklist names 17c" || no "checklist 17c"
 # 5b — Launch Pad carries the section through and owns the 17c gate.
 bhas "$A6A" '**(iii)**' && bhas "$A6A" "$CONFLICTS_H" && bhas "$A6A" 'copy it into the brief verbatim' \
