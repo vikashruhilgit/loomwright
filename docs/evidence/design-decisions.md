@@ -6,10 +6,11 @@ Requirement: `.supervisor/requirements/approach-decisions/02-briefs-record-the-c
 and 2 merged into it, base `0c83614`). Home paths are written as `/Users/<name>/`; `<scratch>` is a
 `mktemp -d` directory outside the repo.
 
-**Status in one line:** AC10's proposed rule is below, unwritten. Validations 4 and 6 are PASS: every condition was
-seen in its run (V4 was run after the PR opened, with the owner answering `LP-APPROACH` through the question
-relay). Validation 5 has no `Verdict:` line, and the owner decides it (`AUT-WAIVE`). V5 ran headless and showed two of its three
-conditions; the printed no-trigger line was not seen.
+**Status in one line:** AC10's proposed rule is below, unwritten. Validation 6 is PASS: every condition was
+seen in its run. Validations 4 and 5 were run with the owner answering through the question relay after the PR
+opened; every condition held except the printed Phase 2.7 line, which no run printed (Launch Pad prints no
+phase's output block, a gap that predates this change). They have no `Verdict:` line, and the owner decides them
+(`AUT-WAIVE`).
 
 ## AC10 — the proposed house rule (not written)
 
@@ -144,18 +145,20 @@ summary: "… Both approach triggers (new dependency, cross-cutting mechanism) h
   entries with rejected alternatives, and nothing is reinvented. …"
 ```
 
-Two limits, recorded rather than hidden:
+Not met: **Phase 2.7 printed nothing.** The run never printed a `## Phase 2.7: APPROACH` block. A
+`stream-json --verbose` stream carries every text message the model writes, and this one has 79 text lines, none
+of them a phase header. That holds for every phase, not just this one: no `## Phase …` output block from any
+phase was printed in this run, in V5, or in a V5 rerun against a Launch Pad edited to say "print it verbatim as
+a message of its own" (that edit was reverted, not shipped). So this is a gap that predates this change: Launch
+Pad's per-phase output blocks are not printed. The content Phase 2.7 would print is shown above from the saved
+brief, and the `LP-APPROACH` question carries the same pick and runner-up.
 
-- **The `## Phase 2.7: APPROACH` block itself was not seen as printed text.** A `-p` stream carries only a few
-  of the session's text messages, and this one did not include the Phase 2.7 printout. The T1 entry it would
-  print (chosen library, two `rejected:` lines, an `evidence:` line naming the manifest grep) is shown above from
-  the saved brief, and the `LP-APPROACH` question carries the same chosen pick and runner-up. V6 above has the
-  same limit.
-- **The `evidence:` line names `grep -ri rate package.json src/`, but the session did not run that exact
-  command.** It ran `cat package.json` and `cat -n src/server.js src/routes/upload.js`, which show the same
-  thing: no `rate` dependency or code in the repo. The line reports what was seen, not the literal command.
+Also recorded: the T1 entry's `evidence:` line names `grep -ri rate package.json src/`, but the session did not
+run that exact command. It ran `cat package.json` and `cat -n src/server.js src/routes/upload.js`, which show
+the same thing: no `rate` dependency or code in the repo.
 
-Verdict: PASS for Validation 4
+The other three conditions hold. The printed-entry condition did not, so there is no verdict; the owner
+decides through `AUT-WAIVE`.
 
 ## Validation 5 — a non-triggering goal
 
@@ -191,6 +194,17 @@ PLAN_REVIEW_RESULT:
 Not observed: the line `## Phase 2.7: APPROACH — no trigger`. In this headless run the model printed only a
 final summary, with no per-phase output. That line occurs in the transcript only inside the prompt files it
 read. The other two conditions hold. Because this one was not seen, there is no verdict.
+
+**Re-run 2026-11-12 after the PR opened (interactive save, through the question relay as V4 above).** Same
+project, `goal: "fix the typo in README.md §Install"` with no flag. Session `59649f5d-…`; the owner answered
+`LP-SAVE` with `Save and exit`. The saved brief has no `## Design decisions` (sections: Environment,
+Feasibility, Task, Acceptance Criteria, Touched-file invariants, File Impact Map, Subtask Structure,
+Parallelism Analysis, Skill References, Risk Assessment, Configuration, Handoff). `approach_` occurs 0 times in
+the stream. The Plan Review result was PASS with no issues, and its summary ends `C23: no approach trigger
+(bug/doc fix), skipped.` The run did not read `design-decisions.md`, as the no-trigger rule says. The
+no-trigger line was again not printed: the stream's text messages are three progress lines and the final
+report, and none is a phase header. As V4 records, no phase prints its output block, so this is the same
+pre-existing gap. No verdict; the owner decides through `AUT-WAIVE`.
 
 ## Validation 6 — the can't-ask branch
 
@@ -246,5 +260,8 @@ when Criterion 23 told it to read `skills/supervisor-readiness/design-decisions.
 read the installed plugin's `SKILL.md` under `/Users/<name>/.claude/plugins/marketplaces/`, where that file
 does not exist yet. Its 23d finding comes from the criterion text in its own prompt, which was this change's.
 Once the plugin is released, the installed copy carries the file.
+
+This run, too, printed no `## Phase 2.7: APPROACH` block (see V4: no phase prints its output block). V6's
+conditions do not include a printed line, so its verdict stands.
 
 Verdict: PASS for Validation 6
