@@ -84,7 +84,7 @@
 #         ksh -c <string>` and `eval <words>` are unwrapped (nesting depth <= 3).
 #         The walk also records the directory each publish runs in (payload `cwd`, then `cd` /
 #         `pushd` / `git -C`; `( … )` restores it; anything it cannot resolve is unknown = in scope).
-#   (v)   session join (below): the run's owner is ANOTHER Claude Code session -> allow
+#   (v)   session join (below): names which session is publishing, for the deny reason only
 #   (vi)  scope: every publish runs outside the run's checkout — not a git checkout, another repo,
 #         a DETACHED linked worktree (the review-drain sibling), or a branch other than state.md's
 #         `- branch:` -> allow. Otherwise                           -> deny unless the marker exists,
@@ -102,10 +102,10 @@
 # a `cd` in a pipeline element or behind a background `&` is read as if it leaked (it does not). Splitting inside quotes is deliberate and
 # deny-leaning: `git commit -m "a && git push"` is denied, `git commit -m "push it"` is not.
 #
-# WHICH PUBLISHES ARE GATED (decision): every push that runs in the run's feature-branch checkout,
-# made by the run's OWNING Claude Code session (its subagents and workers included; an unknown owner
-# counts as owning), while `## Session` is running|checkpoint — another session is allowed (SESSION
-# JOIN below). That covers FINALIZE's push + `gh pr create` AND each Phase 4.5 heal push
+# WHICH PUBLISHES ARE GATED (decision): every push that runs in the run's feature-branch checkout
+# while `## Session` is running|checkpoint, WHICHEVER Claude Code session issues it (the owner, its
+# subagents and workers, or any other session). A publish from another worktree or checkout, or on
+# another branch, is allowed for every session (step (vi)). That covers FINALIZE's push + `gh pr create` AND each Phase 4.5 heal push
 # (self-heal-advisory runs write-marker before each one). Inline drains — `/automate`'s owned
 # `/review-pr --until-mergeable` drain, its fix-now re-drain, `/autonomous` EVALUATE's review-heal —
 # share the Claude Code session but run only after the inner Supervisor's `session_end` made the
@@ -113,19 +113,17 @@
 # finished run's log). If `session_end` never landed (a crashed run), a drain push on the run's
 # branch IS gated: run write-marker, or close the stranded run (close-stranded-run.sh).
 #
-# SESSION JOIN (B2, narrowed 2026-11-12): the plugin session id comes from `.supervisor/state.md`;
-# the run's owner is the run-creation seed `.supervisor/logs/<id>.owner` (seed-run-owner.sh) first,
-# then the log's first line by loom_log_owner (loom-log-owner.sh — the SAME rule emit-lifecycle.sh
-# uses, sourced, never restated); the seed wins where they disagree. Owner == payload `session_id`
-# -> this session's run (its subagents and workers carry the same id). Owner empty, or no payload id
-# -> adopt (fail CLOSED). Owner != payload session_id -> ANOTHER Claude Code session -> allow:
-# `.supervisor/` is repo-global, so treating every non-owner as "a resumed run" gated every session in
-# every worktree of the repo while one run was live. Consequence (accepted): ANY other Claude Code
-# session is allowed, including one that pushes the run's own branch from the run's own checkout
-# (the old header refused that too); FINALIZE point 5 binds the run's own session only. That
-# includes `/supervisor --continue` resumed in a NEW Claude Code session, which is not gated — the emitters already treat it as foreign, so its
-# children never reach the run's log and the marker's children check could not see them anyway.
-# Its escape, if a human wants the check, is still `write-marker` by hand.
+# SESSION JOIN (B2, 2026-11-12): the plugin session id comes from `.supervisor/state.md`; the run's
+# owner is the run-creation seed `.supervisor/logs/<id>.owner` (seed-run-owner.sh) first, then the
+# log's first line by loom_log_owner (loom-log-owner.sh — the SAME rule emit-lifecycle.sh uses,
+# sourced, never restated). The join only names the publishing session in the deny reason ("this
+# session", "owner unknown", "another session"); it never decides. DECISION (owner, 2026-11-12):
+# a publish that runs in the run's checkout on the run's branch is gated for EVERY session — a
+# resumed `/supervisor --continue` in a new Claude Code session, and a human pushing the run's branch
+# from another tab, are refused too; the escape is `write-marker --skip-children-check`, which
+# records the skip. What changed is scope (step (vi)): before, the branch was read from the
+# session's project dir, so a session whose cwd was the run's checkout but whose push ran in its own
+# worktree (`cd <wt> && git push`) was judged on the run's branch and denied.
 #
 # DENY MECHANICS: exit 2 AND `hookSpecificOutput.permissionDecision: "deny"` JSON on stdout, one
 # stderr line — exactly guard-test-integrity.sh's shape. bash 3.2 / BSD userland safe.
@@ -822,22 +820,12 @@ cmd_has_publish "$CMD" 0 || allow
 [ "$PAREN_UNSURE" = 1 ] && PUB_DIRS[${#PUB_DIRS[@]}]="$UNK"
 [ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
 
-# (v) session join — reuse THE ownership rules, never a restated copy. The owner is the run-creation
-# seed `<id>.owner` (seed-run-owner.sh) FIRST, the log's first line second: where the two disagree the
-# seed wins, because the disagreement is a foreign append (close-stranded-run.sh's precedence).
-#   owner == payload session_id -> this session's run: gated. A subagent's or worker's PreToolUse
-#                                  payload carries its parent session's id, so they are gated too.
-#   owner unknown / payload id missing -> cannot tell: gated (fail CLOSED; the emitters' "adopt").
-#   owner != payload session_id -> ANOTHER Claude Code session -> allow. `.supervisor/` is repo-global,
-#                                  so a live run in one checkout used to gate every session in every
-#                                  worktree of the repo (2026-11-12: an unrelated fix's push and PR
-#                                  were denied by another session's live run). The same rule decides
-#                                  run membership for the emitters (they drop a non-owner's rows) and
-#                                  the SessionEnd close-out (a non-owner cannot end the run).
-#                                  CONSEQUENCE (accepted): `/supervisor --continue` resumed in a NEW
-#                                  Claude Code session is not the owner and is not gated — its
-#                                  children are not in the run's log either, so the marker's children
-#                                  check could not have seen them.
+# (v) session join — names WHO is publishing, for the deny reason only; it never allows (owner
+# decision 2026-11-12: a publish that runs in the run's own checkout on the run's own branch is the
+# run's publish whichever session issues it). The owner is the run-creation seed `<id>.owner`
+# (seed-run-owner.sh) FIRST, the log's first line second (loom_log_owner — reused, never restated);
+# where they disagree the seed wins, because the disagreement is a foreign append
+# (close-stranded-run.sh's precedence).
 [ "$HELPER_OK" = 1 ] || deny "guard_unavailable: loom-log-owner.sh missing"
 # KEPT BYTE-IDENTICAL to the copies in close-stranded-run.sh and build-state.sh
 # (`scripts/test-seed-run-owner.sh` asserts all three bodies match).
@@ -856,8 +844,9 @@ if [ "$GATE_ABSENT" != 1 ]; then
   [ -n "$owner" ] || owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
 fi
 payload_sid="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
-[ -n "$owner" ] && [ -n "$payload_sid" ] && [ "$owner" != "$payload_sid" ] && allow
-if [ -n "$owner" ]; then join="this session"; else join="owner unknown (adopted)"; fi
+if [ -z "$owner" ]; then join="owner unknown"
+elif [ "$owner" = "$payload_sid" ]; then join="this session"
+else join="another session — a publish from the run's checkout on the run's branch is gated for every session"; fi
 
 # (vi) scope: only a publish that runs IN the run's own feature-branch checkout is this run's publish
 # (each entry of PUB_DIRS, step (v)'s walk; any one in scope gates the command). Out of scope -> allow:

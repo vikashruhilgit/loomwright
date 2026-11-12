@@ -12,8 +12,9 @@
 # after a passing check -> allowed; HEAD moved after the check -> denied; --skip-children-check -> allowed and recorded `skipped`;
 # non-Supervisor session / terminal session / drain push from another branch / non-publish command
 # -> allowed; the inert path needs no jq; session join via the log-owner cc_session_id (state.md
-# plugin id != payload id, owner == payload id -> ACTIVE); another session (owner != payload id) ->
-# allowed (B2 narrowed, 2026-11-12 — see the "scope by publish target and owner" block); the writer refuses on `unsettled` (no marker) and removes
+# plugin id != payload id, owner == payload id -> ACTIVE); another session (owner != payload id) on
+# the run's checkout + branch -> still denied (owner decision 2026-11-12; only scope allows — see the
+# "scope by publish target" block); the writer refuses on `unsettled` (no marker) and removes
 # a stale marker; the hooks.json leaf exists with NO `|| true`; MUTATION CONTROL: removing the marker
 # check flips "push before check" to allowed.
 # Hardening (fix-now re-pass): F2 a missing session log -> writer refuses, no marker; zero identity
@@ -160,11 +161,11 @@ RD="$(new_repo running)"
 run_guard "$RD" "git push origin fix/drain"; expect "push from a branch other than the run's feature branch -> allowed" 0
 RJ="$(new_repo running cc-uuid-9)"
 run_guard "$RJ" "git push" "cc-uuid-9"; expect "plugin id != payload id but log owner == payload id -> guard ACTIVE" 2 "this session"
-run_guard "$RJ" "git push" "cc-uuid-new"; expect "another session (owner != payload id) -> allowed (B2 narrowed)" 0
+run_guard "$RJ" "git push" "cc-uuid-new"; expect "another session (owner != payload id) on the run's checkout + branch -> denied" 2 "another session"
 settle_children "$RJ"; write_marker "$RJ"
 run_guard "$RJ" "git push" "cc-uuid-new"; expect "resumed run after a passing check -> allowed" 0
 
-echo "== scope by publish target and owner: an unrelated session / worktree is not this run (2026-11-12) =="
+echo "== scope by publish target: an unrelated worktree is not this run; the run's checkout is gated for every session (2026-11-12) =="
 # The incident: session B (cwd = the run's main checkout, which is on the run's branch) ran
 # `cd <its own linked worktree> && git push -u origin <its branch>; gh pr create …` while session A's
 # Supervisor run was live, and both were denied as a "resumed run (log owner differs)". Two causes,
@@ -190,7 +191,10 @@ run_guard_json "$RU" "$(payload_full "git -C $FWT push origin fix/unrelated" cc-
 run_guard_json "$RU" "$(payload_full "git push" cc-uuid-1 "$FWT")"; expect "own session: payload cwd is a foreign worktree (project dir = run checkout) -> allowed" 0
 # a foreign SESSION -> allowed, even on the run's own checkout and branch
 run_guard_json "$RU" "$(payload_full "$INCIDENT" cc-foreign-9 "$RU")"; expect "foreign session: the incident command -> allowed" 0
-run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RU")"; expect "foreign session id on the run's checkout + branch -> allowed" 0
+run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RU")"; expect "foreign session id on the run's checkout + branch -> denied (gated for every session)" 2 "another session"
+run_guard_json "$RU" "$(payload_full "gh pr create --fill" cc-foreign-9 "$RU")"; expect "foreign session gh pr create from the run's checkout -> denied" 2
+run_guard_json "$RU" "$(payload_full "git push -u origin fix/unrelated" cc-foreign-9 "$FWT")"; expect "foreign session in its own worktree (cwd) -> allowed" 0
+run_guard_json "$RU" "$(payload_full "git -C $FWT push origin fix/unrelated" cc-foreign-9 "$RU")"; expect "foreign session: git -C <its own worktree> push -> allowed" 0
 # the run's own session / subagent / worker payloads -> still denied without the marker
 run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-uuid-1 "$RU")"; expect "own session on the run checkout -> denied" 2 "this session"
 run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-uuid-1 "$RU" loomwright:loomwright:supervisor-runner)"; expect "own subagent payload (agent_type set, parent session id) -> denied" 2
@@ -237,7 +241,7 @@ run_guard_json "$RU" "$(payload_full "cd $PLAIN && git push" cc-uuid-1 "$RU")"; 
 RSD="$(new_repo running cc-foreign-appender)"
 printf 'cc_session_id=cc-uuid-1\nsession_id=%s\nstarted_at=2026-11-12T00:00:00Z\n' "$PSID" > "$RSD/.supervisor/logs/$PSID.owner"
 run_guard_json "$RSD" "$(payload_full "git push" cc-uuid-1 "$RSD")"; expect "seed owner == payload id (log first line foreign) -> denied" 2 "this session"
-run_guard_json "$RSD" "$(payload_full "git push" cc-foreign-appender "$RSD")"; expect "log-first-line session that is not the seed owner -> allowed" 0
+run_guard_json "$RSD" "$(payload_full "git push" cc-foreign-appender "$RSD")"; expect "log-first-line session that is not the seed owner -> named another session, denied" 2 "another session"
 # owner unknown / payload id missing -> adopted, denied
 RUK="$(new_repo running)"; : > "$RUK/.supervisor/logs/$PSID.jsonl"
 run_guard_json "$RUK" "$(payload_full "git push" cc-anyone "$RUK")"; expect "owner unknown (empty log, no seed) -> adopted, denied" 2 "owner unknown"
@@ -610,16 +614,19 @@ mutant m-scope 's/publish_in_scope "\$pd" \&\& scoped=0/publish_in_scope "$BASE_
 run_guard_json "$RMI" "$(payload_full "$MINC" cc-uuid-1 "$RMI")" "$MUTF"
 [ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && ok "mutation (scope): judging the base dir instead of the publish target denies the incident push — the walk is load-bearing" \
   || no "mutation (scope): inconclusive (changed=$MUTOK rc=$RC)"
-#  (b) every non-owner is a resumed run again: a foreign session on the run checkout is denied
-mutant m-owner '/\[ "\$owner" != "\$payload_sid" \] && allow$/d'
+#  (b) the broader join restored (a non-owner session is allowed outright): a foreign session pushing
+#      the run's branch from the run's checkout escapes — the every-session gate is load-bearing
+mutant m-owner 's/^if \[ -z "\$owner" \]; then join="owner unknown"$/[ -n "$owner" ] \&\& [ "$owner" != "$payload_sid" ] \&\& allow; if [ -z "$owner" ]; then join="owner unknown"/'
 run_guard_json "$RMI" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RMI")" "$MUTF"
-[ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && ok "mutation (owner): treating a foreign session as a resumed run denies it — the join is load-bearing" \
-  || no "mutation (owner): inconclusive (changed=$MUTOK rc=$RC)"
-#  (c) both restored: the exact incident (foreign session, cd into its own worktree) is denied again
-mutant m-both 's/publish_in_scope "\$pd" \&\& scoped=0/publish_in_scope "$BASE_DIR" \&\& scoped=0/;/\[ "\$owner" != "\$payload_sid" \] && allow$/d'
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (every-session gate): allowing a non-owner outright lets a foreign push of the run's branch escape" \
+  || no "mutation (every-session gate): inconclusive (changed=$MUTOK rc=$RC)"
+run_guard_json "$RMI" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RMI")"; expect "foreign session on the run checkout (unmutated) -> denied" 2
+#  (c) the scope fault restored: the exact incident (a foreign session, cd into its own worktree) is denied again
+run_guard_json "$RMI" "$(payload_full "$MINC" cc-foreign-9 "$RMI")"; expect "the incident command from a foreign session (unmutated) -> allowed" 0
+mutant m-both 's/publish_in_scope "\$pd" \&\& scoped=0/publish_in_scope "$BASE_DIR" \&\& scoped=0/'
 run_guard_json "$RMI" "$(payload_full "$MINC" cc-foreign-9 "$RMI")" "$MUTF"
 [ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && grep -qF "run FINALIZE point 5 first" <<<"$OUT" \
-  && ok "mutation (incident): with both causes restored the 2026-11-12 incident is denied again" \
+  && ok "mutation (incident): with the project-dir scope restored the 2026-11-12 incident is denied again" \
   || no "mutation (incident): inconclusive (changed=$MUTOK rc=$RC)"
 #  (d) the subshell restore removed: (cd foreign); git push escapes the gate
 mutant m-paren '/NL\$OPEN\$NL/d;/NL\$CLOSE\$NL/d'
