@@ -215,6 +215,8 @@ QUOTED_PAREN_CASES=(
   "echo \"\$(cd $PLAIN_Q)\"; git push"
   "echo \"\\(cd $PLAIN_Q\\)\"; git push"
   "echo \\(cd $PLAIN_Q\\); git push"
+  "echo \`cd $PLAIN_Q && pwd\`; git push"
+  "echo \"\`cd $PLAIN_Q\`\"; git push"
 )
 for c in "${QUOTED_PAREN_CASES[@]}"; do run_guard_json "$RU" "$(payload_full "$c" cc-uuid-1 "$PLAIN_Q")"; expect "own session, quoted paren [$c] -> denied" 2; done
 run_guard_json "$RU" "$(payload_full "(cd $FWT && git commit -m \"fix(x): y\"; git push)" cc-uuid-1 "$RU")"; expect "own session, quoted paren in a foreign-worktree push -> denied (fail CLOSED, needs the marker)" 2
@@ -666,6 +668,12 @@ for c in "echo \"\\(cd $MPLAIN\\)\"; git push" "echo \\(cd $MPLAIN\\); git push"
   [ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (escaped paren): without the flag [$c] escapes — load-bearing" \
     || no "mutation (escaped paren) [$c]: inconclusive (changed=$MUTOK rc=$RC)"
 done
+
+#  (h) backticks trusted again: `echo `cd <plain> && pwd`; git push` from the run checkout escapes
+mutant m-backtick "s/^  case \"\\\$s\" in \*'\`'\*) PAREN_UNSURE=1 ;; esac$/  :/"
+run_guard_json "$RMI" "$(payload_full "echo \`cd $MPLAIN && pwd\`; git push" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (backtick): without the flag a backtick substitution's cd leaks and the push escapes — load-bearing" \
+  || no "mutation (backtick): inconclusive (changed=$MUTOK rc=$RC)"
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"

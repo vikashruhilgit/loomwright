@@ -759,10 +759,13 @@ seg_is_publish() {
 # line. Quote state follows the shell's (single quotes literal; `\` escapes outside single quotes); a
 # paren inside quotes, or an escaped one (`\(` quoted or not), is left as text and sets PAREN_UNSURE=1
 # (fail CLOSED, see cmd_has_publish): the later split still cuts on it, so a literal `\(cd /tmp\)`
-# would otherwise read as a real `cd`.
+# would otherwise read as a real `cd`. Any backtick sets it too (a `` `cd x` `` substitution).
 PAREN_UNSURE=0
 mark_parens() {
   local s="$1" i=0 n="${#1}" c q="" out=""
+  # a backtick substitution runs in a subshell like `$( … )`, but its open and close are the same
+  # character, so its `cd` cannot be scoped here: any backtick, quoted or not, is untrusted
+  case "$s" in *'`'*) PAREN_UNSURE=1 ;; esac
   while [ "$i" -lt "$n" ]; do
     c="${s:$i:1}"
     if [ "$q" = "'" ]; then
