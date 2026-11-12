@@ -188,9 +188,9 @@ STATE_MD="$SUP_DIR/state.md"
 # WHO owns a run and WHEN it began are knowable before the log's first line
 # exists. Plain `key=value`; no jq needed to read it.
 #
-# `loom_run_owner_seed` is KEPT BYTE-IDENTICAL to the copy in
-# close-stranded-run.sh — change them together;
-# `scripts/test-seed-run-owner.sh` asserts the two bodies match.
+# `loom_run_owner_seed` is KEPT BYTE-IDENTICAL to the copies in
+# close-stranded-run.sh and guard-finalize-publish.sh — change them together;
+# `scripts/test-seed-run-owner.sh` asserts the three bodies match.
 loom_run_owner_seed() {
   # Echo the `cc_session_id` recorded at run creation, or NOTHING when no seed
   # exists / it carries no owner. Always returns 0 — "no seed" and "cannot

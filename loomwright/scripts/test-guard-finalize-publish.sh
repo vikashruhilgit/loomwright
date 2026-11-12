@@ -12,8 +12,9 @@
 # after a passing check -> allowed; HEAD moved after the check -> denied; --skip-children-check -> allowed and recorded `skipped`;
 # non-Supervisor session / terminal session / drain push from another branch / non-publish command
 # -> allowed; the inert path needs no jq; session join via the log-owner cc_session_id (state.md
-# plugin id != payload id, owner == payload id -> ACTIVE); a resumed run (owner != payload id) ->
-# still denied (the documented B2 choice); the writer refuses on `unsettled` (no marker) and removes
+# plugin id != payload id, owner == payload id -> ACTIVE); another session (owner != payload id) on
+# the run's checkout + branch -> still denied (owner decision 2026-11-12; only scope allows — see the
+# "scope by publish target" block); the writer refuses on `unsettled` (no marker) and removes
 # a stale marker; the hooks.json leaf exists with NO `|| true`; MUTATION CONTROL: removing the marker
 # check flips "push before check" to allowed.
 # Hardening (fix-now re-pass): F2 a missing session log -> writer refuses, no marker; zero identity
@@ -109,7 +110,7 @@ run_guard "$RS" "git push -u origin $BR"; expect "git push before check -> denie
 printf '%s' "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
   && ok "deny carries permissionDecision: deny JSON" || no "deny JSON shape"
 run_guard "$RS" "gh pr create --title t --body b"; expect "gh pr create before check -> denied" 2
-run_guard "$RS" "cd /tmp && git push origin HEAD"; expect "chained cd && git push -> denied" 2
+run_guard "$RS" "cd $RS && git push origin HEAD"; expect "chained cd <run checkout> && git push -> denied" 2
 run_guard "$RS" "GIT_TRACE=0 git -C . push"; expect "VAR= git -C . push -> denied" 2
 run_guard "$RS" "git push" "cc-uuid-1"; expect "join: owner == payload sid -> active, reason names this session" 2 "this session"
 
@@ -160,9 +161,98 @@ RD="$(new_repo running)"
 run_guard "$RD" "git push origin fix/drain"; expect "push from a branch other than the run's feature branch -> allowed" 0
 RJ="$(new_repo running cc-uuid-9)"
 run_guard "$RJ" "git push" "cc-uuid-9"; expect "plugin id != payload id but log owner == payload id -> guard ACTIVE" 2 "this session"
-run_guard "$RJ" "git push" "cc-uuid-new"; expect "resumed run (owner != payload id) -> still denied (B2 decision)" 2 "resumed run"
+run_guard "$RJ" "git push" "cc-uuid-new"; expect "another session (owner != payload id) on the run's checkout + branch -> denied" 2 "another session"
 settle_children "$RJ"; write_marker "$RJ"
 run_guard "$RJ" "git push" "cc-uuid-new"; expect "resumed run after a passing check -> allowed" 0
+
+echo "== scope by publish target: an unrelated worktree is not this run; the run's checkout is gated for every session (2026-11-12) =="
+# The incident: session B (cwd = the run's main checkout, which is on the run's branch) ran
+# `cd <its own linked worktree> && git push -u origin <its branch>; gh pr create …` while session A's
+# Supervisor run was live, and both were denied as a "resumed run (log owner differs)". Two causes,
+# each pinned here and by its own mutation control below: the scope read the PROJECT dir instead of
+# the checkout the publish runs in, and every non-owner session was treated as a resumed run.
+# run_guard_json <project dir> <payload json> [script] -> RC / OUT
+run_guard_json() { OUT="$(CLAUDE_PROJECT_DIR="$1" "$REALBASH" "${3:-$GUARD}" 2>/dev/null <<<"$2")"; RC=$?; }
+# payload_full <command> <session id> [cwd] [agent_type] — a PreToolUse[Bash] payload with cwd / agent fields
+payload_full() {
+  jq -n -c --arg c "$1" --arg s "$2" --arg w "${3:-}" --arg t "${4:-}" \
+    '{session_id:$s, hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}}
+     + (if $w == "" then {} else {cwd:$w} end)
+     + (if $t == "" then {} else {agent_id:"a0123456789abcdef", agent_type:$t} end)'
+}
+RU="$(new_repo running)"; FWT="$TMP/wt-foreign.$$"
+( cd "$RU" && git worktree add -q -b fix/unrelated "$FWT" ) >/dev/null 2>&1
+[ -e "$FWT/.git" ] || no "fixture: foreign linked worktree not created"
+PLAIN_Q="$(mktemp -d "$TMP/plain-q.XXXXXX")"   # a non-git dir: out of scope on its own
+INCIDENT="cd $FWT && git push -q -u origin fix/unrelated 2>&1 | tail -2; gh pr create --base main --head fix/unrelated --title t --body b"
+# owner session, publish targets a foreign worktree of the same repo -> allowed (scope alone)
+run_guard_json "$RU" "$(payload_full "$INCIDENT" cc-uuid-1 "$RU")"; expect "own session: cd <foreign worktree> && git push; gh pr create -> allowed" 0
+run_guard_json "$RU" "$(payload_full "git -C $FWT push origin fix/unrelated" cc-uuid-1 "$RU")"; expect "own session: git -C <foreign worktree> push -> allowed" 0
+run_guard_json "$RU" "$(payload_full "git push" cc-uuid-1 "$FWT")"; expect "own session: payload cwd is a foreign worktree (project dir = run checkout) -> allowed" 0
+# a foreign SESSION -> allowed, even on the run's own checkout and branch
+run_guard_json "$RU" "$(payload_full "$INCIDENT" cc-foreign-9 "$RU")"; expect "foreign session: the incident command -> allowed" 0
+run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RU")"; expect "foreign session id on the run's checkout + branch -> denied (gated for every session)" 2 "another session"
+run_guard_json "$RU" "$(payload_full "gh pr create --fill" cc-foreign-9 "$RU")"; expect "foreign session gh pr create from the run's checkout -> denied" 2
+run_guard_json "$RU" "$(payload_full "git push -u origin fix/unrelated" cc-foreign-9 "$FWT")"; expect "foreign session in its own worktree (cwd) -> allowed" 0
+run_guard_json "$RU" "$(payload_full "git -C $FWT push origin fix/unrelated" cc-foreign-9 "$RU")"; expect "foreign session: git -C <its own worktree> push -> allowed" 0
+# the run's own session / subagent / worker payloads -> still denied without the marker
+run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-uuid-1 "$RU")"; expect "own session on the run checkout -> denied" 2 "this session"
+run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-uuid-1 "$RU" loomwright:loomwright:supervisor-runner)"; expect "own subagent payload (agent_type set, parent session id) -> denied" 2
+run_guard_json "$RU" "$(payload_full "gh pr create --fill" cc-uuid-1 "$RU" loomwright:loomwright:worker)"; expect "own worker payload gh pr create -> denied" 2
+run_guard_json "$FWT" "$(payload_full "cd $RU && git push" cc-uuid-1 "$FWT")"; expect "own session: cd <run checkout> from a foreign worktree -> denied" 2
+# every publish counts, and a subshell's cd never leaks out
+run_guard_json "$RU" "$(payload_full "cd $FWT && git push; cd $RU && git push" cc-uuid-1 "$RU")"; expect "own session: second publish back in the run checkout -> denied" 2
+run_guard_json "$RU" "$(payload_full "(cd $FWT && git status); git push" cc-uuid-1 "$RU")"; expect "own session: (cd foreign) restores the dir, then git push -> denied" 2
+run_guard_json "$RU" "$(payload_full "echo \$(cd $FWT && pwd) && git push" cc-uuid-1 "$RU")"; expect "own session: \$(cd foreign) restores the dir -> denied" 2
+run_guard_json "$RU" "$(payload_full "bash -c 'cd $FWT && git push'; git push" cc-uuid-1 "$RU")"; expect "own session: bash -c's cd does not leak -> denied" 2
+run_guard_json "$RU" "$(payload_full "bash -c 'git -C $FWT push'" cc-uuid-1 "$RU")"; expect "own session: bash -c 'git -C foreign push' starts in the segment's dir -> allowed" 0
+# (a quoted `cd x && git push` is split before quotes are read — deny-leaning, see the header)
+# a QUOTED paren never moves the subshell stack, and makes the target unknown (PR #897 review): the
+# `:)` used to pop `( cd <run> …` early, so the push inside the subshell was judged at the outer dir
+QUOTED_PAREN_CASES=(
+  "(cd $RU && git commit -m \"Looks good :)\" ; git push)"
+  "(cd $RU && git commit -m 'see note)' ; git push)"
+  "echo \"\$(cd $PLAIN_Q)\"; git push"
+  "echo \"\\(cd $PLAIN_Q\\)\"; git push"
+  "echo \\(cd $PLAIN_Q\\); git push"
+  "echo \`cd $PLAIN_Q && pwd\`; git push"
+  "echo \"\`cd $PLAIN_Q\`\"; git push"
+)
+for c in "${QUOTED_PAREN_CASES[@]}"; do run_guard_json "$RU" "$(payload_full "$c" cc-uuid-1 "$PLAIN_Q")"; expect "own session, quoted paren [$c] -> denied" 2; done
+run_guard_json "$RU" "$(payload_full "(cd $FWT && git commit -m \"fix(x): y\"; git push)" cc-uuid-1 "$RU")"; expect "own session, quoted paren in a foreign-worktree push -> denied (fail CLOSED, needs the marker)" 2
+# unknown targets fail CLOSED
+UNKNOWN_CASES=(
+  'cd "$WT" && git push'
+  'cd $(git rev-parse --show-toplevel) && git push'
+  'cd - && git push'
+  "cd $TMP/no-such-dir.$$ ; git push"
+  'GIT_DIR=/x/.git git push'
+  "git --work-tree=$FWT push"
+  "env -C $FWT git push"
+  'popd; git push'
+  'pushd; git push'
+  'pushd -q; git push'
+)
+for c in "${UNKNOWN_CASES[@]}"; do run_guard_json "$FWT" "$(payload_full "$c" cc-uuid-1 "$FWT")"; expect "own session, unknown target [$c] -> denied" 2; done
+# another repository on the same branch name, and a plain non-git dir -> allowed
+OTHER="$(mktemp -d "$TMP/other.XXXXXX")"
+( cd "$OTHER" && git init -q . && git config user.email t@e.x && git config user.name t \
+    && echo a > a && git add a && git commit -qm init && git branch -M "$BR" ) >/dev/null 2>&1
+run_guard_json "$RU" "$(payload_full "cd $OTHER && git push -u origin $BR" cc-uuid-1 "$RU")"; expect "own session: another repo on the same branch name -> allowed" 0
+PLAIN="$(mktemp -d "$TMP/plain-dir.XXXXXX")"
+run_guard_json "$RU" "$(payload_full "cd $PLAIN && git push" cc-uuid-1 "$RU")"; expect "own session: a non-git dir -> allowed" 0
+# the run-creation seed wins over a foreign first log line (close-stranded-run.sh's precedence)
+RSD="$(new_repo running cc-foreign-appender)"
+printf 'cc_session_id=cc-uuid-1\nsession_id=%s\nstarted_at=2026-11-12T00:00:00Z\n' "$PSID" > "$RSD/.supervisor/logs/$PSID.owner"
+run_guard_json "$RSD" "$(payload_full "git push" cc-uuid-1 "$RSD")"; expect "seed owner == payload id (log first line foreign) -> denied" 2 "this session"
+run_guard_json "$RSD" "$(payload_full "git push" cc-foreign-appender "$RSD")"; expect "log-first-line session that is not the seed owner -> named another session, denied" 2 "another session"
+# owner unknown / payload id missing -> adopted, denied
+RUK="$(new_repo running)"; : > "$RUK/.supervisor/logs/$PSID.jsonl"
+run_guard_json "$RUK" "$(payload_full "git push" cc-anyone "$RUK")"; expect "owner unknown (empty log, no seed) -> adopted, denied" 2 "owner unknown"
+run_guard_json "$RU" "$(jq -n -c --arg c "git push" '{hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}}')"; expect "payload with no session_id -> denied" 2
+# after a passing check, the own session's publish from the run checkout is allowed
+settle_children "$RU"; write_marker "$RU"
+run_guard_json "$RU" "$(payload_full "git push -u origin $BR" cc-uuid-1 "$RU")"; expect "own session after a passing check -> allowed" 0
 
 echo "== F2: write-marker never turns 'nothing to check' or 'no log' into settled =="
 RL="$(new_repo running)"; rm -f "$RL/.supervisor/logs/$PSID.jsonl"
@@ -487,7 +577,7 @@ run_guard "$RB" "git push" cc-uuid-1 "$MUTF"
 [ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (F3): without bold stripping the bold state.md push goes through" \
   || no "mutation (F3 bold): inconclusive (changed=$MUTOK rc=$RC)"
 # F3c: no detached-sibling allow -> the review-drain sibling push is denied
-mutant m-f3c '/\[ -z "\$cur_branch" \] && \[ -n "\$CHECKOUT" \]/d'
+mutant m-f3c '/\[ -z "\$br" \] && \[ "\$top" != "\$ROOT" \]/d'
 RMS="$(new_repo running)"; SIB2="$TMP/wt-sibling2.$$"    # no marker anywhere: only the sibling rule allows
 ( cd "$RMS" && git worktree add -q --detach "$SIB2" HEAD ) >/dev/null 2>&1
 run_guard "$SIB2" "git push origin HEAD:$BR"; expect "detached sibling with no marker -> allowed by the sibling rule alone" 0
@@ -502,7 +592,7 @@ f4_mut() { # f4_mut <label> <sed program> <case...>
   [ "$MUTOK" = 1 ] && [ "$missed" = "$total" ] && ok "mutation (F4 $label): mutant allows all $total forms" \
     || no "mutation (F4 $label): changed=$MUTOK, mutant allowed only $missed/$total"
 }
-f4_mut "separators" "s/for sep in '&&' '||' ';' '|' '&' '(' ')' '\`'; do/for sep in '\&\&' '||' ';' '|'; do/" \
+f4_mut "separators" "s/for sep in '&&' '||' ';' '|' '&' '(' ')' '\`'; do/for sep in '\&\&' '||' ';' '|'; do/;/NL\\\$OPEN\\\$NL/d;/NL\\\$CLOSE\\\$NL/d" \
   'echo $(git push)' 'echo `git push`' "git push&" "(cd repo && git push)"
 f4_mut "prefix words" '/^      command|exec|time|env|sudo|doas|xargs|nice)$/,/continue ;;$/d' \
   "env -u FOO git push" "sudo -u me git push" "echo x | xargs git push" "exec git push"
@@ -517,6 +607,82 @@ f4_mut "redirect-aware split" '/s="\${s\/\/">&"\/\$GT\$AMP}"/d' \
 # redirect-dropping tokenizer: treating `<` `>` as ordinary word chars keeps `>/dev/null` as the "subcommand"
 f4_mut "redirect tokens" "s/^        '>'|'<'|\"\$AMP\")\$/        no-redirect-chars)/" \
   "git >/dev/null push" "git 2>err.log push" "git > /dev/null push" "git push>/dev/null"
+
+# scope / owner (2026-11-12): each of the two root causes, restored alone, re-denies the incident
+cp "$HERE/loom-log-owner.sh" "$HERE/check-children-settled.sh" "$TMP/" 2>/dev/null
+RMI="$(new_repo running)"; MWT="$TMP/wt-foreign-m.$$"
+( cd "$RMI" && git worktree add -q -b fix/unrelated "$MWT" ) >/dev/null 2>&1
+MINC="cd $MWT && git push -q -u origin fix/unrelated; gh pr create --head fix/unrelated --fill"
+#  (a) scope read from the base dir only (the old project-dir rule): the own session's incident push is denied
+mutant m-scope 's/publish_in_scope "\$pd" \&\& scoped=0/publish_in_scope "$BASE_DIR" \&\& scoped=0/'
+run_guard_json "$RMI" "$(payload_full "$MINC" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && ok "mutation (scope): judging the base dir instead of the publish target denies the incident push — the walk is load-bearing" \
+  || no "mutation (scope): inconclusive (changed=$MUTOK rc=$RC)"
+#  (b) the broader join restored (a non-owner session is allowed outright): a foreign session pushing
+#      the run's branch from the run's checkout escapes — the every-session gate is load-bearing
+mutant m-owner 's/^if \[ -z "\$owner" \]; then join="owner unknown"$/[ -n "$owner" ] \&\& [ "$owner" != "$payload_sid" ] \&\& allow; if [ -z "$owner" ]; then join="owner unknown"/'
+run_guard_json "$RMI" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (every-session gate): allowing a non-owner outright lets a foreign push of the run's branch escape" \
+  || no "mutation (every-session gate): inconclusive (changed=$MUTOK rc=$RC)"
+run_guard_json "$RMI" "$(payload_full "git push -u origin $BR" cc-foreign-9 "$RMI")"; expect "foreign session on the run checkout (unmutated) -> denied" 2
+#  (c) the scope fault restored: the exact incident (a foreign session, cd into its own worktree) is denied again
+run_guard_json "$RMI" "$(payload_full "$MINC" cc-foreign-9 "$RMI")"; expect "the incident command from a foreign session (unmutated) -> allowed" 0
+mutant m-both 's/publish_in_scope "\$pd" \&\& scoped=0/publish_in_scope "$BASE_DIR" \&\& scoped=0/'
+run_guard_json "$RMI" "$(payload_full "$MINC" cc-foreign-9 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && grep -qF "run FINALIZE point 5 first" <<<"$OUT" \
+  && ok "mutation (incident): with the project-dir scope restored the 2026-11-12 incident is denied again" \
+  || no "mutation (incident): inconclusive (changed=$MUTOK rc=$RC)"
+#  (d) the subshell restore removed: (cd foreign); git push escapes the gate
+mutant m-paren '/NL\$OPEN\$NL/d;/NL\$CLOSE\$NL/d'
+run_guard_json "$RMI" "$(payload_full "(cd $MWT && git status); git push" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (subshell): without the ( ) restore a subshell cd leaks and the push escapes — the restore is load-bearing" \
+  || no "mutation (subshell): inconclusive (changed=$MUTOK rc=$RC)"
+
+#  (e) quoted parens trusted again (no PAREN_UNSURE target): the review's `:)` case is still denied
+#      by mark_parens alone; restoring the old quote-UNAWARE marking as well lets it escape
+mutant m-unsure '/\[ "\$PAREN_UNSURE" = 1 \] && PUB_DIRS/d'
+RCQ="(cd $RMI && git commit -m \"Looks good :)\" ; git push)"
+MPLAIN="$(mktemp -d "$TMP/plain-m.XXXXXX")"
+run_guard_json "$RMI" "$(payload_full "$RCQ" cc-uuid-1 "$MPLAIN")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && ok "mutation (unsure): quote-aware marking alone keeps the subshell open past a quoted ')'" \
+  || no "mutation (unsure): inconclusive (changed=$MUTOK rc=$RC)"
+run_guard_json "$RMI" "$(payload_full "echo \"\$(cd $MPLAIN)\"; git push" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (unsure): without PAREN_UNSURE a cd inside a quoted \$( ) leaks and the push escapes — the flag is load-bearing" \
+  || no "mutation (unsure, quoted subst): inconclusive (changed=$MUTOK rc=$RC)"
+mutant m-quoteblind 's/  mark_parens "\$s"; s="\$MARKED"/  s="${s\/\/"("\/$NL$OPEN$NL}"; s="${s\/\/")"\/$NL$CLOSE$NL}"/;/\[ "\$PAREN_UNSURE" = 1 \] \&\& PUB_DIRS/d'
+run_guard_json "$RMI" "$(payload_full "$RCQ" cc-uuid-1 "$MPLAIN")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (quote-blind parens): the review's '(cd <run> && git commit -m \"…:)\"; git push)' escapes — the quote-aware marking is load-bearing" \
+  || no "mutation (quote-blind parens): inconclusive (changed=$MUTOK rc=$RC)"
+
+#  (f) bare `pushd` read as `cd $HOME` again: from the run's checkout the push escapes (HOME is not it)
+mutant m-pushd 's/      elif \[ "\$prog" = cd \]; then CUR_DIR="\$HOME"/      elif :; then CUR_DIR="$HOME"/'
+run_guard_json "$RMI" "$(payload_full "pushd; git push -u origin $BR" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (bare pushd): reading it as cd \$HOME lets the run checkout's push escape — the unknown rule is load-bearing" \
+  || no "mutation (bare pushd): inconclusive (changed=$MUTOK rc=$RC)"
+run_guard_json "$RMI" "$(payload_full "pushd; git push -u origin $BR" cc-uuid-1 "$RMI")"; expect "own session: bare pushd; git push from the run checkout -> denied" 2
+
+#  (g) escaped parens trusted again: `echo "\(cd <plain>\)"; git push` from the run checkout escapes
+mutant m-escparen 's/PAREN_UNSURE=1 ;; esac ;;$/: ;; esac ;;/'
+for c in "echo \"\\(cd $MPLAIN\\)\"; git push" "echo \\(cd $MPLAIN\\); git push"; do
+  run_guard_json "$RMI" "$(payload_full "$c" cc-uuid-1 "$RMI")" "$MUTF"
+  [ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (escaped paren): without the flag [$c] escapes — load-bearing" \
+    || no "mutation (escaped paren) [$c]: inconclusive (changed=$MUTOK rc=$RC)"
+done
+
+#  (h) backticks trusted again: `echo `cd <plain> && pwd`; git push` from the run checkout escapes
+mutant m-backtick "s/^  case \"\\\$s\" in \*'\`'\*) PAREN_UNSURE=1 ;; esac$/  :/"
+run_guard_json "$RMI" "$(payload_full "echo \`cd $MPLAIN && pwd\`; git push" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (backtick): without the flag a backtick substitution's cd leaks and the push escapes — load-bearing" \
+  || no "mutation (backtick): inconclusive (changed=$MUTOK rc=$RC)"
+
+#  (i) literal marker bytes in the command: `cd <plain> ; ^C ; cd <run> ; ^D ; git push` forged a
+#      subshell around the real cd and judged the run checkout's push at <plain>
+FORGE="cd $MPLAIN ;$(printf '\003');cd $RMI ;$(printf '\004');git push"
+run_guard_json "$RMI" "$(payload_full "$FORGE" cc-uuid-1 "$RMI")"; expect "own session: forged OPEN/CLOSE bytes around a real cd -> denied" 2
+mutant m-sentinel '/^  case "\$s" in \*"\$AMP"\*|/d'
+run_guard_json "$RMI" "$(payload_full "$FORGE" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (sentinel bytes): without the check the forged markers let the push escape — load-bearing" \
+  || no "mutation (sentinel bytes): inconclusive (changed=$MUTOK rc=$RC)"
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"

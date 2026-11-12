@@ -47,8 +47,10 @@
 #
 # WHERE: `.supervisor/` is read from the MAIN worktree (loom_main_root, loom-log-owner.sh — the same
 # anchoring build-state.sh and the emitters use, sourced), so a session whose project dir is a LINKED
-# worktree still sees the run. HEAD and the current branch are read from the project dir
-# (`${CLAUDE_PROJECT_DIR:-$PWD}`) — the checkout the publish runs from.
+# worktree still sees the run. HEAD and the current branch are read from the checkout each publish
+# RUNS IN — the payload's `cwd` moved by any `cd` / `git -C` before it (step (iv)'s walk), never just
+# the session's project dir: a session in the main checkout that runs `cd <other-worktree> && git push`
+# publishes that worktree's branch, not the run's. write-marker still records the project dir's HEAD.
 #
 # HOST MODE (`LOOMWRIGHT_HOST_MODE=1`, host-mode.sh — sourced, the one resolver): the marker and the
 # session log (+ its `.owner`) live in the gate dir's logs/ (host-mode.sh), never the repo; state.md is
@@ -80,10 +82,14 @@
 #         options; the program's basename is matched (`/usr/bin/git`); git/gh GLOBAL options before
 #         the subcommand are walked (`git --no-pager push`, `gh -R o/r pr create`); `bash|sh|zsh|dash|
 #         ksh -c <string>` and `eval <words>` are unwrapped (nesting depth <= 3).
-#   (v)   the project dir is a DETACHED linked worktree (the review-drain sibling) -> allow; or
-#         state.md records a `- branch:` and the checkout is on a different branch -> allow
-#   (vi)  session join (below)                                     -> deny unless the marker exists,
-#         names children_check settled|no_identity_rows|skipped, and its head_sha equals HEAD.
+#         The walk also records the directory each publish runs in (payload `cwd`, then `cd` /
+#         `pushd` / `git -C`; `( … )` restores it; anything it cannot resolve is unknown = in scope).
+#   (v)   session join (below): names which session is publishing, for the deny reason only
+#   (vi)  scope: every publish runs outside the run's checkout — not a git checkout, another repo,
+#         a DETACHED linked worktree (the review-drain sibling), or a branch other than state.md's
+#         `- branch:` -> allow. Otherwise                           -> deny unless the marker exists,
+#         names children_check settled|no_identity_rows|skipped, and its head_sha equals the HEAD of
+#         every in-scope checkout.
 #
 # KNOWN LIMITS (allowed, not detected — the guard is a tripwire for the documented publish steps,
 # not a sandbox): a publish behind a variable or alias (`$G push`, `g=git; $g push`, a git alias such
@@ -91,11 +97,15 @@
 # other wrappers (`ssh host git push`, `watch`, `parallel`, `caffeinate`, `script`, `env -S "…"`);
 # nesting deeper than 3; other publish channels (`gh api …/pulls -X POST`, `git send-pack`, `curl` to
 # the API, `hub`); a push from a detached linked worktree; a redirection whose target is itself a
-# command substitution (`git >"$(…)" push` is cut at `(`). Splitting inside quotes is deliberate and
+# command substitution (`git >"$(…)" push` is cut at `(`); a refspec naming the run's branch from
+# another checkout (`git push origin HEAD:<run-branch>` is scoped by the checkout, not the refspec);
+# a `cd` in a pipeline element or behind a background `&` is read as if it leaked (it does not). Splitting inside quotes is deliberate and
 # deny-leaning: `git commit -m "a && git push"` is denied, `git commit -m "push it"` is not.
 #
-# WHICH PUBLISHES ARE GATED (decision): every push from the run's feature-branch checkout while
-# `## Session` is running|checkpoint — FINALIZE's push + `gh pr create` AND each Phase 4.5 heal push
+# WHICH PUBLISHES ARE GATED (decision): every push that runs in the run's feature-branch checkout
+# while `## Session` is running|checkpoint, WHICHEVER Claude Code session issues it (the owner, its
+# subagents and workers, or any other session). A publish from another worktree or checkout, or on
+# another branch, is allowed for every session (step (vi)). That covers FINALIZE's push + `gh pr create` AND each Phase 4.5 heal push
 # (self-heal-advisory runs write-marker before each one). Inline drains — `/automate`'s owned
 # `/review-pr --until-mergeable` drain, its fix-now re-drain, `/autonomous` EVALUATE's review-heal —
 # share the Claude Code session but run only after the inner Supervisor's `session_end` made the
@@ -103,15 +113,17 @@
 # finished run's log). If `session_end` never landed (a crashed run), a drain push on the run's
 # branch IS gated: run write-marker, or close the stranded run (close-stranded-run.sh).
 #
-# SESSION JOIN (B2): the plugin session id comes from `.supervisor/state.md`; its log owner is read
-# by loom_log_owner (loom-log-owner.sh — the SAME rule emit-lifecycle.sh uses, sourced, never
-# restated). Owner == payload `session_id` -> this session's run. Owner empty -> adopt (the shared
-# rule's "unknown owner means adopt"). Owner != payload session_id -> a RESUMED run (`/supervisor
-# --continue` in a new Claude Code session) of the same checkout: DECISION — still require the marker
-# (fail CLOSED), because `--continue` is a documented Supervisor path that also reaches FINALIZE and a
-# non-terminal `## Session` block means a run is in flight in THIS checkout. Consequence (accepted): a
-# human pushing the run's feature branch from another tab while the run is non-terminal is refused
-# too; the escape is `write-marker --skip-children-check`, which records the skip.
+# SESSION JOIN (B2, 2026-11-12): the plugin session id comes from `.supervisor/state.md`; the run's
+# owner is the run-creation seed `.supervisor/logs/<id>.owner` (seed-run-owner.sh) first, then the
+# log's first line by loom_log_owner (loom-log-owner.sh — the SAME rule emit-lifecycle.sh uses,
+# sourced, never restated). The join only names the publishing session in the deny reason ("this
+# session", "owner unknown", "another session"); it never decides. DECISION (owner, 2026-11-12):
+# a publish that runs in the run's checkout on the run's branch is gated for EVERY session — a
+# resumed `/supervisor --continue` in a new Claude Code session, and a human pushing the run's branch
+# from another tab, are refused too; the escape is `write-marker --skip-children-check`, which
+# records the skip. What changed is scope (step (vi)): before, the branch was read from the
+# session's project dir, so a session whose cwd was the run's checkout but whose push ran in its own
+# worktree (`cd <wt> && git push`) was judged on the run's branch and denied.
 #
 # DENY MECHANICS: exit 2 AND `hookSpecificOutput.permissionDecision: "deny"` JSON on stdout, one
 # stderr line — exactly guard-test-integrity.sh's shape. bash 3.2 / BSD userland safe.
@@ -603,9 +615,44 @@ skip_opts() {
   printf '%s' "$i"
 }
 
-# seg_is_publish <segment> <depth>
+# ---- where each publish runs (scope, step (v)) ----------------------------------------------------
+# The checkout a publish targets is NOT the session's project dir: `cd <wt> && git push`, `git -C <wt>
+# push` and a shell whose cwd is a linked worktree all publish from somewhere else. The walk below
+# tracks the directory each simple command runs in, starting at the payload's `cwd` (the Bash tool's
+# working directory; $PROJ when the payload carries none), and records one entry in PUB_DIRS per
+# publish found. UNKNOWN is `?` and is IN scope (fail CLOSED): a `cd` / `-C` target behind a variable,
+# substitution, glob or `~user`, `cd -`, `popd`, `--git-dir` / `--work-tree` / `GIT_DIR=` /
+# `GIT_WORK_TREE=`, `env -C`, a relative path from an unknown dir, and a target that does not exist.
+# `(` … `)` (a subshell or `$(…)`) restores the directory on close — a `cd` inside it never leaks out.
+# Only UNQUOTED parens drive that; a quoted `(` / `)` anywhere in the command makes the target unknown.
+# KNOWN LIMIT: a `cd` in a pipeline element or behind a background `&` is read as leaking (the shell
+# runs it in a subshell); `pushd <dir>` is read as `cd <dir>`, a bare `pushd` and `popd` as unknown.
+UNK='?'
+BASE_DIR=""; CUR_DIR=""
+PUB_DIRS=()
+OPEN=$'\003'; CLOSE=$'\004'; STK_SEP=$'\002'
+
+# resolve_dir <from> <arg> -> RES_DIR: <arg> resolved against <from>, or $UNK
+resolve_dir() {
+  local b="$1" a="$2"
+  RES_DIR="$UNK"
+  case "$a" in
+    ""|-|*'$'*|*'`'*|*'*'*|*'?'*|*'['*) return 0 ;;
+    "~") a="$HOME" ;;
+    "~/"*) a="$HOME/${a#\~/}" ;;
+    "~"*) return 0 ;;
+  esac
+  case "$a" in
+    /*) RES_DIR="$a" ;;
+    *) [ "$b" = "$UNK" ] || RES_DIR="$b/$a" ;;
+  esac
+  return 0
+}
+
+# seg_is_publish <segment> <depth> — exit 0 when the segment is (or wraps) a publish; each publish
+# appends the directory it runs in to PUB_DIRS. A `cd` segment moves CUR_DIR.
 seg_is_publish() {
-  local depth="$2" i=0 j w prog rest
+  local depth="$2" i=0 j k w prog rest seg_dir="$CUR_DIR" save_dir found=1
   tokenize "$1"
   [ "${#TOK[@]}" -gt 0 ] || return 1
   local words=("${TOK[@]}")
@@ -616,39 +663,77 @@ seg_is_publish() {
       # (unquoted redirections never reach here — tokenize drops them, operator + target)
       '{'|'!'|if|then|else|elif|do|while|until|nohup|builtin) i=$((i + 1)); continue ;;
       command|exec|time|env|sudo|doas|xargs|nice)
-        i="$(skip_opts "$w" $((i + 1)))"; continue ;;
+        k="$(skip_opts "$w" $((i + 1)))"
+        # a wrapper that changes directory (`env -C d`, `sudo -D d`): the target is unknown
+        j=$((i + 1))
+        while [ "$j" -lt "$k" ]; do
+          case "${words[$j]}" in -C|-D|--chdir|--chdir=*) seg_dir="$UNK" ;; esac
+          j=$((j + 1))
+        done
+        i="$k"; continue ;;
       timeout|gtimeout)
         i="$(skip_opts "$w" $((i + 1)))"; i=$((i + 1)); continue ;;
       eval)
+        # eval runs in THIS shell: its `cd` moves CUR_DIR for the segments after it
         rest="${words[*]:$((i + 1))}"
         [ "$depth" -lt 3 ] && cmd_has_publish "$rest" $((depth + 1)) && return 0
         return 1 ;;
     esac
-    if [[ "$w" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then i=$((i + 1)); continue; fi
+    if [[ "$w" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      case "$w" in GIT_DIR=*|GIT_WORK_TREE=*) seg_dir="$UNK" ;; esac
+      i=$((i + 1)); continue
+    fi
     break
   done
   prog="${words[$i]:-}"
   prog="${prog##*/}"            # `/usr/bin/git` -> git
   case "$prog" in
+    cd|pushd)
+      j=$((i + 1))
+      while [ "$j" -lt "${#words[@]}" ]; do
+        case "${words[$j]}" in --) j=$((j + 1)); break ;; -?*) j=$((j + 1)) ;; *) break ;; esac
+      done
+      if [ "$j" -lt "${#words[@]}" ]; then resolve_dir "$seg_dir" "${words[$j]}"; CUR_DIR="$RES_DIR"
+      elif [ "$prog" = cd ]; then CUR_DIR="$HOME"
+      else CUR_DIR="$UNK"; fi   # bare `pushd` swaps the dir stack (or fails and stays): unknown
+      return 1 ;;
+    popd) CUR_DIR="$UNK"; return 1 ;;
     git)
-      i="$(skip_opts git $((i + 1)))"
-      [ "${words[$i]:-}" = "push" ] && return 0 ;;
+      k="$(skip_opts git $((i + 1)))"
+      [ "${words[$k]:-}" = "push" ] || return 1
+      # git's own directory options between `git` and `push` (`-C` stacks, as git applies it)
+      j=$((i + 1))
+      while [ "$j" -lt "$k" ]; do
+        case "${words[$j]}" in
+          -C) resolve_dir "$seg_dir" "${words[$((j + 1))]:-}"; seg_dir="$RES_DIR"; j=$((j + 2)) ;;
+          --git-dir|--work-tree) seg_dir="$UNK"; j=$((j + 2)) ;;
+          --git-dir=*|--work-tree=*) seg_dir="$UNK"; j=$((j + 1)) ;;
+          -c|--namespace|--exec-path|--config-env|--super-prefix|--attr-source) j=$((j + 2)) ;;
+          *) j=$((j + 1)) ;;
+        esac
+      done
+      PUB_DIRS[${#PUB_DIRS[@]}]="$seg_dir"; return 0 ;;
     gh)
       i="$(skip_opts gh $((i + 1)))"
       [ "${words[$i]:-}" = "pr" ] || return 1
       # gh's persistent flags (-R/--repo) are also accepted between `pr` and `create`
       i="$(skip_opts gh $((i + 1)))"
-      [ "${words[$i]:-}" = "create" ] && return 0 ;;
+      [ "${words[$i]:-}" = "create" ] || return 1
+      PUB_DIRS[${#PUB_DIRS[@]}]="$seg_dir"; return 0 ;;
     bash|sh|zsh|dash|ksh)
-      # unwrap `<shell> [opts] -c <string>` (also -lc / -ec …): the string is a command line
+      # unwrap `<shell> [opts] -c <string>` (also -lc / -ec …): the string is a command line, run in a
+      # CHILD shell — it starts in this segment's directory and its own `cd` never leaks back out
       j=$((i + 1))
       while [ "$j" -lt "${#words[@]}" ]; do
         case "${words[$j]}" in
           --rcfile|--init-file|-o|+o|-O|+O) j=$((j + 2)) ;;
           --*) j=$((j + 1)) ;;
           -*c*)
-            [ "$depth" -lt 3 ] && cmd_has_publish "${words[$((j + 1))]:-}" $((depth + 1)) && return 0
-            return 1 ;;
+            [ "$depth" -lt 3 ] || return 1
+            save_dir="$CUR_DIR"; CUR_DIR="$seg_dir"
+            cmd_has_publish "${words[$((j + 1))]:-}" $((depth + 1)) && found=0
+            CUR_DIR="$save_dir"
+            return "$found" ;;
           -*|+*) j=$((j + 1)) ;;
           *) return 1 ;;          # a script file: not unwrapped (KNOWN LIMIT)
         esac
@@ -657,59 +742,145 @@ seg_is_publish() {
   return 1
 }
 
-# cmd_has_publish <command string> <depth> — split into simple-command segments and walk each.
+# cmd_has_publish <command string> <depth> — split into simple-command segments and walk EVERY one
+# (a later publish may run somewhere an earlier one does not); exit 0 when any is a publish.
 # The split runs BEFORE quotes are read, on && || ; | & ( ) and backticks (so `$(…)`, subshells and
 # a background `&` cut cleanly) plus newlines, after joining backslash-newlines. An `&` that belongs
 # to a redirection operator (`>&` `<&` `&>`) is first swapped for AMP so it does NOT cut: splitting
 # `git 2>&1 push` there would shear the program from its subcommand. `>|` (noclobber override) is
 # folded to `>` for the same reason. It also cuts inside quotes: a quoted `a && git push` is then
 # treated as a command (deny-leaning, accepted), while a quoted bare word such as `-m "push it"`
-# stays an argument.
+# stays an argument. An UNQUOTED `(` / `)` also leaves an OPEN / CLOSE line that saves and restores
+# CUR_DIR (mark_parens); an unbalanced `)` leaves it unknown. A `(` / `)` inside quotes never moves
+# the stack — it would pop it early (`(cd <run> && git commit -m "ok :)"; git push)` judged the push
+# at the outer dir) — and instead sets PAREN_UNSURE, which puts an unknown (in-scope) target on
+# PUB_DIRS: quoted parens may hide a real `$( … )`, so the walk's directories are not trusted.
+# mark_parens <string> -> MARKED: <string> with each UNQUOTED `(` / `)` replaced by an OPEN / CLOSE
+# line. Quote state follows the shell's (single quotes literal; `\` escapes outside single quotes); a
+# paren inside quotes, or an escaped one (`\(` quoted or not), is left as text and sets PAREN_UNSURE=1
+# (fail CLOSED, see cmd_has_publish): the later split still cuts on it, so a literal `\(cd /tmp\)`
+# would otherwise read as a real `cd`. Any backtick sets it too (a `` `cd x` `` substitution).
+PAREN_UNSURE=0
+mark_parens() {
+  local s="$1" i=0 n="${#1}" c q="" out=""
+  # a backtick substitution runs in a subshell like `$( … )`, but its open and close are the same
+  # character, so its `cd` cannot be scoped here: any backtick, quoted or not, is untrusted
+  case "$s" in *'`'*) PAREN_UNSURE=1 ;; esac
+  while [ "$i" -lt "$n" ]; do
+    c="${s:$i:1}"
+    if [ "$q" = "'" ]; then
+      case "$c" in "'") q="" ;; '('|')') PAREN_UNSURE=1 ;; esac
+      out="$out$c"
+    elif [ "$q" = '"' ]; then
+      case "$c" in
+        '"') q="" ;;
+        '\') out="$out$c"; i=$((i + 1)); c="${s:$i:1}"
+             case "$c" in '('|')') PAREN_UNSURE=1 ;; esac ;;
+        '('|')') PAREN_UNSURE=1 ;;
+      esac
+      out="$out$c"
+    else
+      case "$c" in
+        "'"|'"') q="$c"; out="$out$c" ;;
+        '\') out="$out$c"; i=$((i + 1)); out="$out${s:$i:1}"
+             case "${s:$i:1}" in '('|')') PAREN_UNSURE=1 ;; esac ;;
+        '(') out="$out$NL$OPEN$NL" ;;
+        ')') out="$out$NL$CLOSE$NL" ;;
+        *) out="$out$c" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  MARKED="$out"
+}
 cmd_has_publish() {
-  local s="$1" depth="${2:-0}" sep seg GT='>' LT='<'
+  local s="$1" depth="${2:-0}" sep seg GT='>' LT='<' stk="" any=1
+  # the walk's own marker bytes (AMP, OPEN, CLOSE, STK_SEP) must never come from the command itself: a
+  # literal one could forge a subshell open/close and move CUR_DIR -> untrusted, target unknown
+  case "$s" in *"$AMP"*|*"$OPEN"*|*"$CLOSE"*|*"$STK_SEP"*) PAREN_UNSURE=1 ;; esac
   s="${s//\\$NL/ }"
   # replacements are plain variable expansions: bash 3.2 keeps literal quotes in a quoted replacement
   s="${s//">|"/$GT}"
   s="${s//"&&"/$NL}"            # before the redirect swap: `x&&>f` is `x && >f`, never `x & &>f`
   s="${s//">&"/$GT$AMP}"; s="${s//"<&"/$LT$AMP}"; s="${s//"&>"/$AMP$GT}"
+  mark_parens "$s"; s="$MARKED"
   for sep in '&&' '||' ';' '|' '&' '(' ')' '`'; do s="${s//"$sep"/$NL}"; done
   while IFS= read -r seg; do
     seg="${seg#"${seg%%[![:space:]]*}"}"
     [ -n "$seg" ] || continue
-    seg_is_publish "$seg" "$depth" && return 0
+    if [ "$seg" = "$OPEN" ]; then stk="$CUR_DIR$STK_SEP$stk"; continue; fi
+    if [ "$seg" = "$CLOSE" ]; then
+      if [ -n "$stk" ]; then CUR_DIR="${stk%%"$STK_SEP"*}"; stk="${stk#*"$STK_SEP"}"; else CUR_DIR="$UNK"; fi
+      continue
+    fi
+    seg_is_publish "$seg" "$depth" && any=0
   done <<EOF
 $s
 EOF
-  return 1
+  return "$any"
 }
+BASE_DIR="$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null)"
+case "$BASE_DIR" in /*) [ -d "$BASE_DIR" ] || BASE_DIR="" ;; *) BASE_DIR="" ;; esac
+[ -n "$BASE_DIR" ] || BASE_DIR="$PROJ"
+CUR_DIR="$BASE_DIR"
 cmd_has_publish "$CMD" 0 || allow
+# a publish that recorded no directory (a detector that only answers yes/no) is unknown -> in scope
+[ "${#PUB_DIRS[@]}" -gt 0 ] || PUB_DIRS[0]="$UNK"
+# a quoted `(` / `)` anywhere: the directory walk is not trusted -> an unknown target, in scope
+[ "$PAREN_UNSURE" = 1 ] && PUB_DIRS[${#PUB_DIRS[@]}]="$UNK"
 [ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
 
-# (v) scope: only a publish from the run's own feature-branch checkout is this run's publish.
-# A DETACHED LINKED worktree (the dispatcher's review-drain sibling, `git push origin HEAD:<ref>`)
-# is not the run's checkout -> allow. A checkout on a branch other than the `## Session` block's
-# `- branch:` (a drain fix push / human push from another branch) -> allow.
-CHECKOUT="$(git -C "$PROJ" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
-cur_branch="$(git -C "$PROJ" branch --show-current 2>/dev/null)"
-[ -z "$cur_branch" ] && [ -n "$CHECKOUT" ] && [ "$CHECKOUT" != "$ROOT" ] && allow
-if [ -n "$SESSION_BRANCH" ]; then
-  [ -n "$cur_branch" ] && [ "$cur_branch" != "$SESSION_BRANCH" ] && allow
-fi
-
-# (vi) session join — reuse THE ownership rule (loom-log-owner.sh), never a restated copy
+# (v) session join — names WHO is publishing, for the deny reason only; it never allows (owner
+# decision 2026-11-12: a publish that runs in the run's own checkout on the run's own branch is the
+# run's publish whichever session issues it). The owner is the run-creation seed `<id>.owner`
+# (seed-run-owner.sh) FIRST, the log's first line second (loom_log_owner — reused, never restated);
+# where they disagree the seed wins, because the disagreement is a foreign append
+# (close-stranded-run.sh's precedence).
 [ "$HELPER_OK" = 1 ] || deny "guard_unavailable: loom-log-owner.sh missing"
+# KEPT BYTE-IDENTICAL to the copies in close-stranded-run.sh and build-state.sh
+# (`scripts/test-seed-run-owner.sh` asserts all three bodies match).
+loom_run_owner_seed() {
+  # Echo the `cc_session_id` recorded at run creation, or NOTHING when no seed
+  # exists / it carries no owner. Always returns 0 — "no seed" and "cannot
+  # tell" are the same answer, and both mean "fall back to the log".
+  local _seed="${1:-}"
+  [ -n "$_seed" ] && [ -f "$_seed" ] && [ -r "$_seed" ] || return 0
+  sed -nE 's/^cc_session_id=//p' "$_seed" 2>/dev/null | head -1 || true
+  return 0
+}
 owner=""
-[ "$GATE_ABSENT" = 1 ] || owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
-payload_sid="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
-# owner == payload_sid: this session's run. owner empty: adopt. owner != payload_sid: a resumed run
-# of this checkout — the header's documented DECISION is to require the marker all the same.
-# All three paths therefore converge on the marker check below; the join is computed so the deny
-# reason names which case fired.
-if [ -z "$owner" ] || [ "$owner" = "$payload_sid" ]; then
-  join="this session"
-else
-  join="resumed run (log owner differs)"
+if [ "$GATE_ABSENT" != 1 ]; then
+  owner="$(loom_run_owner_seed "$LOG_DIR/$SESSION_ID.owner" | tr -cd 'A-Za-z0-9_-')"
+  [ -n "$owner" ] || owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
 fi
+payload_sid="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+if [ -z "$owner" ]; then join="owner unknown"
+elif [ "$owner" = "$payload_sid" ]; then join="this session"
+else join="another session — a publish from the run's checkout on the run's branch is gated for every session"; fi
+
+# (vi) scope: only a publish that runs IN the run's own feature-branch checkout is this run's publish
+# (each entry of PUB_DIRS, step (v)'s walk; any one in scope gates the command). Out of scope -> allow:
+# a directory that is not a git checkout (nothing of this repo to publish); a checkout of ANOTHER
+# repository; a DETACHED LINKED worktree (the dispatcher's review-drain sibling, `git push origin
+# HEAD:<ref>`); a checkout on a branch other than the `## Session` block's `- branch:` (a drain fix
+# push, or another worktree's own branch). HEAD_DIRS collects the in-scope checkouts whose HEAD the
+# marker must match; an unknown target is checked against BASE_DIR.
+HEAD_DIRS=()
+publish_in_scope() {
+  local d="$1" top main br
+  if [ "$d" = "$UNK" ] || [ ! -d "$d" ]; then HEAD_DIRS[${#HEAD_DIRS[@]}]="$BASE_DIR"; return 0; fi
+  top="$(git -C "$d" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] || return 1
+  main="$(loom_main_root "$d" 2>/dev/null)"
+  [ -n "$main" ] && [ "$main" != "$ROOT" ] && return 1
+  br="$(git -C "$d" branch --show-current 2>/dev/null)"
+  [ -z "$br" ] && [ "$top" != "$ROOT" ] && return 1
+  [ -n "$SESSION_BRANCH" ] && [ -n "$br" ] && [ "$br" != "$SESSION_BRANCH" ] && return 1
+  HEAD_DIRS[${#HEAD_DIRS[@]}]="$d"; return 0
+}
+scoped=1
+for pd in "${PUB_DIRS[@]}"; do publish_in_scope "$pd" && scoped=0; done
+[ "$scoped" = 0 ] || allow
 
 MARKER="$LOG_DIR/$SESSION_ID.finalize-gate"
 [ "$GATE_ABSENT" = 1 ] && MARKER=""   # host mode, no gate dir yet: there is no marker (never `/<id>…`)
@@ -720,7 +891,9 @@ case "$m_check" in
   settled|no_identity_rows|skipped) ;;
   *) deny "$REASON_FIRST (finalize-gate marker unreadable or children_check='$m_check')" ;;
 esac
-cur_head="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null)"
-[ -n "$cur_head" ] && [ "$m_head" = "$cur_head" ] \
-  || deny "$REASON_FIRST (HEAD moved since the check: marker ${m_head:-none} != HEAD ${cur_head:-unknown}; re-run write-marker)"
+for hd in "${HEAD_DIRS[@]}"; do
+  cur_head="$(git -C "$hd" rev-parse HEAD 2>/dev/null)"
+  [ -n "$cur_head" ] && [ "$m_head" = "$cur_head" ] \
+    || deny "$REASON_FIRST (HEAD moved since the check: marker ${m_head:-none} != HEAD ${cur_head:-unknown}; re-run write-marker)"
+done
 allow

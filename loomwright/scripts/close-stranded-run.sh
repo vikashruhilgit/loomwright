@@ -254,8 +254,8 @@ OWNER_FILE="$LOG_DIR/${PLUGIN_SESSION_ID}.owner"
 # JSON payload via jq — with no jq the known-owner branch below is taken with
 # an empty `CC_SESSION_ID` and this script withholds, exactly as before.
 #
-# KEPT BYTE-IDENTICAL to the copy in build-state.sh — change them together.
-# `scripts/test-seed-run-owner.sh` asserts the two bodies match.
+# KEPT BYTE-IDENTICAL to the copies in build-state.sh and guard-finalize-publish.sh — change them together.
+# `scripts/test-seed-run-owner.sh` asserts the three bodies match.
 loom_run_owner_seed() {
   # Echo the `cc_session_id` recorded at run creation, or NOTHING when no seed
   # exists / it carries no owner. Always returns 0 — "no seed" and "cannot
