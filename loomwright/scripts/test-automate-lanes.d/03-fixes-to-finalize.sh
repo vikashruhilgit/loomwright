@@ -1011,3 +1011,88 @@ check "AE7b a merged re-run (phase closeout) names it and the state it read back
 : > "$META_LOG"; out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L94")"; rc=$?
 check "AE7c a re-run on the closed-out lane (phase closed) says it is a metadata push retry" "$rc:$(ae7_msg)" \
   "0:chore(supervisor): $PARENT9-L4 wave-end re-run (metadata push retry)"
+
+# ---- E890: a lane parked escalated / failed / drain_died whose PR was closed unmerged reads `gone` ----
+# Issue #890: lane-status ran its PR check only for the READY parks, so an escalated lane whose PR the
+# owner closed kept reading `escalated`, and lane-remove --abandon (which records only a `gone` lane)
+# refused it `metadata not pushed` forever. Same real scripts ($SC, branch mode on) and fake metadata
+# remote as Z-F11/AB, on a remote of its own.
+mkdir -p "$T/remote-e890"
+cat > "$T/e9-gh-fail" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >> "$T_ABGH"; exit 1
+EOF
+chmod +x "$T/e9-gh-fail"
+PARENT9E=automate-2026-11-11-120000; RF9E="$P/.supervisor/automate/$PARENT9E.md"; LR9E="$T/work/primary-lanes/$PARENT9E"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT9E" > "$RF9E"
+# e9_lane <n> <item> <pr> — ab_lane's shape under this section's own parent (lane numbers are 1..10 per parent)
+e9_lane() {
+  run lane-create "$RF9E" reqs/a.md "$1" >/dev/null; ABL="$LR9E/L$1"; ABRF="$ABL/.supervisor/automate/$PARENT9E-L$1.md"
+  LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$ABL" --owner-command "$OWN" >/dev/null; wait_gone "$ABL"
+  mkdir -p "$ABL/$(dirname "$2")" "$ABL/.supervisor/jobs/done"
+  printf '# e890\n\n## Status: pending\n' > "$ABL/$2"
+  printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$2" "$3" > "$ABL/.supervisor/jobs/done/2026-11-11-L$1.md"
+}
+e9_rf() { # <runfile> <lane n> <item> <pr> <status> <pause_reason> — ab_rf's shape under this parent
+  printf '# Automate Run: %s-L%s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: %s | pr: %s | branch: feature/e890\n- pause_reason: %s\n\n## Progress\n- 2026-11-11T00:00:00Z drain ESCALATED\n' \
+    "$PARENT9E" "$2" "$3" "$3" "$5" "$4" "$6" > "$1"
+}
+e9() { REMOTE11="$T/remote-e890" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$SC/automate-helpers.sh" LOOMWRIGHT_GH_BIN="${E9_GH:-$T/ab-gh}" bash "${E9_S:-$S}" "$@"; }
+# e9_read <lane> — "<state>|<pr_state>|<reason>" as lane-status --json reports that lane
+e9_read() { e9 lane-status "$RF9E" --json 2>/dev/null | jq -r --arg l "$1" '.lanes[] | select(.lane == $l) | "\(.state)|\(.pr_state // "null")|\(.reason)"'; }
+e9_views() { grep -c '^gh pr view' "$T_ABGH" 2>/dev/null | tr -d ' '; }
+
+RE9=".supervisor/requirements/t/e890.md"; PRE9="https://github.com/o/r/pull/890"
+e9_lane 1 "$RE9" "$PRE9"; LE9="$ABL"; RFE9="$ABRF"
+e9_rf "$RFE9" 1 "$RE9" "$PRE9" escalated escalated
+check "E890a escalated + PR OPEN ⇒ still escalated, PR read as awaiting_merge" \
+  "$(STUB_PR_STATE=OPEN e9_read L1 | cut -d'|' -f1-2)" "escalated|awaiting_merge"
+out="$(STUB_PR_STATE=MERGED e9_read L1)"
+check "E890b escalated + PR merged by hand ⇒ keeps the escalated park (never auto-read merged)" "$(printf '%s' "$out" | cut -d'|' -f1-2)" "escalated|merged"
+has "E890c … and the reason sends it to a human" "$out" "PR merged outside the run while parked escalated"
+check "E890d escalated + PR unreadable ⇒ fails toward escalated, never gone" \
+  "$(E9_GH="$T/e9-gh-fail" e9_read L1 | cut -d'|' -f1)" "escalated"
+check "E890e escalated + PR CLOSED unmerged ⇒ gone" "$(STUB_PR_STATE=CLOSED e9_read L1)" "gone|gone|PR closed unmerged"
+out="$(STUB_PR_STATE=CLOSED e9 lane-remove "$LE9" 2>&1)"; rc=$?
+check "E890f plain lane-remove still refuses the gone lane (abandon is the owner's call)" \
+  "$rc:$([ -d "$LE9" ] && echo kept || echo removed):$(printf '%s' "$out" | grep -c 'gone (PR closed unmerged)' | tr -d ' ')" "1:kept:1"
+# E890f2 mutation control: without the derived-state read the refusal misdirects (the pre-fix message).
+sed 's/ || \[ "\$rstate" = gone \]//' "$SB" > "$MUT/automate-lanes.sh"
+out="$(E9_S="$MUT/automate-lanes.sh" STUB_PR_STATE=CLOSED e9 lane-remove "$LE9" 2>&1)"
+check "E890f2 mutation: the derived-state read dropped ⇒ the refusal no longer names gone" \
+  "$(grep -cF '|| [ "$rstate" = gone ] ||' "$MUT/automate-lanes.sh" | tr -d ' '):$(printf '%s' "$out" | grep -c 'gone (PR closed unmerged)' | tr -d ' ')" "0:0"
+out="$(STUB_PR_STATE=CLOSED e9 lane-remove "$LE9" --stop --abandon 2>&1)"; rc=$?
+check "E890g lane-remove --stop --abandon (the issue's repro command) removes the lane" "$rc:$([ -d "$LE9" ] && echo kept || echo removed)" "0:removed"
+hasnt "E890h … with no 'metadata not pushed' refusal" "$out" "metadata not pushed"
+check "E890i the metadata branch holds the ABANDONED stamp and no other done heading" \
+  "$(grep -c "^## Status: done_with_escalation $EMD ABANDONED (- \[x\] $RE9  # abandoned: " "$T/remote-e890/$RE9" 2>/dev/null | tr -d ' '):$(grep -E '^## Status:[[:space:]]*done' "$T/remote-e890/$RE9" 2>/dev/null | grep -vc "ABANDONED (- \[x\] " | tr -d ' ')" "1:0"
+check "E890j … the brief rides under jobs/failed/, none under jobs/done/" \
+  "$(ls "$T/remote-e890/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' '):$(ls "$T/remote-e890/.supervisor/jobs/failed" 2>/dev/null | tr '\n' ' ')" "0:2026-11-11-L1.md "
+has "E890k the parent run file records the abandon with the real state" "$(cat "$RF9E")" "lane abandoned: L1 ($PARENT9E-L1) — state gone;"
+
+# E890l the other PR-carrying non-READY parks read gone the same way; a resumable rate_limit park does not.
+RE92=".supervisor/requirements/t/e890b.md"; PRE92="https://github.com/o/r/pull/891"
+e9_lane 2 "$RE92" "$PRE92"; LE92="$ABL"; RFE92="$ABRF"
+for pk in failed drain_died; do
+  e9_rf "$RFE92" 2 "$RE92" "$PRE92" "$pk" "$pk"
+  check "E890l $pk + PR CLOSED unmerged ⇒ gone" "$(STUB_PR_STATE=CLOSED e9_read L2 | cut -d'|' -f1)" gone
+  check "E890m $pk + PR OPEN ⇒ keeps the $pk park" "$(STUB_PR_STATE=OPEN e9_read L2 | cut -d'|' -f1)" "$pk"
+done
+e9_rf "$RFE92" 2 "$RE92" "$PRE92" rate_limit rate_limit
+check "E890n rate_limit (resumable, not ended) + PR CLOSED ⇒ keeps rate_limit" "$(STUB_PR_STATE=CLOSED e9_read L2 | cut -d'|' -f1)" rate_limit
+# E890o an escalated park with no PR makes no gh call and keeps its park.
+e9_rf "$RFE92" 2 "$RE92" null escalated escalated
+v0="$(e9_views)"; st="$(STUB_PR_STATE=CLOSED e9_read L2 | cut -d'|' -f1-2)"
+check "E890o escalated with no PR ⇒ escalated, no pr_state, no gh pr view" "$st:$(( $(e9_views) - v0 ))" "escalated|null:0"
+
+# E890p mutation control: the pre-fix PR check (READY parks only) reproduces the issue — an escalated
+# lane whose PR closed unmerged keeps reading escalated, so --abandon cannot take its abandon branch.
+sed 's/awaiting_merge|ready_for_release|escalated|failed|drain_died)/awaiting_merge|ready_for_release)/' "$SB" > "$MUT/automate-lanes.sh"
+check "E890p mutation narrowed the PR check to the READY parks" \
+  "$(grep -c 'awaiting_merge|ready_for_release|escalated|failed|drain_died)' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+e9_rf "$RFE92" 2 "$RE92" "$PRE92" escalated escalated
+check "E890q mutation: escalated + PR CLOSED reads escalated (the #890 bug)" \
+  "$(E9_S="$MUT/automate-lanes.sh" STUB_PR_STATE=CLOSED e9_read L2 | cut -d'|' -f1)" escalated
+out="$(E9_S="$MUT/automate-lanes.sh" STUB_PR_STATE=CLOSED e9 lane-remove "$LE92" --abandon 2>&1)"; rc=$?
+check "E890r mutation: lane-remove --abandon refuses and keeps the lane" "$rc:$([ -d "$LE92" ] && echo kept || echo removed)" "1:kept"

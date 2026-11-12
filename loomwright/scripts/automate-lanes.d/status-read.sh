@@ -540,11 +540,12 @@ _lanes_lane_json() {
       elif [ "$nq" -gt 0 ]; then state=awaiting_input; reason="question $(jq -r '.[0].id' <<<"$qs")"
       elif pk="$(_lanes_parked "$status" "$pause")"; then
         state="$pk"; [ "$pk" = no_pr_stop ] && reason="$(_lanes_no_pr_stop_cause "$rf") — no PR and nothing to continue: the owner refines the requirement, then lane-scope-decide $lane defer | drop"
+        # Every PR-carrying park reads its live PR (#890): CLOSED ⇒ gone (what --abandon records); MERGED ⇒ merged for READY parks only.
         if [ -n "$(_lanes_dash "$pr")" ]; then
           case "$pk" in
-            awaiting_merge|ready_for_release)
+            awaiting_merge|ready_for_release|escalated|failed|drain_died)
               prs="$(bash "$HELPERS" reconcile-item "$pr" "$pk" 2>/dev/null | head -1)"
-              case "$prs" in merged) state=merged ;; gone) state=gone; reason="PR closed unmerged" ;; awaiting_merge) ;; *) prs="" ;; esac ;;
+              case "$prs:$pk" in merged:awaiting_merge|merged:ready_for_release) state=merged ;; merged:*) reason="PR merged outside the run while parked $pk — a human checks it before closing the lane out" ;; gone:*) state=gone; reason="PR closed unmerged" ;; awaiting_merge:*) ;; *) prs="" ;; esac ;;
           esac
         fi
       elif be="$(_lanes_boot_epoch)" && le="$(_lanes_epoch "$(_lanes_dash "$llu")")" && [ "$be" -gt "$le" ]; then
