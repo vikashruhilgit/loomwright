@@ -6,9 +6,9 @@ Requirement: `.supervisor/requirements/approach-decisions/02-briefs-record-the-c
 and 2 merged into it, base `0c83614`). Home paths are written as `/Users/<name>/`; `<scratch>` is a
 `mktemp -d` directory outside the repo.
 
-**Status in one line:** AC10's proposed rule is below, unwritten. Validation 6 is PASS: every condition was
-seen in its run. Validations 4 and 5 have no `Verdict:` line, and the owner decides them (`AUT-WAIVE`). V4 needs
-an interactive `LP-APPROACH` answer that a headless run cannot give. V5 ran headless and showed two of its three
+**Status in one line:** AC10's proposed rule is below, unwritten. Validations 4 and 6 are PASS: every condition was
+seen in its run (V4 was run after the PR opened, with the owner answering `LP-APPROACH` through the question
+relay). Validation 5 has no `Verdict:` line, and the owner decides it (`AUT-WAIVE`). V5 ran headless and showed two of its three
 conditions; the printed no-trigger line was not seen.
 
 ## AC10 — the proposed house rule (not written)
@@ -65,8 +65,97 @@ Those attempts tested the installed plugin, not this change, so they are not cou
 
 ## Validation 4 — a triggering goal, interactive
 
-Not run. V4 needs `LP-APPROACH` to be asked and answered by a person, and this capture ran headless, where
-no question can be shown. V6 below runs the same goal under `--non-interactive`. No verdict.
+Run 2026-11-12 after the PR opened, from the primary checkout at the PR head `ab7a273`, by the `/automate`
+coordinator session. The capture subtask above could not show a question, so this run used the same channel
+`/automate` uses for its phase sessions: a headless `claude -p` session whose `AskUserQuestion` calls are
+deferred by the plugin's relay hook (`automate-lanes.sh relay-hook`, `LOOMWRIGHT_PHASE_DIR` set), shown to the
+owner in the coordinator session, and resumed with the owner's answer. Every answer below was the owner's; none
+was chosen by a model.
+
+Project: a fresh scratch Node project as in "How the runs were made" (Express 4 + multer, no rate-limit
+dependency, CLAUDE.md naming the stack), one commit on `main`, with `.supervisor/config.json`
+`{"base_branch":"main"}` in place of a bare remote. Claude Code 2.1.319, `claude-opus-5-5`; the `init` record
+lists `loomwright` loaded from `--plugin-dir <checkout>/loomwright`.
+
+```bash
+cd <scratch>/v4proj
+env -u CLAUDECODE -u CLAUDE_PID LOOMWRIGHT_PHASE_DIR=<scratch>/v4proj/.supervisor/automate/v4.phase/launch-pad \
+  claude -p --input-format stream-json --output-format stream-json --verbose \
+  --permission-prompt-tool stdio --permission-mode acceptEdits \
+  --allowedTools "Read,Write,Edit,Glob,Grep,Bash,Task,Agent,LSP,AskUserQuestion" \
+  --plugin-dir <checkout>/loomwright \
+  --settings '{"hooks":{"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"bash <checkout>/loomwright/scripts/automate-lanes.sh relay-hook"}]}],"PermissionRequest":[…same…]}}'
+# stdin: /loomwright:launch-pad goal: "add rate limiting to the /api/upload route with a library"
+```
+
+Session `6e9e3759-…`: deferred on the first ask after 11 turns, resumed twice (once per owner answer), ended
+`end_turn`. A first attempt stopped at Phase 1 on `base_branch_unresolved` (the scratch repo had no base
+configured) and asked nothing; it is not counted.
+
+Observed:
+
+- **The run read this change's Phase 2.7 file.** Its `Read` calls include
+  `<checkout>/loomwright/skills/supervisor-readiness/design-decisions.md` and `<checkout>/loomwright/agents/launch-pad.md`.
+- **`LP-APPROACH` was asked once.** The transcript's `AskUserQuestion` headers, counted: `LP-APPROACH` 1,
+  `LP-CLARIFY` 1, `LP-SAVE-NOTE` 1. The `LP-APPROACH` question, as relayed:
+
+```text
+header: LP-APPROACH
+question: Which rate-limit library should /api/upload use? Default pick: express-rate-limit@^8 (CommonJS
+  export, peer express >= 4.11, in-memory store, one middleware line). Runner-up: rate-limiter-flexible@11
+  (more stores and algorithms, but you write the Express glue yourself).
+options: Keep express-rate-limit | Switch to rate-limiter-flexible | Decide later
+owner answered: Keep express-rate-limit
+```
+
+- **The saved brief carries `## Design decisions` with `status: confirmed`.** The owner answered
+  `LP-SAVE-NOTE` with `Save and exit`; the brief was saved to
+  `.supervisor/jobs/pending/2026-11-12-upload-rate-limit.md`. Its section, verbatim:
+
+```text
+## Design decisions
+- decision: which library enforces the upload rate limit (T1 — new dependency)
+  chosen: `express-rate-limit@^8.7.4` — Express middleware, in-memory store, 429 + IETF `RateLimit` headers out of the box
+  rejected: hand-rolled in-memory counter — the goal requires a library; no reversibility benefit, more test cost
+  rejected: `rate-limiter-flexible@11` — no Express middleware; the 429 response and header logic would be hand-written glue (blast radius, test cost)
+  evidence: `grep -ri rate package.json src/` → 0 hits (nothing in repo); `npm view express-rate-limit@8.7.4 exports peerDependencies` → `require: ./dist/index.cjs`, `express: ">= 4.11"`
+  revisit when: the API runs as more than one process/instance and needs a shared store (Redis), or needs burst/token-bucket semantics
+  status: confirmed
+- decision: where the limiter mounts (T4 — cross-cutting mechanism)
+  chosen: route-level in `src/routes/upload.js`, as the first handler before `store.single('file')`, so a rejected request never reaches multer
+  rejected: app-level `app.use(limiter)` in `src/server.js` — would rate-limit every future route with the upload budget (blast radius)
+  rejected: after multer — multer would write the file to `uploads/` before the 429 (defeats the purpose)
+  evidence: `src/routes/upload.js` is the only route; `src/server.js` mounts it with `app.use('/api/upload', upload);`
+  revisit when: a second route needs limiting — then extract a shared `src/middleware/` limiter factory
+  status: confirmed
+```
+
+- **Plan Review evaluated Criterion 23 with no `approach_reinvents`.** Attempt 1 was PASS with two MEDIUM issues
+  (`pin_mutations`, the intended new `test/` directory) and one LOW, none in an `approach_` category; Launch Pad
+  refined the at-floor issue and attempt 2 was PASS (`requirement_fit: fulfils`). Neither attempt raised an
+  `approach_` category (0 matches for `approach_[a-z]*` anywhere in the session's stream).
+  Attempt 2's Criterion 23 line and attempt 1's summary:
+
+```text
+- **Criterion 23 (approach justification):** Both triggers (new dependency, cross-cutting mechanism) still have
+  confirmed entries with `rejected:` lines. Neither file the brief creates is a script or module, so nothing is reinvented.
+
+summary: "… Both approach triggers (new dependency, cross-cutting mechanism) have confirmed Design decisions
+  entries with rejected alternatives, and nothing is reinvented. …"
+```
+
+Two limits, recorded rather than hidden:
+
+- **The `## Phase 2.7: APPROACH` block itself was not seen as printed text.** A `-p` stream carries only a few
+  of the session's text messages, and this one did not include the Phase 2.7 printout. The T1 entry it would
+  print (chosen library, two `rejected:` lines, an `evidence:` line naming the manifest grep) is shown above from
+  the saved brief, and the `LP-APPROACH` question carries the same chosen pick and runner-up. V6 above has the
+  same limit.
+- **The `evidence:` line names `grep -ri rate package.json src/`, but the session did not run that exact
+  command.** It ran `cat package.json` and `cat -n src/server.js src/routes/upload.js`, which show the same
+  thing: no `rate` dependency or code in the repo. The line reports what was seen, not the literal command.
+
+Verdict: PASS for Validation 4
 
 ## Validation 5 — a non-triggering goal
 
