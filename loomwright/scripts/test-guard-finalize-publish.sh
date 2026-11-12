@@ -222,6 +222,8 @@ UNKNOWN_CASES=(
   "git --work-tree=$FWT push"
   "env -C $FWT git push"
   'popd; git push'
+  'pushd; git push'
+  'pushd -q; git push'
 )
 for c in "${UNKNOWN_CASES[@]}"; do run_guard_json "$FWT" "$(payload_full "$c" cc-uuid-1 "$FWT")"; expect "own session, unknown target [$c] -> denied" 2; done
 # another repository on the same branch name, and a plain non-git dir -> allowed
@@ -640,6 +642,13 @@ mutant m-quoteblind 's/  mark_parens "\$s"; s="\$MARKED"/  s="${s\/\/"("\/$NL$OP
 run_guard_json "$RMI" "$(payload_full "$RCQ" cc-uuid-1 "$MPLAIN")" "$MUTF"
 [ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (quote-blind parens): the review's '(cd <run> && git commit -m \"…:)\"; git push)' escapes — the quote-aware marking is load-bearing" \
   || no "mutation (quote-blind parens): inconclusive (changed=$MUTOK rc=$RC)"
+
+#  (f) bare `pushd` read as `cd $HOME` again: from the run's checkout the push escapes (HOME is not it)
+mutant m-pushd 's/      elif \[ "\$prog" = cd \]; then CUR_DIR="\$HOME"/      elif :; then CUR_DIR="$HOME"/'
+run_guard_json "$RMI" "$(payload_full "pushd; git push -u origin $BR" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (bare pushd): reading it as cd \$HOME lets the run checkout's push escape — the unknown rule is load-bearing" \
+  || no "mutation (bare pushd): inconclusive (changed=$MUTOK rc=$RC)"
+run_guard_json "$RMI" "$(payload_full "pushd; git push -u origin $BR" cc-uuid-1 "$RMI")"; expect "own session: bare pushd; git push from the run checkout -> denied" 2
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"

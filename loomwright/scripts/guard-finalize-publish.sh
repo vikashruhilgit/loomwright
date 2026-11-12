@@ -120,8 +120,10 @@
 # -> this session's run (its subagents and workers carry the same id). Owner empty, or no payload id
 # -> adopt (fail CLOSED). Owner != payload session_id -> ANOTHER Claude Code session -> allow:
 # `.supervisor/` is repo-global, so treating every non-owner as "a resumed run" gated every session in
-# every worktree of the repo while one run was live. Consequence (accepted): `/supervisor --continue`
-# resumed in a NEW Claude Code session is not gated — the emitters already treat it as foreign, so its
+# every worktree of the repo while one run was live. Consequence (accepted): ANY other Claude Code
+# session is allowed, including one that pushes the run's own branch from the run's own checkout
+# (the old header refused that too); FINALIZE point 5 binds the run's own session only. That
+# includes `/supervisor --continue` resumed in a NEW Claude Code session, which is not gated — the emitters already treat it as foreign, so its
 # children never reach the run's log and the marker's children check could not see them anyway.
 # Its escape, if a human wants the check, is still `write-marker` by hand.
 #
@@ -626,7 +628,7 @@ skip_opts() {
 # `(` … `)` (a subshell or `$(…)`) restores the directory on close — a `cd` inside it never leaks out.
 # Only UNQUOTED parens drive that; a quoted `(` / `)` anywhere in the command makes the target unknown.
 # KNOWN LIMIT: a `cd` in a pipeline element or behind a background `&` is read as leaking (the shell
-# runs it in a subshell); `pushd`/`popd` are read as `cd <dir>` / unknown.
+# runs it in a subshell); `pushd <dir>` is read as `cd <dir>`, a bare `pushd` and `popd` as unknown.
 UNK='?'
 BASE_DIR=""; CUR_DIR=""
 PUB_DIRS=()
@@ -694,7 +696,8 @@ seg_is_publish() {
         case "${words[$j]}" in --) j=$((j + 1)); break ;; -?*) j=$((j + 1)) ;; *) break ;; esac
       done
       if [ "$j" -lt "${#words[@]}" ]; then resolve_dir "$seg_dir" "${words[$j]}"; CUR_DIR="$RES_DIR"
-      else CUR_DIR="$HOME"; fi
+      elif [ "$prog" = cd ]; then CUR_DIR="$HOME"
+      else CUR_DIR="$UNK"; fi   # bare `pushd` swaps the dir stack (or fails and stays): unknown
       return 1 ;;
     popd) CUR_DIR="$UNK"; return 1 ;;
     git)
