@@ -9,7 +9,7 @@
     "execute-manager": {"budget": 21277, "measured": 19342, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "launch-pad": {"budget": 47557, "measured": 47428, "note": "Re-measured, no raise (approach-decisions/02: Phase 2.7 APPROACH; its protocol is the read-on-demand design-decisions.md). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "orchestrator": {"budget": 10357, "measured": 9415, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
-    "plan-reviewer": {"budget": 12462, "measured": 11362, "note": "Re-baselined to measured + ~10%: Criterion 23 Approach justification (23a-23d, two categories). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
+    "plan-reviewer": {"budget": 12462, "measured": 11382, "note": "Re-baselined to measured + ~10%: Criterion 23 Approach justification (23a-23d, two categories). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "product-owner": {"budget": 17356, "measured": 17195, "note": "Re-measured, no raise (touches-name-shared-files-at-intake: shared-file sweep, contract-change flag). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "qa-executor": {"budget": 53332, "measured": 48483, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "qa-strategist": {"budget": 24219, "measured": 22017, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
