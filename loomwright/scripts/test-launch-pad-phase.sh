@@ -92,7 +92,7 @@ for f in "$AGENT" "$CMD"; do
   done
   # Every id the prompt passes must be one the table knows.
   for used in $(grep -oE 'launch-pad-phase\.sh [0-9][0-9.]*' "$f" | cut -d' ' -f2 | sort -u); do
-    if printf '%s\n' "$ids" | grep -qxF "$used"; then ok "P $(basename "$f") id $used is in the table"; else no "P $(basename "$f") passes unknown id $used"; fi
+    if grep -qxF "$used" <<<"$ids"; then ok "P $(basename "$f") id $used is in the table"; else no "P $(basename "$f") passes unknown id $used"; fi
   done
 done
 
