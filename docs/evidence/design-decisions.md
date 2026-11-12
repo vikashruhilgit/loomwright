@@ -155,7 +155,12 @@ brief, and the `LP-APPROACH` question carries the same pick and runner-up.
 
 Also recorded: the T1 entry's `evidence:` line names `grep -ri rate package.json src/`, but the session did not
 run that exact command. It ran `cat package.json` and `cat -n src/server.js src/routes/upload.js`, which show
-the same thing: no `rate` dependency or code in the repo.
+the same thing: no `rate` dependency or code in the repo. The same line's `npm view express-rate-limit@8.7.4
+exports peerDependencies` was run: the stream log has the Bash call `npm view express-rate-limit@8.7.4 exports
+peerDependencies time.8.7.4 --json …; npm view rate-limiter-flexible version`. A live npm registry query is not
+one of the three sources `skills/supervisor-readiness/design-decisions.md` §"Evidence sources" allows (the repo,
+Context7, `WebSearch`), and Plan Review's Criterion 23 passed the entry anyway. Whether a package-registry query
+should join that list, or Criterion 23 should reject it, is left to a follow-up.
 
 The other three conditions hold. The printed-entry condition did not, so there is no verdict; the owner
 decides through `AUT-WAIVE`.
