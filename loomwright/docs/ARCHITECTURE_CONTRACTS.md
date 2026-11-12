@@ -605,9 +605,9 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 46506¹ | 7 |
+| `launch-pad`        | 47557 | 47412¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
-| `plan-reviewer`     | 11535 | 10528¹ | 0 |
+| `plan-reviewer`     | 12462 | 11329¹ | 0 |
 | `product-owner`     | 17356 | 17195¹ | 3 |
 | `qa-executor`       | 53332 | 48483¹ | 5 |
 | `qa-strategist`     | 24219 | 22017¹ | 3 |
@@ -634,6 +634,8 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 > **Re-measure log (no raise — touches-name-shared-files-at-intake, 2026-11-05):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agent `product-owner` 16719 → 17195 (**161 headroom, 0.9%** — the next PR that grows it will breach); command `product-owner` 10488 → 11004 (533 headroom); skill `user-story-writing` 5279 → 5535 (174 headroom). The growth is the Product Owner's shared-file sweep bullet (mirrored in the command), the contract-change flag at the Pre-persist gate (Assumption Check and Output Format lines, the 3a trigger, option bullet and `<n>` count) and the skill's sweep bullet with its `.agent/companions.json` pointer. No budget breached; none raised. The agent row stays ¹-marked LIVE; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
 > **Raise log (lane-scope-regate Part A, 2026-11-04):** command `launch-pad` 5515 → 6203 — the `LP-SCOPE` mirror (the Can't-ask rule's `scope_widening_non_interactive` branch, the no-improvised-header rule, Phase 2.5's "outside Touches is never a NO-GO" line and the Phase 6 step 1 ask) moved the live weight 5326 → 5639 (breach by 124); restored to measured + ~10% per the raise rule. **Re-measured, no raise:** agent `launch-pad` 45686 → 46388 (Phase 6 action 1a, its Save rule and Phase 5.5 pseudocode line, the Critical Rules additions and the Phase 2.5 line; 1169 headroom). **Part B, re-measured, no raise:** agent `launch-pad` 46388 → 46506 and command `launch-pad` 5639 → 5678 (the lane `- decision: pending-coordinator` branch of action 1a and its Phase 6 mirror; 1051 / 525 headroom). Both table cells and JSON `measured` fields carry these end-of-change figures.
+
+> **Raise log (approach-decisions/02, design decisions, 2026-11-12):** `plan-reviewer` 11535 → 12462 (live 10528 at origin/main → 11329) — the new conditional Criterion 23 "Approach justification" (23a–23d, the `approach_unjustified` / `approach_reinvents` categories, two Decision Matrix rows and the 22 → 23 count moves); skill `supervisor-readiness` 12700 → 14984 (live 11545 → 13621) — the new read-on-demand `design-decisions.md` (the Launch Pad Phase 2.7 protocol, counted only in this skill row because it is not the preloaded `SKILL.md`) plus the template's `## Design decisions` block; both set to measured + ~10%. No raise, `measured` only: agent `launch-pad` 46506 → 47412 against the unchanged 47557 (145 headroom; Phase 2.7 stays a ≤ 25-line entry because its protocol lives in the split file), command `launch-pad` 5678 → 6172 against the unchanged 6203 (the Phase 2.7 mirror), per `bash scripts/check-token-budget.sh`.
 
 > **Raise log (automate-speed/17, size ceilings for skills and commands — no agent budget or measured value changed):** every skill dir and command doc gained a `.skills` / `.commands` entry at measured + ~10% (the two tables at the end of this section), and every `note` in `prompt-token-budgets.json` was cut to one line. Agent history now lives in these raise logs and `CHANGELOG.md` only. Figures that had lived only in a `note`, carried here before the cut: `code-reviewer`'s live weight just before its automate-followups/06 raise was 25016 (→ 25057 after it); `supervisor`'s 1307 headroom recorded at dismissed-findings-01 had shrunk to 108 from other merged PRs before automate-speed/02 breached it; `context-keeper`'s v15.16.0 tightening (3052 → 2837, frozen baseline 2774) is in footnote 1.
 
@@ -743,7 +745,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `setup` | 10782 | 9801 |
 | `state-management` | 9105 | 8277 |
 | `supervisor-config` | 5768 | 5243 |
-| `supervisor-readiness` | 12700 | 11545 |
+| `supervisor-readiness` | 14984 | 13621 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
 | `user-story-writing` | 5709 | 5535 |
@@ -766,7 +768,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
 | `janitor` | 1470 | 1427 |
-| `launch-pad` | 6203 | 5678 |
+| `launch-pad` | 6203 | 6172 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
