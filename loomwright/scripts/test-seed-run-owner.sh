@@ -340,8 +340,8 @@ assert_eq "case10 relative path still resolves to the run's state file" "cc-owne
   "$(seed_val "$REPO10/.supervisor/logs/sid-case10.owner" cc_session_id)"
 
 echo "== 11. PARITY: loom_run_owner_seed is byte-identical in every consumer =="
-# Both consumers' headers CLAIM the two copies are kept identical. A claim no
-# check backs is how they drift: the two are the single ownership rule, and a
+# Every consumer's header CLAIMS the copies are kept identical. A claim no
+# check backs is how they drift: the copies are the single ownership rule, and a
 # close-out reading a different owner from the projector is precisely the
 # false-attribution class this whole mechanism exists to remove.
 extract_fn() {

@@ -795,6 +795,9 @@ mark_parens() {
 }
 cmd_has_publish() {
   local s="$1" depth="${2:-0}" sep seg GT='>' LT='<' stk="" any=1
+  # the walk's own marker bytes (AMP, OPEN, CLOSE, STK_SEP) must never come from the command itself: a
+  # literal one could forge a subshell open/close and move CUR_DIR -> untrusted, target unknown
+  case "$s" in *"$AMP"*|*"$OPEN"*|*"$CLOSE"*|*"$STK_SEP"*) PAREN_UNSURE=1 ;; esac
   s="${s//\\$NL/ }"
   # replacements are plain variable expansions: bash 3.2 keeps literal quotes in a quoted replacement
   s="${s//">|"/$GT}"

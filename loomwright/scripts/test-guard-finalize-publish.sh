@@ -675,6 +675,15 @@ run_guard_json "$RMI" "$(payload_full "echo \`cd $MPLAIN && pwd\`; git push" cc-
 [ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (backtick): without the flag a backtick substitution's cd leaks and the push escapes — load-bearing" \
   || no "mutation (backtick): inconclusive (changed=$MUTOK rc=$RC)"
 
+#  (i) literal marker bytes in the command: `cd <plain> ; ^C ; cd <run> ; ^D ; git push` forged a
+#      subshell around the real cd and judged the run checkout's push at <plain>
+FORGE="cd $MPLAIN ;$(printf '\003');cd $RMI ;$(printf '\004');git push"
+run_guard_json "$RMI" "$(payload_full "$FORGE" cc-uuid-1 "$RMI")"; expect "own session: forged OPEN/CLOSE bytes around a real cd -> denied" 2
+mutant m-sentinel '/^  case "\$s" in \*"\$AMP"\*|/d'
+run_guard_json "$RMI" "$(payload_full "$FORGE" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (sentinel bytes): without the check the forged markers let the push escape — load-bearing" \
+  || no "mutation (sentinel bytes): inconclusive (changed=$MUTOK rc=$RC)"
+
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"
 if [ -n "$leaf" ] && ! grep -q '|| true' <<<"$leaf"; then
