@@ -102,8 +102,10 @@
 # a `cd` in a pipeline element or behind a background `&` is read as if it leaked (it does not). Splitting inside quotes is deliberate and
 # deny-leaning: `git commit -m "a && git push"` is denied, `git commit -m "push it"` is not.
 #
-# WHICH PUBLISHES ARE GATED (decision): every push from the run's feature-branch checkout while
-# `## Session` is running|checkpoint — FINALIZE's push + `gh pr create` AND each Phase 4.5 heal push
+# WHICH PUBLISHES ARE GATED (decision): every push that runs in the run's feature-branch checkout,
+# made by the run's OWNING Claude Code session (its subagents and workers included; an unknown owner
+# counts as owning), while `## Session` is running|checkpoint — another session is allowed (SESSION
+# JOIN below). That covers FINALIZE's push + `gh pr create` AND each Phase 4.5 heal push
 # (self-heal-advisory runs write-marker before each one). Inline drains — `/automate`'s owned
 # `/review-pr --until-mergeable` drain, its fix-now re-drain, `/autonomous` EVALUATE's review-heal —
 # share the Claude Code session but run only after the inner Supervisor's `session_end` made the
