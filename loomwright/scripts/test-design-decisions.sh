@@ -116,7 +116,7 @@ bhas "$QC" '`## Design decisions` carries one entry per trigger' && ok "Quality 
   || no "Quality Checklist does not name Design decisions"
 
 echo "AC2 — the split file (skills/supervisor-readiness/design-decisions.md)"
-head -1 "$DD" | grep -q '^# ' && ok "split file starts with a # title (no frontmatter)" || no "split file does not start with a # title"
+grep -q '^# ' < <(head -1 "$DD") && ok "split file starts with a # title (no frontmatter)" || no "split file does not start with a # title"
 TRIG="$(block "$DD" '^## Triggers' '^## [^T]')"
 row() { printf '%s\n' "$TRIG" | grep -F -- "| \`$1\` |"; }
 bhas "$(row T1)" 'check 1 or check 2 CAUTION row' && ok "T1 detected from a Phase 2.5 check 1/2 CAUTION row" || no "T1 detection rule"
@@ -208,7 +208,7 @@ bhas "$CPH" "\`$DD_RUNTIME\`" && bhas "$CPH" 'not a test, fixture, doc or eviden
   && ok "command Phase 2.7 block: install-root path, T2 exclusion, never-trigger rule" || no "command Phase 2.7 block path or exclusions"
 [ -n "$lp_a" ] && [ "$lp_a" = "$lp_c" ] && ok "Can't-ask rule bullets byte-identical (agent = command)" || no "Can't-ask rule bullets differ"
 bhas "$lp_c" "$CLAUSE" && ok "command Can't-ask rule carries the Phase 2.7 clause" || no "command Can't-ask rule lacks the Phase 2.7 clause"
-grep -F '2. Fill all 9 sections' "$LPC" | grep -qF 'optional Design decisions section from Phase 2.7' \
+grep -qF 'optional Design decisions section from Phase 2.7' < <(grep -F '2. Fill all 9 sections' "$LPC") \
   && ok "Phase 5 step 2 names Design decisions" || no "Phase 5 step 2"
 S55="$(block "$LPC" '^### Phase 5\.5' '^### Phase 6')"
 bhas "$S55" 'Criteria 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, and 23 are conditional' && ok "Phase 5.5 step 2 conditional list ends at 23" \
@@ -250,15 +250,15 @@ bhas "$C23C_LINE" 'an installed stackpack skills index' && bhas "$C23C_LINE" 'sk
   || no "23c search sources name a cwd-relative stackpack path or lack the skip-when-absent rule"
 bhas "$C23" "\`$DD_RUNTIME\`" && ok "Criterion 23 reads the split file through the install root" \
   || no "Criterion 23 does not read the split file through the install root"
-[ "$(grep -cF '(23c)' "$PR")" = 1 ] && grep -F '(23c)' "$PR" | grep -qE '^\| .*\| \*\*FAIL\*\* \(HIGH `approach_reinvents` issue\) \|$' \
+[ "$(grep -cF '(23c)' "$PR")" = 1 ] && grep -qE '^\| .*\| \*\*FAIL\*\* \(HIGH `approach_reinvents` issue\) \|$' < <(grep -F '(23c)' "$PR") \
   && ok "Decision Matrix: the one (23c) line is the FAIL HIGH approach_reinvents row" || no "Decision Matrix (23c) FAIL row"
-grep -F '(23d)' "$PR" | grep -F 'status: unconfirmed' | grep -F 'no BLOCKING/HIGH issue exists' | grep -qF '| **NEEDS_HUMAN**' \
+grep -qF '| **NEEDS_HUMAN**' < <(grep -F '(23d)' "$PR" | grep -F 'status: unconfirmed' | grep -F 'no BLOCKING/HIGH issue exists') \
   && ok "Decision Matrix: 23d T1 unconfirmed ⇒ NEEDS_HUMAN row" || no "Decision Matrix (23d) NEEDS_HUMAN row"
 has "$PR" '## 23 Review Criteria' && lacks "$PR" '## 22 Review Criteria' && ok "## 23 Review Criteria (no ## 22)" || no "criteria heading count"
 has "$PR" 'All 23 review criteria must be checked' && ok "never-skip line says 23" || no "never-skip line"
 has "$PR" '(23 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, and 23 conditional)' && ok "Decision Matrix PASS row says 23" || no "PASS row count"
 has "$PR" '- [ ] All 23 criteria checked' && ok "Quality Checklist says 23" || no "Quality Checklist count"
-grep -F 'category: "{dep_graph' "$PR" | grep -F '| approach_unjustified | approach_reinvents | ...}' | grep -qF '(12–23)' \
+grep -qF '(12–23)' < <(grep -F 'category: "{dep_graph' "$PR" | grep -F '| approach_unjustified | approach_reinvents | ...}') \
   && ok "output-format category enum names both categories, range (12–23)" || no "output-format category enum"
 
 echo "AC7 — fixture briefs and expected shapes (fixtures/design-decisions/)"
@@ -289,7 +289,7 @@ bhas "$SB" '- decision:' && bhas "$SB" 'chosen: `express-rate-limit`' && ! bhas 
   && ok "brief b: T1 entry, chosen absent from the manifest, no rejected: (23b)" || no "brief b entry shape"
 SD="$(dd_sec "$BD")"
 bhas "$SD" 'status: unconfirmed' && bhas "$SD" 'rejected:' && ok "brief d: T1 entry with rejected: and status: unconfirmed (23d)" || no "brief d entry shape"
-grep -E '^\| [^|]+ \| [^|]+ \| [^|]*`scripts/slugify\.sh`' "$BC" | grep -q . \
+grep -q . < <(grep -E '^\| [^|]+ \| [^|]+ \| [^|]*`scripts/slugify\.sh`' "$BC") \
   && ok "brief c: T2 trigger — a File Impact Map CREATE scripts/slugify.sh" || no "brief c: no CREATE scripts/slugify.sh row"
 grep -qE '^pc_slugify\(\) *\{' "$FIX/repo/scripts/propose-common.sh" && ok "repo/scripts/propose-common.sh defines pc_slugify" \
   || no "repo/scripts/propose-common.sh does not define pc_slugify"
@@ -326,7 +326,7 @@ EOF
 if [ -s "$EVID" ]; then
   grep -qxF -- "$RULE_LINE" "$EVID" && ok "evidence file carries the /rules add line verbatim (advisory, seven manifests)" \
     || no "evidence file lacks the verbatim /rules add line"
-  grep -F -- '/rules add ' "$EVID" | grep -qF -- '--check' && no "the /rules add line carries a --check" || ok "the /rules add line has no --check"
+  grep -qF -- '--check' < <(grep -F -- '/rules add ' "$EVID") && no "the /rules add line carries a --check" || ok "the /rules add line has no --check"
   has "$EVID" 'prove-rule-check.sh' && has "$EVID" 'leg 2' && ok "evidence file gives the advisory reason (prove-rule-check.sh leg 2)" \
     || no "evidence file lacks the advisory reason"
 else
@@ -334,9 +334,9 @@ else
 fi
 
 echo "AC11 — schema categories (docs/result-schemas/plan-review-result.md)"
-grep -F 'category: string' "$SCHEMA" | grep -qF '"approach_unjustified" / "approach_reinvents" for Criterion 23' \
+grep -qF '"approach_unjustified" / "approach_reinvents" for Criterion 23' < <(grep -F 'category: string' "$SCHEMA") \
   && ok "schema category comment names both categories for Criterion 23" || no "schema category comment"
-grep -F -- '- `category` is optional' "$SCHEMA" | grep -qF '`approach_unjustified` / `approach_reinvents` for Criterion 23' \
+grep -qF '`approach_unjustified` / `approach_reinvents` for Criterion 23' < <(grep -F -- '- `category` is optional' "$SCHEMA") \
   && ok "schema category list names both categories for Criterion 23" || no "schema category list"
 scope_guard "loomwright/scripts/validate-plan-review-result.py" loomwright/scripts/validate-plan-review-result.py
 
