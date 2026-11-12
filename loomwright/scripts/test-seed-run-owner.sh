@@ -353,7 +353,7 @@ if [ -n "$FN_CLOSE" ]; then ok "case11 loom_run_owner_seed found in close-strand
 if [ -n "$FN_BUILD" ]; then ok "case11 loom_run_owner_seed found in build-state.sh"; else no "case11 loom_run_owner_seed NOT found in build-state.sh"; fi
 assert_eq "case11 the two function bodies are byte-identical" "$FN_CLOSE" "$FN_BUILD"
 # guard-finalize-publish.sh reads the same seed for its session join (third consumer)
-FN_GUARD="$(awk '/^loom_run_owner_seed\(\) \{/ {inside=1} inside {print} inside && /^\}/ {exit}' "$SCRIPT_DIR/guard-finalize-publish.sh" 2>/dev/null)"
+FN_GUARD="$(extract_fn "$SCRIPT_DIR/guard-finalize-publish.sh")"
 if [ -n "$FN_GUARD" ]; then ok "case11 loom_run_owner_seed found in guard-finalize-publish.sh"; else no "case11 loom_run_owner_seed NOT found in guard-finalize-publish.sh"; fi
 assert_eq "case11 the guard's copy is byte-identical too" "$FN_CLOSE" "$FN_GUARD"
 

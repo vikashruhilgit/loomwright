@@ -182,6 +182,7 @@ payload_full() {
 RU="$(new_repo running)"; FWT="$TMP/wt-foreign.$$"
 ( cd "$RU" && git worktree add -q -b fix/unrelated "$FWT" ) >/dev/null 2>&1
 [ -e "$FWT/.git" ] || no "fixture: foreign linked worktree not created"
+PLAIN_Q="$(mktemp -d "$TMP/plain-q.XXXXXX")"   # a non-git dir: out of scope on its own
 INCIDENT="cd $FWT && git push -q -u origin fix/unrelated 2>&1 | tail -2; gh pr create --base main --head fix/unrelated --title t --body b"
 # owner session, publish targets a foreign worktree of the same repo -> allowed (scope alone)
 run_guard_json "$RU" "$(payload_full "$INCIDENT" cc-uuid-1 "$RU")"; expect "own session: cd <foreign worktree> && git push; gh pr create -> allowed" 0
@@ -202,6 +203,15 @@ run_guard_json "$RU" "$(payload_full "echo \$(cd $FWT && pwd) && git push" cc-uu
 run_guard_json "$RU" "$(payload_full "bash -c 'cd $FWT && git push'; git push" cc-uuid-1 "$RU")"; expect "own session: bash -c's cd does not leak -> denied" 2
 run_guard_json "$RU" "$(payload_full "bash -c 'git -C $FWT push'" cc-uuid-1 "$RU")"; expect "own session: bash -c 'git -C foreign push' starts in the segment's dir -> allowed" 0
 # (a quoted `cd x && git push` is split before quotes are read — deny-leaning, see the header)
+# a QUOTED paren never moves the subshell stack, and makes the target unknown (PR #897 review): the
+# `:)` used to pop `( cd <run> …` early, so the push inside the subshell was judged at the outer dir
+QUOTED_PAREN_CASES=(
+  "(cd $RU && git commit -m \"Looks good :)\" ; git push)"
+  "(cd $RU && git commit -m 'see note)' ; git push)"
+  "echo \"\$(cd $PLAIN_Q)\"; git push"
+)
+for c in "${QUOTED_PAREN_CASES[@]}"; do run_guard_json "$RU" "$(payload_full "$c" cc-uuid-1 "$PLAIN_Q")"; expect "own session, quoted paren [$c] -> denied" 2; done
+run_guard_json "$RU" "$(payload_full "(cd $FWT && git commit -m \"fix(x): y\"; git push)" cc-uuid-1 "$RU")"; expect "own session, quoted paren in a foreign-worktree push -> denied (fail CLOSED, needs the marker)" 2
 # unknown targets fail CLOSED
 UNKNOWN_CASES=(
   'cd "$WT" && git push'
@@ -572,7 +582,7 @@ f4_mut() { # f4_mut <label> <sed program> <case...>
   [ "$MUTOK" = 1 ] && [ "$missed" = "$total" ] && ok "mutation (F4 $label): mutant allows all $total forms" \
     || no "mutation (F4 $label): changed=$MUTOK, mutant allowed only $missed/$total"
 }
-f4_mut "separators" "s/for sep in '&&' '||' ';' '|' '&' '(' ')' '\`'; do/for sep in '\&\&' '||' ';' '|'; do/;/OPEN\\\$NL}\"; s=/d" \
+f4_mut "separators" "s/for sep in '&&' '||' ';' '|' '&' '(' ')' '\`'; do/for sep in '\&\&' '||' ';' '|'; do/;/NL\\\$OPEN\\\$NL/d;/NL\\\$CLOSE\\\$NL/d" \
   'echo $(git push)' 'echo `git push`' "git push&" "(cd repo && git push)"
 f4_mut "prefix words" '/^      command|exec|time|env|sudo|doas|xargs|nice)$/,/continue ;;$/d' \
   "env -u FOO git push" "sudo -u me git push" "echo x | xargs git push" "exec git push"
@@ -610,10 +620,26 @@ run_guard_json "$RMI" "$(payload_full "$MINC" cc-foreign-9 "$RMI")" "$MUTF"
   && ok "mutation (incident): with both causes restored the 2026-11-12 incident is denied again" \
   || no "mutation (incident): inconclusive (changed=$MUTOK rc=$RC)"
 #  (d) the subshell restore removed: (cd foreign); git push escapes the gate
-mutant m-paren '/OPEN\$NL}"; s=/d'
+mutant m-paren '/NL\$OPEN\$NL/d;/NL\$CLOSE\$NL/d'
 run_guard_json "$RMI" "$(payload_full "(cd $MWT && git status); git push" cc-uuid-1 "$RMI")" "$MUTF"
 [ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (subshell): without the ( ) restore a subshell cd leaks and the push escapes — the restore is load-bearing" \
   || no "mutation (subshell): inconclusive (changed=$MUTOK rc=$RC)"
+
+#  (e) quoted parens trusted again (no PAREN_UNSURE target): the review's `:)` case is still denied
+#      by mark_parens alone; restoring the old quote-UNAWARE marking as well lets it escape
+mutant m-unsure '/\[ "\$PAREN_UNSURE" = 1 \] && PUB_DIRS/d'
+RCQ="(cd $RMI && git commit -m \"Looks good :)\" ; git push)"
+MPLAIN="$(mktemp -d "$TMP/plain-m.XXXXXX")"
+run_guard_json "$RMI" "$(payload_full "$RCQ" cc-uuid-1 "$MPLAIN")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && ok "mutation (unsure): quote-aware marking alone keeps the subshell open past a quoted ')'" \
+  || no "mutation (unsure): inconclusive (changed=$MUTOK rc=$RC)"
+run_guard_json "$RMI" "$(payload_full "echo \"\$(cd $MPLAIN)\"; git push" cc-uuid-1 "$RMI")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (unsure): without PAREN_UNSURE a cd inside a quoted \$( ) leaks and the push escapes — the flag is load-bearing" \
+  || no "mutation (unsure, quoted subst): inconclusive (changed=$MUTOK rc=$RC)"
+mutant m-quoteblind 's/  mark_parens "\$s"; s="\$MARKED"/  s="${s\/\/"("\/$NL$OPEN$NL}"; s="${s\/\/")"\/$NL$CLOSE$NL}"/;/\[ "\$PAREN_UNSURE" = 1 \] \&\& PUB_DIRS/d'
+run_guard_json "$RMI" "$(payload_full "$RCQ" cc-uuid-1 "$MPLAIN")" "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (quote-blind parens): the review's '(cd <run> && git commit -m \"…:)\"; git push)' escapes — the quote-aware marking is load-bearing" \
+  || no "mutation (quote-blind parens): inconclusive (changed=$MUTOK rc=$RC)"
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"

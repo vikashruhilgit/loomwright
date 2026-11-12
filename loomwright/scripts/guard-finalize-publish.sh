@@ -622,6 +622,7 @@ skip_opts() {
 # substitution, glob or `~user`, `cd -`, `popd`, `--git-dir` / `--work-tree` / `GIT_DIR=` /
 # `GIT_WORK_TREE=`, `env -C`, a relative path from an unknown dir, and a target that does not exist.
 # `(` … `)` (a subshell or `$(…)`) restores the directory on close — a `cd` inside it never leaks out.
+# Only UNQUOTED parens drive that; a quoted `(` / `)` anywhere in the command makes the target unknown.
 # KNOWN LIMIT: a `cd` in a pipeline element or behind a background `&` is read as leaking (the shell
 # runs it in a subshell); `pushd`/`popd` are read as `cd <dir>` / unknown.
 UNK='?'
@@ -746,8 +747,42 @@ seg_is_publish() {
 # `git 2>&1 push` there would shear the program from its subcommand. `>|` (noclobber override) is
 # folded to `>` for the same reason. It also cuts inside quotes: a quoted `a && git push` is then
 # treated as a command (deny-leaning, accepted), while a quoted bare word such as `-m "push it"`
-# stays an argument. `(` and `)` also leave an OPEN / CLOSE line that saves and restores CUR_DIR; an
-# unbalanced `)` leaves it unknown.
+# stays an argument. An UNQUOTED `(` / `)` also leaves an OPEN / CLOSE line that saves and restores
+# CUR_DIR (mark_parens); an unbalanced `)` leaves it unknown. A `(` / `)` inside quotes never moves
+# the stack — it would pop it early (`(cd <run> && git commit -m "ok :)"; git push)` judged the push
+# at the outer dir) — and instead sets PAREN_UNSURE, which puts an unknown (in-scope) target on
+# PUB_DIRS: quoted parens may hide a real `$( … )`, so the walk's directories are not trusted.
+# mark_parens <string> -> MARKED: <string> with each UNQUOTED `(` / `)` replaced by an OPEN / CLOSE
+# line. Quote state follows the shell's (single quotes literal; `\` escapes outside single quotes); a
+# paren inside quotes is left as text and sets PAREN_UNSURE=1 (fail CLOSED, see cmd_has_publish).
+PAREN_UNSURE=0
+mark_parens() {
+  local s="$1" i=0 n="${#1}" c q="" out=""
+  while [ "$i" -lt "$n" ]; do
+    c="${s:$i:1}"
+    if [ "$q" = "'" ]; then
+      case "$c" in "'") q="" ;; '('|')') PAREN_UNSURE=1 ;; esac
+      out="$out$c"
+    elif [ "$q" = '"' ]; then
+      case "$c" in
+        '"') q="" ;;
+        '\') out="$out$c"; i=$((i + 1)); c="${s:$i:1}" ;;
+        '('|')') PAREN_UNSURE=1 ;;
+      esac
+      out="$out$c"
+    else
+      case "$c" in
+        "'"|'"') q="$c"; out="$out$c" ;;
+        '\') out="$out$c"; i=$((i + 1)); out="$out${s:$i:1}" ;;
+        '(') out="$out$NL$OPEN$NL" ;;
+        ')') out="$out$NL$CLOSE$NL" ;;
+        *) out="$out$c" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  MARKED="$out"
+}
 cmd_has_publish() {
   local s="$1" depth="${2:-0}" sep seg GT='>' LT='<' stk="" any=1
   s="${s//\\$NL/ }"
@@ -755,7 +790,7 @@ cmd_has_publish() {
   s="${s//">|"/$GT}"
   s="${s//"&&"/$NL}"            # before the redirect swap: `x&&>f` is `x && >f`, never `x & &>f`
   s="${s//">&"/$GT$AMP}"; s="${s//"<&"/$LT$AMP}"; s="${s//"&>"/$AMP$GT}"
-  s="${s//"("/$NL$OPEN$NL}"; s="${s//")"/$NL$CLOSE$NL}"
+  mark_parens "$s"; s="$MARKED"
   for sep in '&&' '||' ';' '|' '&' '(' ')' '`'; do s="${s//"$sep"/$NL}"; done
   while IFS= read -r seg; do
     seg="${seg#"${seg%%[![:space:]]*}"}"
@@ -778,6 +813,8 @@ CUR_DIR="$BASE_DIR"
 cmd_has_publish "$CMD" 0 || allow
 # a publish that recorded no directory (a detector that only answers yes/no) is unknown -> in scope
 [ "${#PUB_DIRS[@]}" -gt 0 ] || PUB_DIRS[0]="$UNK"
+# a quoted `(` / `)` anywhere: the directory walk is not trusted -> an unknown target, in scope
+[ "$PAREN_UNSURE" = 1 ] && PUB_DIRS[${#PUB_DIRS[@]}]="$UNK"
 [ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
 
 # (v) session join — reuse THE ownership rules, never a restated copy. The owner is the run-creation
