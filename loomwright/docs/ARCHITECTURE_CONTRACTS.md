@@ -605,9 +605,9 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 46506¹ | 7 |
+| `launch-pad`        | 47557 | 47428¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
-| `plan-reviewer`     | 11535 | 10528¹ | 0 |
+| `plan-reviewer`     | 12462 | 11382¹ | 0 |
 | `product-owner`     | 17356 | 17195¹ | 3 |
 | `qa-executor`       | 53332 | 48483¹ | 5 |
 | `qa-strategist`     | 24219 | 22017¹ | 3 |
@@ -634,6 +634,8 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 > **Re-measure log (no raise — touches-name-shared-files-at-intake, 2026-11-05):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agent `product-owner` 16719 → 17195 (**161 headroom, 0.9%** — the next PR that grows it will breach); command `product-owner` 10488 → 11004 (533 headroom); skill `user-story-writing` 5279 → 5535 (174 headroom). The growth is the Product Owner's shared-file sweep bullet (mirrored in the command), the contract-change flag at the Pre-persist gate (Assumption Check and Output Format lines, the 3a trigger, option bullet and `<n>` count) and the skill's sweep bullet with its `.agent/companions.json` pointer. No budget breached; none raised. The agent row stays ¹-marked LIVE; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
 > **Raise log (lane-scope-regate Part A, 2026-11-04):** command `launch-pad` 5515 → 6203 — the `LP-SCOPE` mirror (the Can't-ask rule's `scope_widening_non_interactive` branch, the no-improvised-header rule, Phase 2.5's "outside Touches is never a NO-GO" line and the Phase 6 step 1 ask) moved the live weight 5326 → 5639 (breach by 124); restored to measured + ~10% per the raise rule. **Re-measured, no raise:** agent `launch-pad` 45686 → 46388 (Phase 6 action 1a, its Save rule and Phase 5.5 pseudocode line, the Critical Rules additions and the Phase 2.5 line; 1169 headroom). **Part B, re-measured, no raise:** agent `launch-pad` 46388 → 46506 and command `launch-pad` 5639 → 5678 (the lane `- decision: pending-coordinator` branch of action 1a and its Phase 6 mirror; 1051 / 525 headroom). Both table cells and JSON `measured` fields carry these end-of-change figures.
+
+> **Raise log (approach-decisions/02, design decisions, 2026-11-12):** `plan-reviewer` 11535 → 12462 (live 10528 at origin/main → 11382) — the new conditional Criterion 23 "Approach justification" (23a–23d, the `approach_unjustified` / `approach_reinvents` categories, two Decision Matrix rows and the 22 → 23 count moves); skill `supervisor-readiness` 12700 → 14984 (live 11545 → 13621) — the new read-on-demand `design-decisions.md` (the Launch Pad Phase 2.7 protocol, counted only in this skill row because it is not the preloaded `SKILL.md`) plus the template's `## Design decisions` block; both set to measured + ~10%. Command `launch-pad` 6203 → 6857 (live 5678 → 6234) — the Phase 2.7 mirror plus the T2 exclusions and the never-trigger rule in it and in the Phase 5.5 Criterion 23 clause (breach by 31); set to measured + ~10% per the raise rule. No raise, `measured` only: agent `launch-pad` 46506 → 47428 against the unchanged 47557 (129 headroom; Phase 2.7 stays a ≤ 25-line entry because its protocol lives in the split file), per `bash scripts/check-token-budget.sh`.
 
 > **Raise log (automate-speed/17, size ceilings for skills and commands — no agent budget or measured value changed):** every skill dir and command doc gained a `.skills` / `.commands` entry at measured + ~10% (the two tables at the end of this section), and every `note` in `prompt-token-budgets.json` was cut to one line. Agent history now lives in these raise logs and `CHANGELOG.md` only. Figures that had lived only in a `note`, carried here before the cut: `code-reviewer`'s live weight just before its automate-followups/06 raise was 25016 (→ 25057 after it); `supervisor`'s 1307 headroom recorded at dismissed-findings-01 had shrunk to 108 from other merged PRs before automate-speed/02 breached it; `context-keeper`'s v15.16.0 tightening (3052 → 2837, frozen baseline 2774) is in footnote 1.
 
@@ -743,7 +745,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `setup` | 10782 | 9801 |
 | `state-management` | 9105 | 8277 |
 | `supervisor-config` | 5768 | 5243 |
-| `supervisor-readiness` | 12700 | 11545 |
+| `supervisor-readiness` | 14984 | 13621 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
 | `user-story-writing` | 5709 | 5535 |
@@ -766,7 +768,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
 | `janitor` | 1470 | 1427 |
-| `launch-pad` | 6203 | 5678 |
+| `launch-pad` | 6857 | 6234 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
@@ -805,6 +807,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | Product Owner pre-persist soft gate | `agents/product-owner.md` + `commands/product-owner.md` §"Soft gate with user confirmation", §"3a. Pre-persist house-rule check", Critical Rules, checklists; `skills/automate-loop/SKILL.md` §2 "Prompt source" | MI; MN (passed by `/automate --non-interactive-fallback`); HP (`/automate` under `/loop`); SA by auto-delegation only | undefined (the "never persist without confirmation" rule, no branch) | `po_gate: needs_owner (<n> flags)`; nothing persisted, and `/automate` intake stops. Step 4's can't-ask branch records its flags and continues; the Pre-persist house-rule check (Responsibilities 3a, after story drafting) asks per conflict (advisory: the same three options, Proceed = a recorded owner override; `must`: `PO-RULE-MUST`, no override option) and its can't-ask branch emits the run's one combined `po_gate` line |
 | Launch Pad Phase 2 clarification (incl. step 0's unusable requirement file) | `agents/launch-pad.md` + `commands/launch-pad.md` Critical Rules ("Can't-ask rule"); agent Phase 2 DISCOVER | MI; MN (flag, forwarded by `/autonomous` PLAN step 1 under `--non-interactive-fallback`); HP (runner in print mode, or inline under headless `/automate --inline-phases`); HR (the `/automate` Launch Pad phase); SA by auto-delegation only | undefined | `status: aborted`, `status_reason: "clarification_needed_non_interactive"` |
 | Launch Pad Phase 2.5 NO-GO | agent §Phase 2.5 "Flow control"; command FEASIBILITY "Flow"; `skills/autonomous-loop/SKILL.md` PLAN step 3 | as above | undefined (still asked regardless of the flag) | `status: aborted`, `status_reason: "no_go_non_interactive"`, with no option auto-picked |
+| Launch Pad Phase 2.7 approach pick (`LP-APPROACH`, human-only) | agent Critical Rules ("Can't-ask rule"), §Phase 2.7 step 3; command Critical Rules, Phase 2.7; `skills/supervisor-readiness/design-decisions.md` §"The `LP-APPROACH` ask"; Plan Reviewer Criterion 23 (23d) | as above | new gate | the default pick recorded `status: unconfirmed`, never asked, never aborted; a T1 entry left `unconfirmed` makes Plan Review NEEDS_HUMAN |
 | Launch Pad generic NEEDS_HUMAN | agent Phase 5.5 pseudocode, Phase 6 action 2, Save rules | as above | `needs_human_non_interactive` | unchanged |
 | Launch Pad Executable Acceptance NEEDS_HUMAN | agent Phase 6 action 2a | as above | auto-strip + re-review (`cmd_bullets_stripped_non_interactive`) | unchanged |
 | Launch Pad house-rule override NEEDS_HUMAN | agent Phase 5.5 pseudocode, Phase 6 action 2b, Save rules; command Phase 5.5 NEEDS_HUMAN line; Plan Reviewer Criterion 17c | as above | new gate (#432 plan half) | no override written and nothing revised or saved; `status: aborted`, summary leading `rule_conflict_non_interactive: <ids>` |

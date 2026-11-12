@@ -1,0 +1,8 @@
+{
+  "fixture": "brief-a-t1-no-section.md",
+  "trigger": "T1",
+  "sub_check": "23a",
+  "severity": "MEDIUM",
+  "category": "approach_unjustified",
+  "decision": "PASS"
+}

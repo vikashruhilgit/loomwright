@@ -8,7 +8,7 @@
 #   W.  verdict handling: multi-arg join, whitespace collapse, a literal `*`.
 #   R.  refusals (exit 2, empty stdout): unknown id, no verdict, blank
 #       verdict, an over-long verdict, no args.
-#   T.  the table: `--list` prints exactly the nine phases in run order.
+#   T.  the table: `--list` prints exactly the ten phases in run order.
 #   P.  prompt wiring: every phase the table names is called with its id from
 #       agents/launch-pad.md AND commands/launch-pad.md, so a phase the
 #       prompt drops (or an id the table lacks) turns this red.
@@ -51,6 +51,7 @@ run_table() {
   expect "$s" "L 1"   '## Phase 1: VALIDATE — 0 blockers, 1 warning'  1 '0 blockers, 1 warning'
   expect "$s" "L 2"   '## Phase 2: DISCOVER — 3 criteria'             2 '3 criteria'
   expect "$s" "L 2.5" '## Phase 2.5: FEASIBILITY — CAUTION'           2.5 CAUTION
+  expect "$s" "L 2.7" '## Phase 2.7: APPROACH — no trigger'           2.7 no trigger
   expect "$s" "L 3"   '## Phase 3: ANALYZE — 2 modify, 1 create'      3 '2 modify, 1 create'
   expect "$s" "L 4"   '## Phase 4: DECOMPOSE — 1 subtask'             4 '1 subtask'
   expect "$s" "L 5"   '## Phase 5: PACKAGE — brief assembled'         5 'brief assembled'
@@ -64,7 +65,7 @@ run_table() {
   expect "$s" "W literal star kept"  '## Phase 3: ANALYZE — src/* files' 3 'src/* files'
 
   echo "R. refusals"
-  refuse "$s" "R unknown id"      2.7 'no trigger'
+  refuse "$s" "R unknown id"      2.9 'no trigger'
   refuse "$s" "R id with suffix"  1a ok
   refuse "$s" "R no verdict"      3
   refuse "$s" "R blank verdict"   3 "$(printf ' \n\t ')"
@@ -73,7 +74,7 @@ run_table() {
   expect "$s" "R 160 chars is allowed" "## Phase 3: ANALYZE — $(printf '%0160d' 0)" 3 "$(printf '%0160d' 0)"
 
   echo "T. table"
-  expect "$s" "T --list" "$(printf '1 VALIDATE\n2 DISCOVER\n2.5 FEASIBILITY\n3 ANALYZE\n4 DECOMPOSE\n5 PACKAGE\n5.5 PLAN REVIEW\n6 SAVE\n7 RESULT')" --list
+  expect "$s" "T --list" "$(printf '1 VALIDATE\n2 DISCOVER\n2.5 FEASIBILITY\n2.7 APPROACH\n3 ANALYZE\n4 DECOMPOSE\n5 PACKAGE\n5.5 PLAN REVIEW\n6 SAVE\n7 RESULT')" --list
   refuse "$s" "T --list takes no args" --list extra
 }
 

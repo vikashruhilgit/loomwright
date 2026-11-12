@@ -97,6 +97,7 @@ The phase lines from after-rate, as they appear in its tool results:
 - A tool call is still a step the model can skip. It is more dependable than prose because it is one concrete
   command per phase, and `test-launch-pad-phase.sh` fails if a phase's call is dropped from either prompt file.
   But no hook enforces it at run time, and the counts above are what supports "dependable".
-- Phase 2.7 (APPROACH) is not on `main` yet. It arrives with vikashruhilgit/loomwright#895, and whichever PR
-  merges second adds the row `2.7|APPROACH` to the script's table, a call in both prompt files, and a pin. The
-  test's wiring check turns red if either prompt calls `launch-pad-phase.sh 2.7` before the table has that row.
+- Phase 2.7 (APPROACH) arrived on `main` with vikashruhilgit/loomwright#895 after these runs. The merge of `main`
+  into this branch added the row `2.7|APPROACH`, a call in both prompt files (`launch-pad-phase.sh 2.7 no trigger`
+  on the no-trigger path, `<N decisions>` otherwise) and a pin. No headless run here exercised 2.7; the six runs
+  above predate it.

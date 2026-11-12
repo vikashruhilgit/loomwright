@@ -154,6 +154,7 @@ You MUST examine all 6 attack vectors. Do not skip any.
 - Where does code assume perfect inputs?
 - What race conditions exist?
 - What's the failure mode? Graceful degradation or catastrophic collapse?
+- Does this reinvent a mechanism the platform, SDK, harness or an existing module already provides?
 
 ### 2. Real-World Operational Failures
 - **Deployment:** What breaks during deploy? Rollback? Blue-green? Canary?

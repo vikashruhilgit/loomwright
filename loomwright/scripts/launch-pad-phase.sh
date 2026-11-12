@@ -37,6 +37,7 @@ set -u
 PHASES='1|VALIDATE
 2|DISCOVER
 2.5|FEASIBILITY
+2.7|APPROACH
 3|ANALYZE
 4|DECOMPOSE
 5|PACKAGE
@@ -72,7 +73,7 @@ $PHASES
 EOF
 
 if [ -z "$name" ]; then
-  printf 'launch-pad-phase: unknown phase "%s" (known: 1 2 2.5 3 4 5 5.5 6 7)\n' "$phase" >&2
+  printf 'launch-pad-phase: unknown phase "%s" (known: 1 2 2.5 2.7 3 4 5 5.5 6 7)\n' "$phase" >&2
   exit 2
 fi
 
