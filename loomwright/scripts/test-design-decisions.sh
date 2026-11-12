@@ -42,6 +42,8 @@ PLUGIN="$(cd "$HERE/.." && pwd)"
 REPO="$(cd "$PLUGIN/.." && pwd)"
 SR="$PLUGIN/skills/supervisor-readiness/SKILL.md"
 DD="$PLUGIN/skills/supervisor-readiness/design-decisions.md"
+# The runtime path the prompts must read the split file through (the install-root variable, literal).
+DD_RUNTIME='${CLAUDE_PLUGIN_ROOT}/skills/supervisor-readiness/design-decisions.md'
 LP="$PLUGIN/agents/launch-pad.md"
 LPC="$PLUGIN/commands/launch-pad.md"
 PR="$PLUGIN/agents/plan-reviewer.md"
@@ -153,11 +155,13 @@ echo "AC3 — Launch Pad Phase 2.7 (agents/launch-pad.md)"
 P25="$(lineof "$LP" '^### Phase 2\.5: FEASIBILITY')"; P27="$(lineof "$LP" '^### Phase 2\.7: APPROACH')"; P3="$(lineof "$LP" '^### Phase 3: ANALYZE')"
 in_order "$P25" "$P27" "$P3" && ok "### Phase 2.7: APPROACH between Phase 2.5 and Phase 3" || no "Phase 2.7 position ($P25 $P27 $P3)"
 PH="$(block "$LP" '^### Phase 2\.7: APPROACH' '^### Phase [^2]|^### Phase 2\.[^7]')"
-bhas "$PH" 'A trigger → `Read(' && bhas "$PH" 'skills/supervisor-readiness/design-decisions.md)`' \
-  && ok "trigger-gated Read( of design-decisions.md" || no "trigger-gated Read( of design-decisions.md"
+bhas "$PH" "A trigger → \`Read($DD_RUNTIME)\`" \
+  && ok "trigger-gated Read( of design-decisions.md through the install root" || no "trigger-gated Read( of design-decisions.md through the install root"
 bhas "$PH" 'No trigger → print `## Phase 2.7: APPROACH — no trigger`, read nothing' && ok "the no-trigger literal" || no "the no-trigger literal"
 bhas "$PH" 'header: "LP-APPROACH"' && bhas "$PH" '`Keep <chosen>` · `Switch to <runner-up>` · `Decide later`' \
   && ok "LP-APPROACH ask with its three options" || no "LP-APPROACH ask in the phase block"
+bhas "$PH" 'not a test, fixture, doc or evidence file' && bhas "$PH" 'ug fixes, docs, prompt-only edits and small changes never trigger' && ok "Phase 2.7 trigger list carries the T2 exclusion and the never-trigger rule" \
+  || no "Phase 2.7 trigger list lacks the T2 exclusion or the never-trigger rule"
 NLINES="$(awk '
   /^### Phase 2\.7: APPROACH/ {f = 1}
   f && /^### Phase / && !/^### Phase 2\.7: APPROACH/ {exit}
@@ -198,6 +202,8 @@ CPH="$(block "$LPC" '^### Phase 2\.7: APPROACH' '^### Phase 3')"
 bhas "$CPH" '## Phase 2.7: APPROACH — no trigger' && bhas "$CPH" 'LP-APPROACH' && bhas "$CPH" 'status: unconfirmed' \
   && bhas "$CPH" '`Keep <chosen>` · `Switch to <runner-up>` · `Decide later`' && ok "command Phase 2.7 block: no-trigger, ask, can't-ask" \
   || no "command Phase 2.7 block content"
+bhas "$CPH" "\`$DD_RUNTIME\`" && bhas "$CPH" 'not a test, fixture, doc or evidence file' && bhas "$CPH" 'ug fixes, docs, prompt-only edits and small changes never trigger' \
+  && ok "command Phase 2.7 block: install-root path, T2 exclusion, never-trigger rule" || no "command Phase 2.7 block path or exclusions"
 [ -n "$lp_a" ] && [ "$lp_a" = "$lp_c" ] && ok "Can't-ask rule bullets byte-identical (agent = command)" || no "Can't-ask rule bullets differ"
 bhas "$lp_c" "$CLAUSE" && ok "command Can't-ask rule carries the Phase 2.7 clause" || no "command Can't-ask rule lacks the Phase 2.7 clause"
 grep -F '2. Fill all 9 sections' "$LPC" | grep -qF 'optional Design decisions section from Phase 2.7' \
@@ -206,6 +212,9 @@ S55="$(block "$LPC" '^### Phase 5\.5' '^### Phase 6')"
 bhas "$S55" 'Criteria 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, and 23 are conditional' && ok "Phase 5.5 step 2 conditional list ends at 23" \
   || no "Phase 5.5 step 2 conditional list"
 bhas "$S55" 'Criterion 23 runs only when the brief carries a trigger' && ok "Phase 5.5 step 2 Criterion 23 gate clause" || no "Criterion 23 gate clause"
+C23C="$(printf '%s\n' "$S55" | grep -oE 'Criterion 23 runs only when the brief carries a trigger \([^)]*\)' | head -1)"
+bhas "$C23C" 'not a test, fixture, doc or evidence file' && bhas "$C23C" 'ug fixes, docs, prompt-only edits and small changes never trigger' && ok "Phase 5.5 Criterion 23 clause carries the T2 exclusion and the never-trigger rule" \
+  || no "Phase 5.5 Criterion 23 clause lacks the T2 exclusion or the never-trigger rule"
 bhas "$S55" 'checks every review criterion' && ok "count-free 'checks every review criterion' kept" || no "'checks every review criterion' lost"
 
 echo "AC5 — the gate catalog"
@@ -230,6 +239,11 @@ for s in '**23a' '**23b' '**23c' '**23d' '`approach_unjustified`' '`approach_rei
 done
 bhas "$C23" 'T1, a `## Feasibility` CAUTION row naming a new dependency' && bhas "$C23" 'T2, a File Impact Map CREATE row that is a script or module' \
   && ok "Criterion 23 gate: T1 CAUTION row, T2 CREATE script/module" || no "Criterion 23 gate text"
+GATE23="$(printf '%s\n' "$C23" | grep -F -- '- **Conditional gate:**' | head -1)"
+bhas "$GATE23" 'not a test, fixture, doc or evidence file' && bhas "$GATE23" 'Bug fixes, docs, prompt-only edits and small changes never trigger' && ok "Criterion 23 gate carries Launch Pad's T2 exclusion and the never-trigger rule" \
+  || no "Criterion 23 gate lacks the T2 exclusion or the never-trigger rule"
+bhas "$C23" "\`$DD_RUNTIME\`" && ok "Criterion 23 reads the split file through the install root" \
+  || no "Criterion 23 does not read the split file through the install root"
 [ "$(grep -cF '(23c)' "$PR")" = 1 ] && grep -F '(23c)' "$PR" | grep -qE '^\| .*\| \*\*FAIL\*\* \(HIGH `approach_reinvents` issue\) \|$' \
   && ok "Decision Matrix: the one (23c) line is the FAIL HIGH approach_reinvents row" || no "Decision Matrix (23c) FAIL row"
 grep -F '(23d)' "$PR" | grep -F 'status: unconfirmed' | grep -F 'no BLOCKING/HIGH issue exists' | grep -qF '| **NEEDS_HUMAN**' \

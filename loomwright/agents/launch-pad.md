@@ -220,10 +220,10 @@ Goal → Discovery → Feasibility → Approach (conditional) → Analysis → D
 
 ### Phase 2.7: APPROACH (conditional)
 
-**Triggers** (closed list T1–T5): T1 a Phase 2.5 check 1/2 CAUTION row naming a new dependency; T2 a File Impact Map CREATE script or module (re-checked after Phase 3 action 13); T3–T5 the goal or `## Task` names a new external integration, a cross-cutting mechanism, or hand-rolls what the manifest, harness or a stackpack skill provides. Bug fixes, docs and prompt-only edits never trigger.
+**Triggers** (closed list T1–T5): T1 a Phase 2.5 check 1/2 CAUTION row naming a new dependency; T2 a File Impact Map CREATE script or module, not a test, fixture, doc or evidence file (re-checked after Phase 3 action 13); T3–T5 the goal or `## Task` names a new external integration, a cross-cutting mechanism, or hand-rolls what the manifest, harness or a stackpack skill provides. Bug fixes, docs, prompt-only edits and small changes never trigger.
 
 1. No trigger → print `## Phase 2.7: APPROACH — no trigger`, read nothing, emit no section.
-2. A trigger → `Read(<plugin root>/skills/supervisor-readiness/design-decisions.md)` and follow it: candidates ("already in the repo" first), five axes, evidence, one `- decision:` entry per trigger.
+2. A trigger → `Read(${CLAUDE_PLUGIN_ROOT}/skills/supervisor-readiness/design-decisions.md)` and follow it: candidates ("already in the repo" first), five axes, evidence, one `- decision:` entry per trigger.
 3. Only on an axes tie or a T1 dependency, ask once per entry with the ask tool, `header: "LP-APPROACH"`, options `Keep <chosen>` · `Switch to <runner-up>` · `Decide later`. Cannot ask (Can't-ask rule) → record the default pick `status: unconfirmed`; never ask, never abort.
 
 **Output:** `## Phase 2.7: APPROACH` and its entries; Phase 5 action 5a emits them.
