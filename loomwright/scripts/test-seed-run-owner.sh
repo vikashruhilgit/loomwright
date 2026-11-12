@@ -29,7 +29,7 @@
 #   9.  a hostile `session_id` is sanitised to `[A-Za-z0-9_-]` and cannot inject
 #       an extra `key=value` line into the seed
 #   10. a RELATIVE `file_path` is resolved against the payload's own `cwd`
-#   11. PARITY — `loom_run_owner_seed` is byte-identical in the two consumers
+#   11. PARITY — `loom_run_owner_seed` is byte-identical in the three consumers (incl. the publish guard)
 #       (close-stranded-run.sh, build-state.sh), which their own headers claim
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
@@ -339,7 +339,7 @@ assert_eq "case10 exit 0" "0" "$(get_rc "$OUT10")"
 assert_eq "case10 relative path still resolves to the run's state file" "cc-owner-10" \
   "$(seed_val "$REPO10/.supervisor/logs/sid-case10.owner" cc_session_id)"
 
-echo "== 11. PARITY: loom_run_owner_seed is byte-identical in both consumers =="
+echo "== 11. PARITY: loom_run_owner_seed is byte-identical in every consumer =="
 # Both consumers' headers CLAIM the two copies are kept identical. A claim no
 # check backs is how they drift: the two are the single ownership rule, and a
 # close-out reading a different owner from the projector is precisely the
@@ -352,6 +352,10 @@ FN_BUILD="$(extract_fn "$SCRIPT_DIR/build-state.sh")"
 if [ -n "$FN_CLOSE" ]; then ok "case11 loom_run_owner_seed found in close-stranded-run.sh"; else no "case11 loom_run_owner_seed NOT found in close-stranded-run.sh"; fi
 if [ -n "$FN_BUILD" ]; then ok "case11 loom_run_owner_seed found in build-state.sh"; else no "case11 loom_run_owner_seed NOT found in build-state.sh"; fi
 assert_eq "case11 the two function bodies are byte-identical" "$FN_CLOSE" "$FN_BUILD"
+# guard-finalize-publish.sh reads the same seed for its session join (third consumer)
+FN_GUARD="$(awk '/^loom_run_owner_seed\(\) \{/ {inside=1} inside {print} inside && /^\}/ {exit}' "$SCRIPT_DIR/guard-finalize-publish.sh" 2>/dev/null)"
+if [ -n "$FN_GUARD" ]; then ok "case11 loom_run_owner_seed found in guard-finalize-publish.sh"; else no "case11 loom_run_owner_seed NOT found in guard-finalize-publish.sh"; fi
+assert_eq "case11 the guard's copy is byte-identical too" "$FN_CLOSE" "$FN_GUARD"
 
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"
