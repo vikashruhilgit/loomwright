@@ -757,7 +757,9 @@ seg_is_publish() {
 # PUB_DIRS: quoted parens may hide a real `$( … )`, so the walk's directories are not trusted.
 # mark_parens <string> -> MARKED: <string> with each UNQUOTED `(` / `)` replaced by an OPEN / CLOSE
 # line. Quote state follows the shell's (single quotes literal; `\` escapes outside single quotes); a
-# paren inside quotes is left as text and sets PAREN_UNSURE=1 (fail CLOSED, see cmd_has_publish).
+# paren inside quotes, or an escaped one (`\(` quoted or not), is left as text and sets PAREN_UNSURE=1
+# (fail CLOSED, see cmd_has_publish): the later split still cuts on it, so a literal `\(cd /tmp\)`
+# would otherwise read as a real `cd`.
 PAREN_UNSURE=0
 mark_parens() {
   local s="$1" i=0 n="${#1}" c q="" out=""
@@ -769,14 +771,16 @@ mark_parens() {
     elif [ "$q" = '"' ]; then
       case "$c" in
         '"') q="" ;;
-        '\') out="$out$c"; i=$((i + 1)); c="${s:$i:1}" ;;
+        '\') out="$out$c"; i=$((i + 1)); c="${s:$i:1}"
+             case "$c" in '('|')') PAREN_UNSURE=1 ;; esac ;;
         '('|')') PAREN_UNSURE=1 ;;
       esac
       out="$out$c"
     else
       case "$c" in
         "'"|'"') q="$c"; out="$out$c" ;;
-        '\') out="$out$c"; i=$((i + 1)); out="$out${s:$i:1}" ;;
+        '\') out="$out$c"; i=$((i + 1)); out="$out${s:$i:1}"
+             case "${s:$i:1}" in '('|')') PAREN_UNSURE=1 ;; esac ;;
         '(') out="$out$NL$OPEN$NL" ;;
         ')') out="$out$NL$CLOSE$NL" ;;
         *) out="$out$c" ;;

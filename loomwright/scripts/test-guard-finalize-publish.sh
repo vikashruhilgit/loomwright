@@ -213,6 +213,8 @@ QUOTED_PAREN_CASES=(
   "(cd $RU && git commit -m \"Looks good :)\" ; git push)"
   "(cd $RU && git commit -m 'see note)' ; git push)"
   "echo \"\$(cd $PLAIN_Q)\"; git push"
+  "echo \"\\(cd $PLAIN_Q\\)\"; git push"
+  "echo \\(cd $PLAIN_Q\\); git push"
 )
 for c in "${QUOTED_PAREN_CASES[@]}"; do run_guard_json "$RU" "$(payload_full "$c" cc-uuid-1 "$PLAIN_Q")"; expect "own session, quoted paren [$c] -> denied" 2; done
 run_guard_json "$RU" "$(payload_full "(cd $FWT && git commit -m \"fix(x): y\"; git push)" cc-uuid-1 "$RU")"; expect "own session, quoted paren in a foreign-worktree push -> denied (fail CLOSED, needs the marker)" 2
@@ -656,6 +658,14 @@ run_guard_json "$RMI" "$(payload_full "pushd; git push -u origin $BR" cc-uuid-1 
 [ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (bare pushd): reading it as cd \$HOME lets the run checkout's push escape — the unknown rule is load-bearing" \
   || no "mutation (bare pushd): inconclusive (changed=$MUTOK rc=$RC)"
 run_guard_json "$RMI" "$(payload_full "pushd; git push -u origin $BR" cc-uuid-1 "$RMI")"; expect "own session: bare pushd; git push from the run checkout -> denied" 2
+
+#  (g) escaped parens trusted again: `echo "\(cd <plain>\)"; git push` from the run checkout escapes
+mutant m-escparen 's/PAREN_UNSURE=1 ;; esac ;;$/: ;; esac ;;/'
+for c in "echo \"\\(cd $MPLAIN\\)\"; git push" "echo \\(cd $MPLAIN\\); git push"; do
+  run_guard_json "$RMI" "$(payload_full "$c" cc-uuid-1 "$RMI")" "$MUTF"
+  [ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$RC" = 0 ] && ok "mutation (escaped paren): without the flag [$c] escapes — load-bearing" \
+    || no "mutation (escaped paren) [$c]: inconclusive (changed=$MUTOK rc=$RC)"
+done
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"
