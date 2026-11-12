@@ -11,7 +11,9 @@
 #   T.  the table: `--list` prints exactly the ten phases in run order.
 #   P.  prompt wiring: every phase the table names is called with its id from
 #       agents/launch-pad.md AND commands/launch-pad.md, so a phase the
-#       prompt drops (or an id the table lacks) turns this red.
+#       prompt drops (or an id the table lacks) turns this red; each file's
+#       rule runs the script through the install root, never a bare
+#       relative scripts/ path.
 #   K.  MUTATION CONTROLS against COPIES: a dropped table row; an unknown id
 #       printed instead of refused; the em-dash separator changed.
 
@@ -91,6 +93,17 @@ for f in "$AGENT" "$CMD"; do
       no "P $(basename "$(dirname "$f")")/$(basename "$f") has no \`launch-pad-phase.sh $id \` call"
     fi
   done
+  # The rule runs the script through the install root: a bare relative
+  # `scripts/launch-pad-phase.sh` does not resolve from a user's project.
+  # The variable name is assembled so this file carries no install-root token.
+  root_call="\${CLAUDE""_PLUGIN_ROOT}/scripts/launch-pad-phase.sh"
+  if grep -qF "bash \"$root_call\" <id> <verdict>" "$f"; then
+    ok "P $(basename "$(dirname "$f")")/$(basename "$f") runs the script through the install root"
+  else
+    no "P $(basename "$(dirname "$f")")/$(basename "$f") has no install-root call of launch-pad-phase.sh"
+  fi
+  bare="$(grep -nE '(^|[^/])scripts/launch-pad-phase\.sh' "$f" | grep -vF "$root_call" || true)"
+  if [ -z "$bare" ]; then ok "P $(basename "$f") has no bare scripts/ path"; else no "P $(basename "$f") bare path: $bare"; fi
   # Every id the prompt passes must be one the table knows.
   for used in $(grep -oE 'launch-pad-phase\.sh [0-9][0-9.]*' "$f" | cut -d' ' -f2 | sort -u); do
     if grep -qxF "$used" <<<"$ids"; then ok "P $(basename "$f") id $used is in the table"; else no "P $(basename "$f") passes unknown id $used"; fi
