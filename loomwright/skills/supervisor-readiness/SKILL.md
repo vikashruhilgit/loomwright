@@ -153,6 +153,15 @@ With `/setup memory` on, leave its managed block as it is: it ignores the conten
 Currently, {current state}. This causes {pain/cost}.
 Success looks like {measurable outcome}.
 
+## Design decisions
+> Optional: Launch Pad Phase 2.7, only on a trigger (`design-decisions.md` in this skill dir).
+- decision: {what had to be chosen}
+  chosen: {the way picked}
+  rejected: <way> — <why>
+  evidence: {grep, doc or search result}
+  revisit when: {condition}
+  status: confirmed | unconfirmed
+
 ## Acceptance Criteria
 - [ ] Given {precondition}, when {action}, then {outcome}
 - [ ] Given {precondition}, when {action}, then {outcome}
@@ -425,7 +434,7 @@ Subtask 2 (independent)
 
 ### Section Requirements
 
-**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), `House Rules` (v15.109.0+ — Launch Pad Phase 5 action 6a, emitted only when `read-rules.sh --with-ids` routed ≥1 rule to the File Impact Map; its reader banner is demoted to a `> ` line so it stays one H2 section), `Rule conflicts (open decisions)` (#432 — copied verbatim from the source requirement, or written by Launch Pad Phase 6 action 2b from the owner's answer; Plan Reviewer Criterion 17c), `Touched-file invariants` (conditionally required — whenever the brief modifies an existing script; Plan Reviewer Criterion 18), `Closed enumerations touched` and `Pin mutations` (conditionally required — a new enum value / a new or changed test pin; Plan Reviewer Criterion 19), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the latter eight are documented in `agents/launch-pad.md` or their own blocks above and omitted from the table below:
+**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), `House Rules` (v15.109.0+ — Launch Pad Phase 5 action 6a, emitted only when `read-rules.sh --with-ids` routed ≥1 rule to the File Impact Map; its reader banner is demoted to a `> ` line so it stays one H2 section), `Rule conflicts (open decisions)` (#432 — copied verbatim from the source requirement, or written by Launch Pad Phase 6 action 2b from the owner's answer; Plan Reviewer Criterion 17c), `Touched-file invariants` (conditionally required — whenever the brief modifies an existing script; Plan Reviewer Criterion 18), `Closed enumerations touched` and `Pin mutations` (conditionally required — a new enum value / a new or changed test pin; Plan Reviewer Criterion 19), `Design decisions` (Launch Pad Phase 2.7, only on a trigger; Plan Reviewer Criterion 23), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the sections after Feasibility are documented in `agents/launch-pad.md` or their own blocks above and omitted from the table below:
 
 | Section | Required? | Used In Phase | Purpose |
 |---------|-----------|---------------|---------|
@@ -544,6 +553,7 @@ Before saving a brief:
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
 - [ ] Brief follows the complete template (all 9 required sections present; Feasibility optional)
 - [ ] If Phase 2.5 ran, Feasibility verdict recorded in the optional `## Feasibility` section
+- [ ] If Phase 2.7 hit a trigger, `## Design decisions` carries one entry per trigger
 - [ ] If the brief modifies an existing script, `## Touched-file invariants` covers every modified script with grounded (file + quoted anchor) entries
 - [ ] The File Impact Map carries the module-layout facts (§"Module layout" above: a line count per MODIFY path; one home per new responsibility)
 
