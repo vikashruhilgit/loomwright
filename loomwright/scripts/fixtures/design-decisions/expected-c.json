@@ -1,0 +1,8 @@
+{
+  "fixture": "brief-c-reinvention.md",
+  "trigger": "T2",
+  "sub_check": "23c",
+  "severity": "HIGH",
+  "category": "approach_reinvents",
+  "decision": "FAIL"
+}

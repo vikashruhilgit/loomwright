@@ -1,0 +1,8 @@
+{
+  "fixture": "brief-b-t1-no-rejected.md",
+  "trigger": "T1",
+  "sub_check": "23b",
+  "severity": "MEDIUM",
+  "category": "approach_unjustified",
+  "decision": "PASS"
+}

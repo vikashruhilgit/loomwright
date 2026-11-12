@@ -1,0 +1,8 @@
+{
+  "fixture": "brief-d-t1-unconfirmed.md",
+  "trigger": "T1",
+  "sub_check": "23d",
+  "severity": "MEDIUM",
+  "category": "approach_unjustified",
+  "decision": "NEEDS_HUMAN"
+}

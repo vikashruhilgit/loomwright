@@ -150,6 +150,8 @@ _lp_catalog_rows() {
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
     'Launch Pad Phase 2.5 feasibility NO-GO'
+  _lp_row LP-APPROACH  human-only 'Keep <chosen>|Switch to <runner-up>|Decide later' \
+    'Launch Pad Phase 2.7 approach pick, asked only on an axes tie or a T1 new dependency; cannot ask ⇒ status: unconfirmed, never asked, never aborted'
   _lp_row LP-SCOPE     human-only 'Extend Touches|Revise plan|Stop' \
     'Launch Pad Phase 6, before the save question: ONE ask listing every brief path outside the item Touches (automate-lanes.sh scope-outside); Extend records them in the brief ## Scope widening section; human-only by owner decision; cannot ask ⇒ scope_widening_non_interactive, nothing saved'
   _lp_row LP-SAVE-NOTE auto       'Save and exit!|Refine further?|Edit sections?|Discard' \
