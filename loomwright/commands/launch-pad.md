@@ -126,6 +126,7 @@ The Core Principles above are critical rules too. In addition:
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
 - **Can't-ask rule:** this run cannot ask when `--non-interactive`/`--non-interactive-fallback` is set OR it is executing as a subagent (the ask tool is absent from its tool set) — never from a stdin-TTY probe alone. Every question gate then takes its named branch and never improvises: Phase 2 clarification (incl. step 0's unusable requirement file) → `status: aborted, status_reason: "clarification_needed_non_interactive"` with the open questions listed; Phase 2.5 NO-GO → `status: aborted, status_reason: "no_go_non_interactive"`; Phase 6 NEEDS_HUMAN → action 2a auto-strip / action 2b `rule_conflict_non_interactive` / action 2 `needs_human_non_interactive`; Phase 6 scope widening (action 1a, paths outside Touches; never in a `--parallel N > 1` lane, which records them instead) → save nothing, `status: aborted`, summary leading `scope_widening_non_interactive: <n> path(s) outside Touches`, even with the explicit flag; Phase 6 PASS → with the explicit flag (the owner's unattended opt-in), save the unmutated PASSed brief, noted `saved_on_pass_non_interactive` (no Outcomes Rubric is auto-authored when the run cannot ask — Phase 5 step 7 is a no-op, so the saved brief carries only a rubric the requirement already had); with no flag (a subagent only) → save nothing, `status: aborted, status_reason: "save_requires_flag_non_interactive"`; Plan Review FAIL × 3 → `status: blocked, status_reason: "plan_review_fail_non_interactive"`; memory candidates → write nothing, list them under `memory_candidates_deferred_non_interactive`. Each named status rides in `LAUNCH_PAD_RESULT.summary` as its leading token (`summary: "no_go_non_interactive: …"`), never as a new key: the block's key set is closed and `validate-launch-pad-result.py --raw` blocks any unknown key, a `status_reason:` line included. Interactive options are unchanged.
 - **Never invent files/APIs/paths** — ask if unsure
+- **Phase lines:** every phase ends with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/launch-pad-phase.sh" <id> <verdict>` (a skipped phase passes `skipped`); its stdout is the phase line, never typed by hand. Phase 7 runs `launch-pad-phase.sh 7 <status>` just before the `LAUNCH_PAD_RESULT` block
 - **Every question names a catalog code** (`docs/LANE_GATES.md`): a free-form question that is no catalog gate is asked under `LP-CLARIFY`, never an improvised header
 - **Feasibility gate (Phase 2.5)** — soft gate. NO-GO stops pipeline (user can override); CAUTION findings feed into Risk Assessment
 
@@ -146,7 +147,7 @@ The Core Principles above are critical rules too. In addition:
 5. Check GitHub CLI: `gh auth status`
 6. Report blockers (must fix) vs warnings (can proceed)
 
-Skip if `--skip-validation` flag is set.
+Skip if `--skip-validation` flag is set. End: `launch-pad-phase.sh 1 <N blockers, N warnings | skipped>`.
 
 ### Phase 2: DISCOVER (Requirement Refinement)
 
@@ -156,6 +157,7 @@ Skip if `--skip-validation` flag is set.
 3. Write criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`); a criterion whose evidence would live in the PR body (a carried-forward one included) is written in the evidence-file form instead, its `docs/evidence/<slug>.md` a File Impact Map create (`skills/supervisor-readiness/SKILL.md` §"Acceptance Criteria"; Plan Reviewer Criterion 20)
 4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
 5. If `--discovery` flag: force full discovery even if goal seems clear
+6. End: `launch-pad-phase.sh 2 <N criteria>`
 
 ### Phase 2.5: FEASIBILITY (Soft Gate)
 
@@ -174,7 +176,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 - NO-GO + cannot ask (Can't-ask rule) → `status: aborted, status_reason: "no_go_non_interactive"`, no option auto-picked
 - Files outside the requirement's Touches are never a NO-GO: a CAUTION, asked once at Phase 6 (`LP-SCOPE`)
 
-**Fallback:** Sparse CLAUDE.md → checks 1-3 default to CAUTION with "insufficient project context".
+**Fallback:** Sparse CLAUDE.md → checks 1-3 default to CAUTION with "insufficient project context". End: `launch-pad-phase.sh 2.5 <GO|CAUTION|NO-GO>`.
 
 ### Phase 3: ANALYZE (Codebase Impact Estimation)
 
@@ -188,6 +190,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 8. Touched-file invariants (conditional — the File Impact Map modifies ≥1 existing script): per modified file, the guards, conventions, mirrored producer/consumer contracts, firing matchers/callers and pinning tests the change must keep, each grounded as file + quoted anchor (format: `skills/supervisor-readiness/SKILL.md` §"Touched-file invariants")
 9. Closed enumerations and pin mutations (conditional — the change adds an enum/status value, or adds or changes test pins): every closed list that must name the new value, found by a repo-wide grep of a sibling value (command + hits shown), and per pin the one-line code mutation that must turn it red (format: `skills/supervisor-readiness/SKILL.md` §"Closed enumerations touched" / §"Pin mutations")
 10. Module layout (every File Impact Map): each MODIFY path's line count at base, one home per new responsibility (a CREATE module, the shared module to reuse, or a one-line reason for appending), and an extract row for a helper 2+ siblings already copy; tests count like source (threshold and override: `skills/supervisor-readiness/SKILL.md` §"Module layout")
+11. End: `launch-pad-phase.sh 3 <N modify, N create>`
 
 ### Phase 4: DECOMPOSE (Subtask Structure)
 
@@ -198,6 +201,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 3. Analyze dependencies between subtasks
 4. Compute parallelism: LAUNCHABLE (no deps + no overlap) vs BLOCKED
 5. Estimate batches and recommended worker count
+6. End: `launch-pad-phase.sh 4 <N subtasks>`
 
 ### Phase 5: PACKAGE (Assemble Brief)
 
@@ -207,7 +211,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
    When Phase 3 step 8 ran, emit `## Touched-file invariants` immediately before `## Subtask Structure`; otherwise emit no section.
    When Phase 3 step 9 ran, emit `## Closed enumerations touched` and/or `## Pin mutations` after it, before `## Subtask Structure`; otherwise emit neither.
    When the source requirement carries a `## Rule conflicts (open decisions)` section, copy it into the brief verbatim after `## House Rules`; never author a `Rule override:` line (agent Phase 5 action 6a (iii)).
-4. Present to user
+4. Present to user, after `launch-pad-phase.sh 5 <N subtasks, N files>`
 
 ### Phase 5.5: PLAN REVIEW (Mandatory Gate)
 
@@ -219,6 +223,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
    - FAIL (attempt < 3) → fix issues (a Criterion 20 PR-body criterion is rewritten to the evidence-file form, never deleted), re-assemble, re-spawn reviewer; a Criterion 22 `missing` requirement line gets coverage, never dropped, and an `extra` unit (refined at the fix floor) is removed or linked to the line it serves
    - FAIL (attempt = 3) → present issues, offer (`LP-FAIL`) "Refine offline" (exit, `status: blocked`) or "Discard" (no save; the 3-spawn cap is never reset within a session)
    - NEEDS_HUMAN → present issues, offer (`LP-NEEDHUMAN`) "Override and save" or "Refine further" or "Discard"; a Criterion 17c house-rule conflict (an AC contradicting an advisory rule with no owner `Rule override:` line) instead offers (`LP-RULE-OVR`) `record-override` (the owner's note becomes the line) / `honor-rule` / `discard`, and aborts `rule_conflict_non_interactive` when it cannot ask (agent Phase 6 action 2b)
+4. End (each decision): `launch-pad-phase.sh 5.5 <decision> (attempt N/3)`
 
 ### Phase 6: REFINE & SAVE (Interactive)
 
@@ -227,6 +232,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 3. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
 4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/pending/{file}.md`
 5. If blockers exist or Plan Review FAIL: don't offer save
+6. End: `launch-pad-phase.sh 6 <saved PATH | outcome>`
 
 ---
 
