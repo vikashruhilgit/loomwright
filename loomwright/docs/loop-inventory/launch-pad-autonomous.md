@@ -65,6 +65,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-050 | agents/launch-pad.md | q: **"Abort"** → exit Launch Pad | user picks Abort | exit Launch Pad | deterministic | prose | - | GAP |
 | LP-051 | agents/launch-pad.md | q: **Cannot ask** (Can't-ask rule) → no option is auto-picked | NO-GO and the run cannot ask | pick no option; status aborted, no_go_non_interactive, findings in output | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-052 | agents/launch-pad.md | q: **Fallback:** If CLAUDE.md is sparse/missing tech stack info | CLAUDE.md lacks tech-stack info | checks 1-3 default to CAUTION (not NO-GO) noting insufficient context | deterministic | prose | - | GAP |
+| LP-540 | agents/launch-pad.md | h: ### Phase 2.7: APPROACH (conditional) | after FEASIBILITY: a T1–T5 trigger / no trigger | read design-decisions.md and write one entry per trigger (LP-APPROACH only on an axes tie or a T1 dependency; cannot ask ⇒ status: unconfirmed) / print the no-trigger line, emit no section | deterministic | prose | - | GAP |
 | LP-053 | agents/launch-pad.md | h: ### Phase 3: ANALYZE (Codebase Impact Estimation) | after FEASIBILITY (GO, CAUTION, or overridden NO-GO) | estimate the File Impact Map, overlap, skills, confidence and the advisory reads below | deterministic | prose | - | GAP |
 | LP-054 | agents/launch-pad.md | q: **Consult project memory (advisory):** | always | run read-project-memory.sh and fold facts in, subordinate to CLAUDE.md; 0 verified ⇒ proceed normally | deterministic | prose | script:read-project-memory.sh | test-project-memory.sh |
 | LP-055 | agents/launch-pad.md | q: **Consult verified lessons (advisory):** | always | run read-lessons.sh, keep only relevant categories; never blocks or changes a verdict; may be cited in Risk Assessment | deterministic | prose | script:read-lessons.sh | test-read-lessons.sh |
@@ -274,6 +275,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-256 | commands/launch-pad.md | q: Override / Revise (max 1 loop back to Phase 2) / Abort | NO-GO | stop and ask: Override / Revise (max 1) / Abort | deterministic | prose | - | GAP |
 | LP-257 | commands/launch-pad.md | q: NO-GO + cannot ask (Can't-ask rule) → `status: aborted, status_reason: "no_go_non_interactive"` | NO-GO and cannot ask | aborted no_go_non_interactive; no option auto-picked | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-258 | commands/launch-pad.md | q: **Fallback:** Sparse CLAUDE.md → checks 1-3 default to CAUTION | sparse CLAUDE.md | checks 1-3 default to CAUTION | deterministic | prose | - | GAP |
+| LP-541 | commands/launch-pad.md | h: ### Phase 2.7: APPROACH (conditional) | after FEASIBILITY (command mirror): a trigger / no trigger | one entry per trigger, LP-APPROACH on a tie or a T1 dependency / no section | deterministic | prose | - | GAP |
 | LP-259 | commands/launch-pad.md | h: ### Phase 3: ANALYZE (Codebase Impact Estimation) | after FEASIBILITY (command mirror) | impact estimation | deterministic | prose | - | GAP |
 | LP-260 | commands/launch-pad.md | q: Detect file overlap between groups (overlap = must serialize) | groups overlap | must serialize | rule | step-scoped | - | GAP |
 | LP-261 | commands/launch-pad.md | q: Mark confidence: HIGH / MEDIUM / LOW | each prediction | mark confidence | judgment | prose | - | GAP |
@@ -991,12 +993,14 @@ This file lists every branch (condition → action) and every standing rule stat
 434. LP-536 — a strict-empty plan_reviewer seat must take NEEDS_HUMAN and never count as a PASS, and a routed answer must pass validate-plan-review-result.py --raw before it can gate a save; no test exercises the seat paragraph
 435. LP-537 — a strict-empty evaluate_reviewer seat must skip the Task and take the ESCALATED branch; no test exercises the seat paragraph
 436. LP-538 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a provides entry a later step of its subtask deletes
+437. LP-540 — untested deterministic branch in agents/launch-pad.md: Phase 2.7 trigger detection and the no-trigger line
+438. LP-541 — untested deterministic branch in commands/launch-pad.md: the Phase 2.7 trigger / no-trigger mirror
 
 ## Counts
 
-- rows: 539
-- deterministic: 341
+- rows: 541
+- deterministic: 343
 - judgment: 48
 - rule: 125
 - story: 25
-- GAP: 436
+- GAP: 438
