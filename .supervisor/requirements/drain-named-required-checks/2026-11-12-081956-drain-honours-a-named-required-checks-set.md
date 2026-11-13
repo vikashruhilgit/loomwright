@@ -133,3 +133,14 @@ loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 docs/evidence/drain-named-required-checks.md
 changelog.d/drain-named-required-checks.md
+
+## Status: brief-shipped
+
+Job `.supervisor/jobs/done/2026-11-13-drain-named-required-checks.md` completed (reconciled from the job lifecycle, not self-reported).
+Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-13T15:30:17Z
+- **Brief:** .supervisor/jobs/done/2026-11-13-drain-named-required-checks.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/905
