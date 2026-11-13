@@ -11,5 +11,10 @@
 # `bash scripts/<x>.sh` line there into a local gate and drops other arguments, so the mutating
 # script's own name must never appear on such a line.
 #
+# Scope: changelog.d/ fragments release the loomwright plugin only. A branch that changes nothing
+# but a self-releasing sibling plugin (bump-version.sh's SELF_RELEASING_PLUGINS, today selvedge/)
+# fails when it carries a new fragment or a loomwright bump — it releases through its own
+# plugin.json + CHANGELOG.md. That rule lives in bump-version.sh --check too (its SCOPE section).
+#
 # Exit: 0 consistent, 1 violated, 2 cannot check (no base ref, shallow clone) — fail CLOSED in CI.
 exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bump-version.sh" --check "$@"
