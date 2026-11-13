@@ -58,7 +58,12 @@
 #       unreadable required-check metadata and a SETTLED `required=unknown` line ⇒ ESCALATED unless
 #       `--required-checks all-non-neutral`; a human-authored unresolved thread and a resolved bot thread are
 #       never candidates (and never block READY); a countable rule failing then reading `unstamped` ⇒
-#       ESCALATED `rules_fail_then_unstamped`.
+#       ESCALATED `rules_fail_then_unstamped`. The no-list outcome with no flag and no config key (plain 404,
+#       paid-plan 403, classic 404 + rulesets paid-plan 403) is byte-identical to base 40b3f49 (cksum pins);
+#       the named required set (`--required-checks name:` / config `required_checks`): its precedence
+#       (protected > flag > config > paid-plan), the wait and the confirming pass handed the set, a reviews-only
+#       404 ignoring it, `required_check_absent`, a malformed key, usage refusals, --root's config, and no
+#       `--required-checks` in any drain invocation automate-next-step.sh builds.
 #   T   TRANSIENT READS AND RESTARTS. One failed PR read is retried and the run goes on (no pr_unreadable,
 #       no comment); a read that keeps failing still ends ESCALATED pr_unreadable and the comment names
 #       gh's error. A new run over a finished one carries fix_cycles / issues_fixed / findings_validated and
@@ -110,7 +115,7 @@ fallback review
 fix worker"
 REQUIRED_BRANCHES="converged bound_hit sub_floor_converged ci_untrusted fix_round no_review_lens_posted
 no_review_lens_posted_ambiguous no_review_lens_posted_red_check channel_unknown fix_floor_invalid fallback_review_ran
-clean_verdict"
+clean_verdict named_required"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass + 1)); }
@@ -140,7 +145,7 @@ while IFS="	" read -r rc times pat out || [ -n "$rc" ]; do
     echo $((used + 1)) > "$RH_GH_STATE/$n"
   fi
   case "$out" in @*) cat "$RH_CASE/${out#@}" ;; "") ;; *) printf "%s\n" "$out" ;; esac
-  errf="${RH_GH_TABLE%/*}/gh.stderr"
+  errf="${RH_GH_TABLE%/*}/gh.stderr.$n"; [ -f "$errf" ] || errf="${RH_GH_TABLE%/*}/gh.stderr"
   if [ "$rc" != 0 ] && [ -f "$errf" ]; then cat "$errf" >&2; fi
   exit "$rc"
 done < "$RH_GH_TABLE"
@@ -176,13 +181,14 @@ setup_case() {
     elif [ -f "$FIX/_common/$nm.lines" ]; then cp "$FIX/_common/$nm.lines" "$C/seq/"; fi
   done
   if [ -f "$cd_/gh.table" ]; then cp "$cd_/gh.table" "$C/gh.table"; else : > "$C/gh.table"; fi
+  if [ -f "$cd_/config.json" ]; then mkdir -p "$C_ROOT/.supervisor" && cp "$cd_/config.json" "$C_ROOT/.supervisor/config.json"; fi
 }
 
 # drv <driver> <args…> — one driver call in the sandbox; sets OUT ERR RCV (files: $C/last.out / last.err)
 drv() {
   local d="$1"; shift
   (
-    cd "$C_ROOT" || exit 98
+    cd "${DRV_CWD:-$C_ROOT}" || exit 98
     unset LOOMWRIGHT_GH_BIN RH_FROM RH_UNTIL GH
     export HOME="$C_HOME" PATH="$C_BIN:$PATH" RH_GH_TABLE="$C/gh.table" RH_CASE="$C_CASE" RH_GH_STATE="$C/ghstate"
     export RH_SEQ_DIR="$C/seq" RH_SEQ_STATE="$C/seqstate" RH_SIDE_LOG="$C/side.log" RH_COMMENTS="$C/comments.log"
@@ -877,6 +883,232 @@ DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
   && ok "B: a rate-limit 403 on the wait's own read ⇒ required=unknown ⇒ ESCALATED, past a paid-plan required read" \
   || no "B: wait's rate-limit 403 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+# AC 9 — no readable protection, no --required-checks, no config key: the observable outcome is byte-identical to
+# the driver before the named required set existed (base 40b3f49), for each of the three no-list reads. The
+# bundle is every printed instruction with its exit code, the result block, the PR comments, the notify /
+# postmortem recorder and the stub call log (so a wait handed an extra argument shows), normalised; the cksums
+# were taken on base. On a mismatch the bundle is printed for the diff.
+ac9_drv() { drv "$@"; { printf '%s\n' "$OUT"; printf '= %s\n' "$RCV"; } >> "$C/ac9.out"; }
+ac9_bundle() {
+  local rf
+  rf="$(ls "$C_ROOT"/.supervisor/review-heal/*.review-heal-result.md 2>/dev/null | head -n 1)"
+  { cat "$C/ac9.out"; echo '-- result'; [ -n "$rf" ] && cat "$rf"; echo '-- comments'; cat "$C/comments.log"
+    echo '-- side'; cat "$C/side.log"; echo '-- calls'; cat "$C/calls.log"; } | norm_text "$HERE"
+}
+ac9_check() { # <label> <expected cksum>
+  local b got
+  b="$(ac9_bundle)"
+  got="$(printf '%s\n' "$b" | cksum | tr -d ' \t')"
+  [ "$got" = "$2" ] && ok "B: AC 9 $1 — outcome byte-identical to base" \
+    || no "B: AC 9 $1 — outcome changed (cksum $got, base $2):
+$b"
+}
+ac9_rules_stderr() { # <stderr line> — the rules row's own stderr (the stub's per-row gh.stderr.<row>)
+  local n; n="$(awk -F'\t' -v p="$RS_ROW" '$3 == p {print NR; exit}' "$C/gh.table")"
+  printf '%s\n' "$1" > "$C/gh.stderr.$n"
+}
+setup_case "$FIX/converged-ready"; : > "$C/ac9.out"
+gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+ac9_drv "$DRIVER" --start drain
+ac9_check "plain 404, no ruleset" 10769817513098
+paid_case core-green.json; : > "$C/ac9.out"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 ac9_drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 ac9_drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+ac9_check "paid-plan 403" 27510862826159
+# the mode is sidecar-only (an unset required_names reads as null, so the bundle alone cannot tell): base's mode
+[ "$(jq -r '.required_mode // "absent"' "$C_ROOT"/.supervisor/review-heal/*.next-step.json 2>/dev/null)" = no_required_list ] \
+  && ok "B: AC 9 paid-plan 403 — required_mode no_required_list, as on base" \
+  || no "B: AC 9 paid-plan 403 — required_mode $(jq -r '.required_mode // "absent"' "$C_ROOT"/.supervisor/review-heal/*.next-step.json 2>/dev/null)"
+setup_case "$FIX/converged-ready"; : > "$C/ac9.out"
+gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 1 "$PAID_REQ_OUT"; ac9_rules_stderr "$PAID_ERR_LINE"
+ac9_drv "$DRIVER" --start drain
+ac9_check "classic 404 + rulesets paid-plan 403" 10769817513098
+# drain-named-required-checks — a named required set (`--required-checks name:<a>,<b>` or the ROOT config's
+# `required_checks`) stands in ONLY when the base's protection read leaves no list; a readable list always wins.
+# Precedence: protected > the flag (all-non-neutral | name:) > the config key > the paid-plan refusal > ESCALATED.
+NR_UT_CFG='{"auto_review": true, "required_checks": ["Unit Tests"]}'
+NR_CORE="../named-required-ready/core.json"   # Unit Tests green, claude-review green, a red deployment status
+nr_cfg() { mkdir -p "$C_ROOT/.supervisor" && printf '%s\n' "$1" > "$C_ROOT/.supervisor/config.json"; }
+nr_side() { jq -c --arg k "$1" '.[$k] // "absent"' "$C_ROOT"/.supervisor/review-heal/*.next-step.json 2>/dev/null; }
+nr_what() { printf '%s' "$OUT" | jq -c '{do, what, decision, message, required_failing}' 2>/dev/null; }
+# AC 1 — config set + paid-plan 403, through the REAL wait: only Unit Tests is required, the red deployment status
+# is ignored, READY converged; the same sandbox with no config key never reaches READY (the deployment blocks)
+paid_case "$NR_CORE"; nr_cfg "$NR_UT_CFG"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] && [ "$(nr_side required_mode)" = '"named"' ] \
+  && [ "$(nr_side required_names)" = '["Unit Tests"]' ] \
+  && ok "B: AC 1 config required_checks + paid-plan 403 ⇒ required_mode named, required_names [Unit Tests], the real wait settles" \
+  || no "B: AC 1 named start ⇒ $(nr_what) mode $(nr_side required_mode) names $(nr_side required_names)"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+[ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && grep -qx '  termination_reason: converged' < <(b_block) \
+  && ok "B: AC 1 the red deployment status outside the named set never blocks ⇒ READY converged" \
+  || no "B: AC 1 named READY ⇒ $(nr_what)"
+paid_case "$NR_CORE"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+[ "$(printf '%s' "$OUT" | jq -r '.decision // "none"')" != READY ] && [ "$(nr_side required_mode)" = '"no_required_list"' ] \
+  && ok "B: AC 1 control — no config key: no_required_list, the red deployment status blocks READY (unchanged)" \
+  || no "B: AC 1 control ⇒ $(nr_what) mode $(nr_side required_mode)"
+# AC 1 — the scoped wait is handed the named set (and only under named)
+setup_case "$FIX/named-required-ready"; drv "$DRIVER" --start drain
+grep -q '^wait .* --call-max 540 --named-required \["Unit Tests"\]$' "$C/calls.log" \
+  && ok "B: AC 1 under named the scoped wait gets --named-required [\"Unit Tests\"]" \
+  || no "B: AC 1 wait args ⇒ $(grep '^wait ' "$C/calls.log")"
+# AC 2 — the flag's set wins over the config's; Lint is required (absent from the rollup ⇒ failing, never READY)
+setup_case "$FIX/named-required-ready"; drv "$DRIVER" --start drain --required-checks "name:Unit Tests,Lint"
+[ "$(nr_side required_names)" = '["Unit Tests","Lint"]' ] && [ "$(nr_side required_mode)" = '"named"' ] \
+  && [ "$(nr_side flag_required_checks)" = '"name:Unit Tests,Lint"' ] \
+  && grep -q '^wait .*--named-required \["Unit Tests","Lint"\]$' "$C/calls.log" \
+  && ok "B: AC 2 --required-checks name:Unit Tests,Lint wins over the config ⇒ required_names [Unit Tests, Lint]" \
+  || no "B: AC 2 flag over config ⇒ names $(nr_side required_names) flag $(nr_side flag_required_checks)"
+drv "$DRIVER" --result-file "$FIX/named-required-ready/report-1.json"
+[ "$(printf '%s' "$OUT" | jq -r '.decision // "none"')" != READY ] && [ "$(nr_side required_failing | jq -r 'map(.name) | join(",")')" = Lint ] \
+  && ok "B: AC 2 Lint is required: absent from the rollup it is failing, never READY" \
+  || no "B: AC 2 Lint ⇒ $(nr_what) failing $(nr_side required_failing)"
+# AC 3 — the confirming pass under named takes the set; under protected it never does
+setup_case "$FIX/sub-floor-converged-ready"; nr_cfg '{"required_checks": ["ci"]}'; gh_row "$REQ_ROW" 1 "$PAID_REQ_OUT"
+drv "$DRIVER" --start drain; drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-1.json"
+drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-2.json"
+grep -q "^wait $PR --sha $SHA_B .*--required-only --names --call-max 540 --named-required \[\"ci\"\]$" "$C/calls.log" \
+  && [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] \
+  && ok "B: AC 3 under named the SHA-bound confirming pass confirms only the named set (--named-required)" \
+  || no "B: AC 3 confirm args ⇒ $(grep "^wait $PR --sha $SHA_B" "$C/calls.log") $(nr_what)"
+setup_case "$FIX/sub-floor-converged-ready"
+drv "$DRIVER" --start drain; drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-1.json"
+drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-2.json"
+grep -q "^wait $PR --sha $SHA_B .*--required-only" "$C/calls.log" && ! grep -q -- '--named-required' "$C/calls.log" \
+  && ok "B: AC 3 control — under protected neither wait carries --named-required" \
+  || no "B: AC 3 control ⇒ $(grep '^wait ' "$C/calls.log")"
+# AC 4 — readable protection requiring ci wins: the config set is neither added nor substituted
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"; drv "$DRIVER" --start drain
+[ "$(nr_side required_mode)" = '"protected"' ] && [ "$(nr_side required_names)" = '["ci"]' ] && ! grep -q -- '--named-required' "$C/calls.log" \
+  && ok "B: AC 4 readable protection [ci] + config [Unit Tests] ⇒ protected, exactly [ci], the wait gets no named set" \
+  || no "B: AC 4 protected wins ⇒ mode $(nr_side required_mode) names $(nr_side required_names)"
+# AC 5 — a reviews-only protected base (404 "Required status checks not enabled" on the required read — the drain's
+# read; the wait's own /protection read answers 200, pinned in test-wait-for-checks.sh 56): the config set is
+# ignored, the outcome byte-identical to the same base with no config key; a `name:` flag is ignored there too
+NR_404_ON='{"message":"Required status checks not enabled","documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-status-checks-protection","status":"404"}'
+nr_reviews_only() { setup_case "$FIX/converged-ready"; : > "$C/ac9.out"; gh_row "$REQ_ROW" 1 "$NR_404_ON"
+  printf 'gh: Required status checks not enabled (HTTP 404)\n' > "$C/gh.stderr"; }
+nr_reviews_only; ac9_drv "$DRIVER" --start drain; NR_B0="$(ac9_bundle)"
+nr_reviews_only; nr_cfg "$NR_UT_CFG"; ac9_drv "$DRIVER" --start drain; NR_B1="$(ac9_bundle)"
+[ "$NR_B0" = "$NR_B1" ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] \
+  && ok "B: AC 5 reviews-only protection (404 not enabled) + config ⇒ the config ignored, outcome byte-identical to no key" \
+  || no "B: AC 5 reviews-only ⇒ $(nr_what); differs: $(diff <(printf '%s\n' "$NR_B0") <(printf '%s\n' "$NR_B1") | head -n 5)"
+nr_reviews_only; drv "$DRIVER" --start drain --required-checks "name:Unit Tests"
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: AC 5 reviews-only protection + --required-checks name: ⇒ not named (protection exists), required_checks_unavailable" \
+  || no "B: AC 5 reviews-only + name: ⇒ $(nr_what)"
+# a 404 that cannot see the protection ("Not Found" — a token without admin read) is an unreadable read ⇒ named
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
+gh_row "$REQ_ROW" 1 '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-status-checks-protection","status":"404"}'
+printf 'gh: Not Found (HTTP 404)\n' > "$C/gh.stderr"; drv "$DRIVER" --start drain
+[ "$(nr_side required_mode)" = '"named"' ] && ok "B: a 404 Not Found (no admin read) + config ⇒ named (an unreadable read)" \
+  || no "B: 404 Not Found + config ⇒ $(nr_what) mode $(nr_side required_mode)"
+# classic protection READABLE ([ci]) with only the ruleset read failing (a 502) is a protection, not "no list": the
+# config set and a `name:` flag are both ignored, the outcome byte-identical to the same read with no key —
+# ESCALATED required_checks_unavailable before the wait, as with no named set
+nr_classic_rs_fail() { setup_case "$FIX/converged-ready"; : > "$C/ac9.out"; gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"502"}'
+  ac9_rules_stderr 'gh: Server Error (HTTP 502)'; }
+nr_classic_rs_fail; ac9_drv "$DRIVER" --start drain; NR_B0="$(ac9_bundle)"
+nr_classic_rs_fail; nr_cfg "$NR_UT_CFG"; ac9_drv "$DRIVER" --start drain; NR_B1="$(ac9_bundle)"
+[ "$NR_B0" = "$NR_B1" ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] \
+  && [ "$(nr_side required_mode)" != '"named"' ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: classic readable [ci] + rulesets 502 + config ⇒ never named, ESCALATED required_checks_unavailable, byte-identical to no key" \
+  || no "B: classic readable + rulesets 502 + config ⇒ $(nr_what) mode $(nr_side required_mode); differs: $(diff <(printf '%s\n' "$NR_B0") <(printf '%s\n' "$NR_B1") | head -n 5)"
+nr_classic_rs_fail; drv "$DRIVER" --start drain --required-checks "name:Unit Tests"
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && [ "$(nr_side required_mode)" != '"named"' ] \
+  && ok "B: classic readable [ci] + rulesets 502 + --required-checks name: ⇒ never named, required_checks_unavailable" \
+  || no "B: classic readable + rulesets 502 + name: ⇒ $(nr_what) mode $(nr_side required_mode)"
+# classic 404 "Branch not protected" + rulesets 502: no list was read at all ⇒ the config set stands in
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
+gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"502"}'; ac9_rules_stderr 'gh: Server Error (HTTP 502)'
+drv "$DRIVER" --start drain
+[ "$(nr_side required_mode)" = '"named"' ] && ok "B: classic 404 + rulesets 502 + config ⇒ named (no list was read)" \
+  || no "B: classic 404 + rulesets 502 + config ⇒ $(nr_what) mode $(nr_side required_mode)"
+# reviews-only protection (classic 404 "Required status checks not enabled") + rulesets 500: the 404's body still
+# says a protection exists (drain-gh-read carries it as `(classic: …)`; the wait's /protection read answers 200 and
+# ignores --named-required) ⇒ never named, ESCALATED required_checks_unavailable, byte-identical to no key
+nr_reviews_only_rs_fail() { nr_reviews_only; gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"500"}'
+  ac9_rules_stderr 'gh: Server Error (HTTP 500)'; }
+nr_reviews_only_rs_fail; ac9_drv "$DRIVER" --start drain; NR_B0="$(ac9_bundle)"
+nr_reviews_only_rs_fail; nr_cfg "$NR_UT_CFG"; ac9_drv "$DRIVER" --start drain; NR_B1="$(ac9_bundle)"
+[ "$NR_B0" = "$NR_B1" ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] \
+  && [ "$(nr_side required_mode)" != '"named"' ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: reviews-only 404 + rulesets 500 + config ⇒ never named, required_checks_unavailable, byte-identical to no key" \
+  || no "B: reviews-only 404 + rulesets 500 + config ⇒ $(nr_what) mode $(nr_side required_mode); differs: $(diff <(printf '%s\n' "$NR_B0") <(printf '%s\n' "$NR_B1") | head -n 5)"
+nr_reviews_only_rs_fail; drv "$DRIVER" --start drain --required-checks "name:Unit Tests"
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && [ "$(nr_side required_mode)" != '"named"' ] \
+  && ok "B: reviews-only 404 + rulesets 500 + --required-checks name: ⇒ never named, required_checks_unavailable" \
+  || no "B: reviews-only 404 + rulesets 500 + name: ⇒ $(nr_what) mode $(nr_side required_mode)"
+# a 404 that cannot see the protection ("Not Found") + rulesets 500: no list was read at all ⇒ named
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
+gh_row "$REQ_ROW" 1 '{"message":"Not Found","status":"404"}'; printf 'gh: Not Found (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"500"}'; ac9_rules_stderr 'gh: Server Error (HTTP 500)'
+drv "$DRIVER" --start drain
+[ "$(nr_side required_mode)" = '"named"' ] && ok "B: classic 404 Not Found + rulesets 500 + config ⇒ named (no list was read)" \
+  || no "B: classic 404 Not Found + rulesets 500 + config ⇒ $(nr_what) mode $(nr_side required_mode)"
+# a blank name is not a check name (required-checks-named.sh): config ["  "] is malformed
+setup_case "$FIX/named-required-ready"; nr_cfg '{"required_checks": ["  "]}'; drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -q "config.json's required_checks is malformed" "$C/comments.log" \
+  && ok "B: config [\"  \"] ⇒ malformed (a blank name), ESCALATED required_checks_unavailable" \
+  || no "B: config [\"  \"] ⇒ $(nr_what)"
+# AC 6 — --required-checks all-non-neutral wins over the config key
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
+gh_row "$REQ_ROW" 1 '{"message":"Resource not accessible by integration","status":"403"}'
+printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$C/gh.stderr"
+drv "$DRIVER" --start drain --required-checks all-non-neutral
+[ "$(nr_side required_mode)" = '"all-non-neutral"' ] && [ "$(nr_side required_names)" = '"absent"' ] && ! grep -q -- '--named-required' "$C/calls.log" \
+  && ok "B: AC 6 unreadable + config + --required-checks all-non-neutral ⇒ the flag wins (all-non-neutral)" \
+  || no "B: AC 6 ⇒ mode $(nr_side required_mode) names $(nr_side required_names)"
+# AC 7 — a named check that never shows in the rollup: ELAPSED ⇒ ESCALATED required_check_absent naming it (a
+# check-driven escalation through the classifier), never READY; a named check present but in flight stays check_wait_elapsed
+setup_case "$FIX/named-required-ready"; gh_row 'pr view * --json statusCheckRollup*' 0 '@../_common/core-green.json'
+echo "ELAPSED sha=$SHA_A required=pending review_producing=settled pending=none" > "$C/seq/wait.lines"
+echo "escalation_cause: check_pending check=Unit Tests run_id=- attempt=1 sha=$SHA_A" > "$C/seq/escalation.lines"
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.decision')" = ESCALATED ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_check_absent ] \
+  && grep -q '^required_check_absent Unit Tests — ' "$C/comments.log" \
+  && grep -qx "escalation escalation-cause $PR --sha $SHA_A" "$C/calls.log" && grep -qx '  escalation_cause: check_pending' < <(b_block) \
+  && ok "B: AC 7 a named check never in the rollup ⇒ ESCALATED required_check_absent naming Unit Tests (check-driven cause)" \
+  || no "B: AC 7 absent ⇒ $(nr_what) comment: $(grep -m1 required_check "$C/comments.log")"
+setup_case "$FIX/named-required-ready"
+echo "ELAPSED sha=$SHA_A required=pending review_producing=settled pending=none" > "$C/seq/wait.lines"
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = check_wait_elapsed ] \
+  && ok "B: AC 7 control — the named check present in the rollup ⇒ check_wait_elapsed (not absent)" \
+  || no "B: AC 7 control ⇒ $(nr_what)"
+# AC 8 — a malformed config key with protection unreadable ⇒ ESCALATED required_checks_unavailable naming the key
+for nr_bad in '{"required_checks": []}' '{"required_checks": "Unit Tests"}' '{"required_checks": [1]}'; do
+  setup_case "$FIX/named-required-ready"; nr_cfg "$nr_bad"; drv "$DRIVER" --start drain
+  [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -q "config.json's required_checks is malformed" "$C/comments.log" \
+    && ! grep -q '^wait ' "$C/calls.log" \
+    && ok "B: AC 8 config $nr_bad ⇒ ESCALATED required_checks_unavailable naming required_checks, before the wait" \
+    || no "B: AC 8 $nr_bad ⇒ $(nr_what)"
+done
+# AC 10 — an empty name list or an empty name ⇒ exit 2, nothing printed, nothing written
+for nr_arg in 'name:' 'name:,a' 'name:a,' 'everything'; do
+  setup_case "$FIX/named-required-ready"; rm -rf "$C_ROOT/.supervisor"
+  drv "$DRIVER" --start drain --required-checks "$nr_arg"
+  [ "$RCV" = 2 ] && [ -z "$OUT" ] && [ ! -e "$C_ROOT/.supervisor" ] && [ ! -s "$C/calls.log" ] && grep -q -- '--required-checks' <<<"$ERR" \
+    && ok "B: AC 10 --required-checks '$nr_arg' ⇒ exit 2 usage error, nothing printed, nothing written" \
+    || no "B: AC 10 '$nr_arg' ⇒ rc $RCV out '$OUT' err '$ERR'"
+done
+# AC 11 — the driver reads --root's .supervisor/config.json, never the cwd's
+setup_case "$FIX/named-required-ready"; mkdir -p "$C/elsewhere/.supervisor"
+printf '%s\n' '{"required_checks": ["Other Check"]}' > "$C/elsewhere/.supervisor/config.json"
+DRV_CWD="$C/elsewhere" drv "$DRIVER" --start drain --root "$C_ROOT"
+[ "$(nr_side required_names)" = '["Unit Tests"]' ] && [ ! -d "$C/elsewhere/.supervisor/review-heal" ] \
+  && ok "B: AC 11 the named set comes from --root's .supervisor/config.json, not the cwd's" \
+  || no "B: AC 11 --root config ⇒ names $(nr_side required_names)"
+# AC 12 — every drain invocation automate-next-step.sh builds (inline, fresh-phase, fix-now) passes no
+# --required-checks, so the config key applies; a later passthrough would shadow it silently
+NR_INV="$(grep -E '(inv|dinv)="/review-pr \$PR --until-mergeable' "$HERE/automate-next-step.sh")"
+[ "$(printf '%s\n' "$NR_INV" | grep -c .)" -ge 3 ] && ! grep -q -- '--required-checks' "$HERE/automate-next-step.sh" \
+  && ok "B: AC 12 automate-next-step.sh builds $(printf '%s\n' "$NR_INV" | grep -c .) drain invocations, none with --required-checks" \
+  || no "B: AC 12 drain invocations ⇒ $(grep -n -- '--required-checks\|until-mergeable --no-auto' "$HERE/automate-next-step.sh" | head -n 5)"
 # thread classification: a human-authored unresolved thread and a RESOLVED bot thread are no candidates
 setup_case "$FIX/converged-ready"
 gh_row 'api graphql *' 0 '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"alice","__typename":"User"},"body":"Reviewed: one finding, please rename load_config"}]}},{"isResolved":true,"comments":{"nodes":[{"author":{"login":"claude[bot]","__typename":"Bot"},"body":"Reviewed a1b2c3d. One finding: widget.sh line 9 quotes nothing"}]}}]}}}}}'

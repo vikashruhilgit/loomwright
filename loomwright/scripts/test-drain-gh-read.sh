@@ -96,6 +96,8 @@ case "$*" in
     case "$CLASSIC" in
       ok)   echo '{"url":"u","strict":true,"contexts":["ci"],"checks":[{"context":"ci","app_id":1},{"context":"lint","app_id":2}]}' ;;
       404)  echo '{"message":"Branch not protected","status":"404"}'; echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1 ;;
+      notenabled) echo '{"message":"Required status checks not enabled","status":"404"}'
+            echo 'gh: Required status checks not enabled (HTTP 404)' >&2; exit 1 ;;
       paid) echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}'
             echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2; exit 1 ;;
       500)  echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;
@@ -155,10 +157,29 @@ for r in 403 garbage; do
   rc_run 404 "$r"
   [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -q 'ruleset read failed' <<<"$ERR" \
     && ok "classic 404 + rules '$r' (unreadable) ⇒ exit 1, no list (fail CLOSED)" || no "classic 404 + rules $r wrong (rc=$RC out='$OUT' err='$ERR')"
+  ! grep -q '(classic protection readable)' <<<"$ERR" \
+    && ok "classic 404 + rules '$r' ⇒ no classic-readable marker" || no "classic 404 + rules $r carries the classic-readable marker ($ERR)"
   rc_run ok "$r"
   [ "$RC" -eq 1 ] && [ -z "$OUT" ] \
     && ok "classic readable + rules '$r' (unreadable) ⇒ exit 1: a ruleset that cannot be read may require more" || no "classic ok + rules $r wrong (rc=$RC out='$OUT')"
+  grep -q 'ruleset read failed for release/2.x (classic protection readable): ' <<<"$ERR" \
+    && ok "classic readable + rules '$r' ⇒ the error names classic as readable (a named set never replaces it)" || no "classic ok + rules $r marker missing ($ERR)"
 done
+# a classic 404 + unreadable rules: the error carries the 404 (`(classic: …)`) — its body is what tells an
+# unprotected base from a reviews-only one (required-checks-named.sh); stdout and the exit stay as before
+rc_run 404 403
+[ "$RC" -eq 1 ] && [ -z "$OUT" ] \
+  && grep -q 'ruleset read failed for release/2.x (classic: gh: Branch not protected (HTTP 404)): .*HTTP 403' <<<"$ERR" \
+  && ok "classic 404 + rules unreadable ⇒ exit 1, no stdout, the error carries the classic 404 and the rules error" \
+  || no "classic 404 + rules 403 error shape wrong (rc=$RC out='$OUT' err='$ERR')"
+rc_run notenabled 403
+[ "$RC" -eq 1 ] && [ -z "$OUT" ] && [ "$(wc -l <<<"$ERR" | tr -d ' ')" = 1 ] \
+  && grep -q '(classic: gh: Required status checks not enabled (HTTP 404)): ' <<<"$ERR" \
+  && ok "reviews-only classic 404 + rules unreadable ⇒ the one error line names 'Required status checks not enabled'" \
+  || no "reviews-only classic 404 + rules 403 wrong (rc=$RC out='$OUT' err='$ERR')"
+rc_run notenabled none
+[ "$RC" -eq 1 ] && grep -q 'Required status checks not enabled (HTTP 404)' <<<"$ERR" \
+  && ok "reviews-only classic 404 + no ruleset check ⇒ classic's own 404, unchanged" || no "reviews-only 404 + none wrong (rc=$RC err='$ERR')"
 rc_run paid list
 [ "$RC" -eq 1 ] && grep -q 'Upgrade to GitHub Pro' <<<"$OUT $ERR" && [ "$(wc -l < "$CALLS" | tr -d ' ')" = 1 ] \
   && ok "classic paid-plan refusal ⇒ passed through unchanged (stdout+stderr), rules never read" || no "paid-plan passthrough wrong (rc=$RC out='$OUT' err='$ERR')"

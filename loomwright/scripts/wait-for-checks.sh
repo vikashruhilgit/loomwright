@@ -25,7 +25,7 @@
 # USAGE
 #   wait-for-checks.sh <pr_url> --sha <sha> --bound <seconds> \
 #       [--interval <s>] [--required-only | --review-check-pattern <glob>] \
-#       [--names] [--call-max <s> [--continue | --restart]]
+#       [--names] [--named-required <json array>] [--call-max <s> [--continue | --restart]]
 #
 #   <pr_url>       the PR being waited on (any bare positional argument).
 #   --sha <sha>    the commit the caller is waiting for. A rollup reported
@@ -65,6 +65,21 @@
 #                  word splitting — `automate-helpers.sh escalation-cause` and
 #                  drain-subfloor-decision.sh `decide`. A change to this
 #                  output grammar changes that reader in the same commit.
+#   --named-required <json array>
+#                  OPT-IN. A named required set (review-heal-next-step.sh passes
+#                  it only under its `required_mode named`). It stands in for
+#                  the required contexts ONLY where this script's own protection
+#                  read yields no list: GitHub's paid-plan refusal, an unreadable
+#                  read (every `required=unknown` cause bar the one below), and a verified 404 with
+#                  no ruleset check. A readable read — a 200 (even an empty list,
+#                  a reviews-only protection) or a 404 + ruleset list — always
+#                  wins. A named check absent from the rollup is pending, as any
+#                  required context. A readable classic read whose ruleset read
+#                  failed is a protection, not "no list": it stays
+#                  required=unknown. A value that is not a non-empty array of
+#                  check names (required-checks-named.sh, the drain's own rule)
+#                  is ignored (logged). WITHOUT the flag the output is
+#                  byte-unchanged.
 #   --call-max <s> OPT-IN RESUMABLE MODE (implementation-quality/02 T03). A
 #                  per-CALL ceiling (positive integer, clamped to 570; a poll
 #                  sleep is shortened to end at it; --bound and --call-max may
@@ -150,6 +165,9 @@ WFC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # unreadable: required=unknown, fail CLOSED.
 . "$WFC_DIR/required-checks-rulesets.sh" 2>/dev/null \
   || rulesets_required_read() { RSR_STATE=unreadable; RSR_CONTEXTS='[]'; RSR_REVIEWS=0; RSR_ERR=missing; }
+# The named required set's validation, shared with the drain (--named-required). A missing library refuses
+# every named set: the output with no flag.
+. "$WFC_DIR/required-checks-named.sh" 2>/dev/null || named_required_valid() { return 1; }
 
 # ---- Parse args --------------------------------------------------------------
 PR_URL=""
@@ -163,6 +181,8 @@ NAMES=0
 CALL_MAX=""
 CONTINUE=0
 RESTART=0
+NAMED_REQ=""
+HAVE_NAMED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -182,6 +202,10 @@ while [ $# -gt 0 ]; do
       REQUIRED_ONLY=1; shift ;;
     --names)
       NAMES=1; shift ;;
+    --named-required)
+      NAMED_REQ="${2:-}"; HAVE_NAMED=1; shift; [ $# -gt 0 ] && shift ;;
+    --named-required=*)
+      NAMED_REQ="${1#--named-required=}"; HAVE_NAMED=1; shift ;;
     --call-max)
       CALL_MAX="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --call-max=*)
@@ -345,6 +369,8 @@ review_pattern_match() {
 required_contexts_json="[]"
 protection_unknown=0
 no_required_list=0   # 1 = GitHub's paid-plan refusal: every non-neutral rollup check counts as required
+verified_none=0      # 1 = a verified 404 with no ruleset check: no list exists (the named set may stand in)
+classic_readable=0   # 1 = the classic read answered 200: a protection exists, a named set never replaces its list
 if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
   _base="$("$GH_BIN" pr view "$PR_URL" --json baseRefName 2>/dev/null || true)"
   BASE_REF="$(printf '%s' "$_base" | "$JQ_BIN" -r '.baseRefName // empty' 2>/dev/null || true)"
@@ -372,6 +398,7 @@ if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
       ((.required_status_checks.contexts // []) + ((.required_status_checks.checks // []) | map(.context))) | unique
     ' 2>/dev/null || echo '[]')"
     [ -n "$required_contexts_json" ] || required_contexts_json="[]"
+    classic_readable=1
     # Classic protection and rulesets can both apply to one branch: the union is required.
     rulesets_required_read "$GH_BIN" "$JQ_BIN" "$OWNER" "$REPO" "$BASE_REF"
     if [ "$RSR_STATE" = unreadable ]; then
@@ -389,7 +416,8 @@ if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
         rulesets_required_read "$GH_BIN" "$JQ_BIN" "$OWNER" "$REPO" "$BASE_REF"
         case "$RSR_STATE" in
           list) required_contexts_json="$RSR_CONTEXTS" ;;
-          none) required_contexts_json="[]" ;;  # verified: no classic protection, no ruleset check
+          none) required_contexts_json="[]"     # verified: no classic protection, no ruleset check
+                verified_none=1 ;;
           *)    log "ruleset read failed for $BASE_REF — required checks unknown"
                 protection_unknown=1
                 required_contexts_json="[]" ;;  # unreadable — NOT verified empty
@@ -398,6 +426,19 @@ if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
         protection_unknown=1
         required_contexts_json="[]" ;;  # unreadable — NOT verified empty
     esac
+  fi
+fi
+
+# The caller's named required set stands in ONLY where the read above yields no list (the paid-plan refusal,
+# every unreadable arm, the verified 404 with no ruleset check); a readable read always wins over it — a readable
+# classic read included when only the ruleset read failed (that stays required=unknown, never the named set).
+if [ "$HAVE_NAMED" -eq 1 ]; then
+  _named="$(printf '%s' "$NAMED_REQ" | named_required_valid "$JQ_BIN" | "$JQ_BIN" -c unique 2>/dev/null || true)"
+  if [ -z "$_named" ]; then
+    log "--named-required is not a non-empty JSON array of check names — ignored"
+  elif [ "$classic_readable" -eq 0 ] \
+       && { [ "$no_required_list" -eq 1 ] || [ "$protection_unknown" -eq 1 ] || [ "$verified_none" -eq 1 ]; }; then
+    required_contexts_json="$_named"; no_required_list=0; protection_unknown=0
   fi
 fi
 

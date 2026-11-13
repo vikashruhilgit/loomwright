@@ -84,7 +84,12 @@ esac
 #   classic 404 + no ruleset    ⇒ classic's own failure, unchanged (the caller escalates)
 #   classic any other failure   ⇒ classic's own failure, unchanged — the paid-plan refusal included
 #   rulesets unreadable         ⇒ exit 1 with the rules error: a ruleset that could not be read may
-#                                 require a check the drain would otherwise skip, so never a list
+#                                 require a check the drain would otherwise skip, so never a list. When
+#                                 classic was READABLE the error line carries `(classic protection
+#                                 readable)` (required-checks-named.sh: a protection exists, so a named
+#                                 set never stands in for its list); after a classic 404 it carries
+#                                 `(classic: <the 404's error>)`, whose body tells "not protected" from
+#                                 "protected, no status checks"
 # --jq applies to that merged JSON (jq -r, as gh's own --jq prints).
 required_checks() {
   local owner="$1" repo="$2" base="$3" out err_f err rc=0 merged
@@ -98,7 +103,14 @@ required_checks() {
   fi
   rulesets_required_read "$GH" "$JQ" "$owner" "$repo" "$base"
   if [ "$RSR_STATE" = unreadable ]; then
-    printf 'drain-gh-read: ruleset read failed for %s: %s\n' "$base" "$RSR_ERR" >&2
+    if [ "$rc" -eq 0 ]; then
+      printf 'drain-gh-read: ruleset read failed for %s (classic protection readable): %s\n' "$base" "$RSR_ERR" >&2
+    else
+      # carry the classic 404 too: its body is what says whether a protection exists
+      # (required-checks-named.sh reads "Required status checks not enabled" as one)
+      printf 'drain-gh-read: ruleset read failed for %s (classic: %s): %s\n' "$base" \
+        "$(printf '%s' "${err:-$out}" | tr '\r\n' '  ')" "$RSR_ERR" >&2
+    fi
     return 1
   fi
   if [ "$rc" -ne 0 ]; then

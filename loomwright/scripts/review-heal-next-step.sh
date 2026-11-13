@@ -22,7 +22,7 @@
 # USAGE
 #   review-heal-next-step.sh <pr_url> --start drain [--max-rounds N] [--max-probes N]
 #                            [--fix-floor <HIGH|MEDIUM|LOW>] [--severity-floor <BLOCKING|HIGH|MEDIUM|LOW>]
-#                            [--required-checks all-non-neutral] [--check-wait-timeout N]
+#                            [--required-checks all-non-neutral | name:<a>[,<b>…]] [--check-wait-timeout N]
 #                            [--review-check-pattern <glob>[,<glob>…]] [--no-auto-postmortem]
 #                            [--postmortem-churn-threshold N] [--cheap] [--root <checkout>]
 #   review-heal-next-step.sh <pr_url> [--result <json> | --result-file <f>] [--root <checkout>]
@@ -45,11 +45,16 @@
 #               `bound_hit`; unreadable ⇒ ESCALATED, termination_reason unset)
 #   required    required-check discovery (`drain-gh-read.sh required-checks`; unavailable ⇒ ESCALATED
 #               unless --required-checks all-non-neutral; GitHub's paid-plan refusal gates on every
-#               non-neutral check, protection-paid-plan.sh)
+#               non-neutral check, protection-paid-plan.sh). Precedence: a readable list (`protected`) >
+#               --required-checks (`all-non-neutral`, or `name:` ⇒ `named`) > the ROOT config's
+#               `required_checks` (`named`; malformed ⇒ ESCALATED) > the paid-plan refusal > ESCALATED. A
+#               named set stands in only when the read left no list (rh_no_list)
 #   wait        `wait-for-checks.sh` on the scoped set (`--call-max 540`; CONTINUE ⇒ exit 3, the next
 #               no-result call resumes with `--continue`); ELAPSED ⇒ ESCALATED (check-driven cause); a
 #               `pending=sha_mismatch` line whose re-read head differs ⇒ exit 3, the same round re-opens
-#               at `round` on the new head (no second bump; after 3 re-opens a 4th move ⇒ ESCALATED `head_unstable`)
+#               at `round` on the new head (no second bump; after 3 re-opens a 4th move ⇒ ESCALATED `head_unstable`);
+#               under `named` the wait takes the set (`--named-required`), and an ELAPSED with a named check
+#               missing from the rollup ⇒ ESCALATED `required_check_absent <names>` (check-driven cause)
 #   read        the all-channel read — one `gh pr view` (rollup + formal reviews) and `drain-gh-read.sh`
 #               review-threads / issue-comments / check-annotations + check-run (output.{title,summary,text});
 #               an errored or truncated gated channel
@@ -69,7 +74,8 @@
 #   fix         the fix worker's report: fix_cycles, issues_fixed, checks_ever_fixed
 #   subfloor    the earned-fallback gate (fallback owed ⇒ churn, never `confirm`), then
 #               `drain-subfloor-decision.sh eligible`
-#   confirm     the SHA-bound confirming pass (`wait-for-checks.sh --required-only --names`), the rules
+#   confirm     the SHA-bound confirming pass (`wait-for-checks.sh --required-only --names`, plus the
+#               named set under `named`), the rules
 #               re-read, `drain-subfloor-decision.sh decide`; a head moved past the pushed sha ⇒
 #               ESCALATED `pushed_sha_superseded` at once (never re-bound, never READY)
 #   churn       anti-churn fingerprints, then `drain-rounds.sh bump` and the next round (a round that ends
@@ -138,6 +144,18 @@ command -v "$JQ" >/dev/null 2>&1 || { rh_err "jq not on PATH"; exit 1; }
 # A missing library reads the paid-plan refusal as any other 403: required_checks_unavailable, fail CLOSED.
 . "$HERE/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
 
+# The named required set's validation and the "did the required read leave no list" predicate: one library,
+# shared with wait-for-checks.sh and setup-base-branch.sh. A missing library refuses every named set (rh_named_ok
+# fails, rh_no_list says a protection exists): the outcome with no named set, fail CLOSED.
+. "$HERE/required-checks-named.sh" 2>/dev/null \
+  || { named_required_valid() { return 1; }; required_read_no_list() { return 1; }; }
+# rh_named_ok — stdin: a JSON value; prints it de-duplicated and returns 0 when it is a valid named set
+# (named_required_valid), else 1. The one validation of a named required set, for the `name:` flag and the config key alike.
+rh_named_ok() { named_required_valid "$JQ"; }
+# rh_flag_names <list> — the `--required-checks name:<list>` value as a JSON array (split on commas, never
+# trimmed: a check name may hold spaces); 1 on an empty list or an empty name (`name:`, `name:,a`, `name:a,`).
+rh_flag_names() { "$JQ" -cn --arg l "$1" '$l | split(",")' 2>/dev/null | rh_named_ok; }
+
 # ------------------------------------------------------------------------------------------------
 # arguments
 # ------------------------------------------------------------------------------------------------
@@ -167,8 +185,14 @@ while [ "$#" -gt 0 ]; do
       case "$2" in BLOCKING|HIGH|MEDIUM|LOW) F_SEV="$2" ;; *) rh_die2 "--severity-floor must be BLOCKING|HIGH|MEDIUM|LOW: '$2'" ;; esac
       run_flags=1; shift 2 ;;
     --required-checks)
-      [ "$#" -ge 2 ] && [ "$2" = all-non-neutral ] || rh_die2 "--required-checks takes only all-non-neutral"
-      F_REQ=all-non-neutral; run_flags=1; shift 2 ;;
+      [ "$#" -ge 2 ] || rh_die2 "--required-checks takes all-non-neutral or name:<a>[,<b>…]"
+      case "$2" in
+        all-non-neutral) ;;
+        name:*) rh_flag_names "${2#name:}" >/dev/null \
+                  || rh_die2 "--required-checks name: needs one or more non-empty check names, comma-separated: '$2'" ;;
+        *) rh_die2 "--required-checks takes all-non-neutral or name:<a>[,<b>…]: '$2'" ;;
+      esac
+      F_REQ="$2"; run_flags=1; shift 2 ;;
     --check-wait-timeout)
       [ "$#" -ge 2 ] && [[ "$2" =~ ^[1-9][0-9]{0,5}$ ]] || rh_die2 "--check-wait-timeout needs seconds"
       F_CWT="$2"; run_flags=1; shift 2 ;;
@@ -381,15 +405,41 @@ rh_round() {
   esac
 }
 
+# rh_no_list <read output> — 0 when the required read that just failed left the drain no list to honour, so a
+# named set may stand in (required_read_no_list over the read's stdout and stderr: the paid-plan refusal, a 404
+# "Branch not protected" / "Not Found", every other unreadable read); 1 when a protection exists — classic
+# protection readable with only the ruleset read failed, or a 404 with any other body ("Required status checks
+# not enabled") — never named there, the outcome stays the one with no named set.
+rh_no_list() { required_read_no_list "$1 $(cat "$RH_READ_ERR" 2>/dev/null)"; }
+# rh_config_names — the named set in `required_checks` of `$ROOT/.supervisor/config.json` (ROOT's file, never the
+# cwd's). Prints it and returns 0 when valid (rh_named_ok); 1 when the key is absent — a missing or non-JSON file
+# reads as absent, the outcome with no key being the stricter one; 2 when the key is there but malformed.
+rh_config_names() {
+  local v
+  v="$("$JQ" -c 'if type == "object" and has("required_checks") then .required_checks else empty end' \
+      "$ROOT/.supervisor/config.json" 2>/dev/null)" || return 1
+  [ -n "$v" ] || return 1
+  printf '%s' "$v" | rh_named_ok || return 2
+}
+
 rh_required() {
-  local out names rc=0
+  local out names rc=0 flag cn crc=0
   out="$(rh_ghread required-checks "$SLUG" "$(st base)")" || rc=$?
+  flag="$(st flag_required_checks)"
   if [ "$rc" = 0 ] \
      && names="$(printf '%s' "$out" | "$JQ" -c '((.contexts // []) + [(.checks // [])[] | .context]) | map(select(type == "string")) | unique' 2>/dev/null)" \
      && [ -n "$names" ]; then
     st_setj required_names "$names"; st_set required_mode protected
-  elif [ "$(st flag_required_checks)" = all-non-neutral ]; then
+  elif [ "$flag" = all-non-neutral ]; then
     st_setj required_names 'null'; st_set required_mode all-non-neutral
+  elif [ "${flag#name:}" != "$flag" ] && rh_no_list "$out" && names="$(rh_flag_names "${flag#name:}")"; then
+    st_setj required_names "$names"; st_set required_mode named
+  elif rh_no_list "$out" && { cn="$(rh_config_names)" || crc=$?; [ "$crc" != 1 ]; }; then
+    if [ "$crc" != 0 ]; then
+      rh_escalate_to required_checks_unavailable other 0 "required_checks_unavailable — branch-protection required-check metadata could not be read, and .supervisor/config.json's required_checks is malformed (it must be a non-empty array of check names)"
+      return 0
+    fi
+    st_setj required_names "$cn"; st_set required_mode named
   elif [ "$rc" != 0 ] && protection_paid_plan_refusal "$out $(cat "$RH_READ_ERR" 2>/dev/null)"; then
     # GitHub's paid-plan refusal: this repo cannot have a required list, so every non-neutral check blocks
     # READY (null required_names, as under all-non-neutral) and wait-for-checks.sh waits on all of them.
@@ -415,10 +465,24 @@ rh_head_moved() {
 }
 RH_MAX_HEAD_MOVES=3   # re-opens of one round on a moved head before it ends ESCALATED head_unstable
 
+# rh_named_absent — under `named`, the named checks missing from the PR's rollup, comma-joined (a fresh read:
+# the wait line counts an absent check as pending, it does not say which); empty under any other mode, when
+# every named check is there, or when the read fails (the caller then keeps check_wait_elapsed — ESCALATED either way)
+rh_named_absent() {
+  local core
+  [ "$(st required_mode)" = named ] || return 0
+  core="$(rh_gh pr view "$PR" --json statusCheckRollup)" || return 0
+  printf '%s' "$core" | "$JQ" -r --argjson req "$(stj required_names)" '(.statusCheckRollup | if type == "array" then . else error("no rollup") end
+      | map(.name // .context // "")) as $have | [$req[] | select(. as $n | $have | index($n) | not)] | join(",")' 2>/dev/null
+  return 0
+}
+
 rh_wait() {
-  local args line h live
+  local args line h live absent
   h="$(st head_sha)"
   args=("$PR" --sha "$h" --bound "$(st flag_check_wait_timeout)" --interval 15 --review-check-pattern "$(st flag_pattern)" --call-max 540)
+  # only a run that chose `named` hands the wait its set; the wait's own readable read still wins over it
+  [ "$(st required_mode)" = named ] && args+=(--named-required "$(stj required_names)")
   [ "$(st cont_arm)" = wait ] && args+=(--continue)
   st_del cont_arm
   line="$(rh_wait_call "${args[@]}" | tail -n 1)"
@@ -451,7 +515,12 @@ rh_wait() {
           fi ;;
       esac
       NEXT=read ;;
-    "ELAPSED sha=$h "*) rh_escalate_to check_wait_elapsed check 0 "check_wait_elapsed — a scoped check was still in flight at the bound ($line)" "$h" ;;
+    "ELAPSED sha=$h "*)
+      if absent="$(rh_named_absent)" && [ -n "$absent" ]; then
+        rh_escalate_to required_check_absent check 0 "required_check_absent $absent — a named required check never reported on $h by the bound; a named check that is missing or never reports blocks READY ($line)" "$h"
+      else
+        rh_escalate_to check_wait_elapsed check 0 "check_wait_elapsed — a scoped check was still in flight at the bound ($line)" "$h"
+      fi ;;
     *) rh_escalate_to check_wait_unreadable check 0 "check_wait_unreadable — the scoped wait printed no line for $h (${line:-nothing})" "$h" ;;
   esac
 }
@@ -850,6 +919,7 @@ rh_confirm() {
   local sha args line rules out rj_ seen fixed rc live
   sha="$(st pushed_sha)"
   args=("$PR" --sha "$sha" --bound "$(st flag_check_wait_timeout)" --interval 15 --required-only --names --call-max 540)
+  [ "$(st required_mode)" = named ] && args+=(--named-required "$(stj required_names)")
   [ "$(st cont_arm)" = confirm ] && args+=(--continue)
   st_del cont_arm
   line="$(rh_wait_call "${args[@]}" | tail -n 1)"
