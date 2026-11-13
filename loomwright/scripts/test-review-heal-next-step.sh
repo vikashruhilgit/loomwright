@@ -140,7 +140,7 @@ while IFS="	" read -r rc times pat out || [ -n "$rc" ]; do
     echo $((used + 1)) > "$RH_GH_STATE/$n"
   fi
   case "$out" in @*) cat "$RH_CASE/${out#@}" ;; "") ;; *) printf "%s\n" "$out" ;; esac
-  errf="${RH_GH_TABLE%/*}/gh.stderr"
+  errf="${RH_GH_TABLE%/*}/gh.stderr.$n"; [ -f "$errf" ] || errf="${RH_GH_TABLE%/*}/gh.stderr"
   if [ "$rc" != 0 ] && [ -f "$errf" ]; then cat "$errf" >&2; fi
   exit "$rc"
 done < "$RH_GH_TABLE"
@@ -877,6 +877,39 @@ DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
   && ok "B: a rate-limit 403 on the wait's own read ⇒ required=unknown ⇒ ESCALATED, past a paid-plan required read" \
   || no "B: wait's rate-limit 403 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+# AC 9 — no readable protection, no --required-checks, no config key: the observable outcome is byte-identical to
+# the driver before the named required set existed (base 40b3f49), for each of the three no-list reads. The
+# bundle is every printed instruction with its exit code, the result block, the PR comments, the notify /
+# postmortem recorder and the stub call log (so a wait handed an extra argument shows), normalised; the cksums
+# were taken on base. On a mismatch the bundle is printed for the diff.
+ac9_drv() { drv "$@"; { printf '%s\n' "$OUT"; printf '= %s\n' "$RCV"; } >> "$C/ac9.out"; }
+ac9_check() { # <label> <expected cksum>
+  local b got rf
+  rf="$(ls "$C_ROOT"/.supervisor/review-heal/*.review-heal-result.md 2>/dev/null | head -n 1)"
+  b="$({ cat "$C/ac9.out"; echo '-- result'; [ -n "$rf" ] && cat "$rf"; echo '-- comments'; cat "$C/comments.log"
+         echo '-- side'; cat "$C/side.log"; echo '-- calls'; cat "$C/calls.log"; } | norm_text "$HERE")"
+  got="$(printf '%s\n' "$b" | cksum | tr -d ' \t')"
+  [ "$got" = "$2" ] && ok "B: AC 9 $1 — outcome byte-identical to base" \
+    || no "B: AC 9 $1 — outcome changed (cksum $got, base $2):
+$b"
+}
+ac9_rules_stderr() { # <stderr line> — the rules row's own stderr (the stub's per-row gh.stderr.<row>)
+  local n; n="$(awk -F'\t' -v p="$RS_ROW" '$3 == p {print NR; exit}' "$C/gh.table")"
+  printf '%s\n' "$1" > "$C/gh.stderr.$n"
+}
+setup_case "$FIX/converged-ready"; : > "$C/ac9.out"
+gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+ac9_drv "$DRIVER" --start drain
+ac9_check "plain 404, no ruleset" 10769817513098
+paid_case core-green.json; : > "$C/ac9.out"
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 ac9_drv "$DRIVER" --start drain
+DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 ac9_drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
+ac9_check "paid-plan 403" 27510862826159
+setup_case "$FIX/converged-ready"; : > "$C/ac9.out"
+gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 1 "$PAID_REQ_OUT"; ac9_rules_stderr "$PAID_ERR_LINE"
+ac9_drv "$DRIVER" --start drain
+ac9_check "classic 404 + rulesets paid-plan 403" 10769817513098
 # thread classification: a human-authored unresolved thread and a RESOLVED bot thread are no candidates
 setup_case "$FIX/converged-ready"
 gh_row 'api graphql *' 0 '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"alice","__typename":"User"},"body":"Reviewed: one finding, please rename load_config"}]}},{"isResolved":true,"comments":{"nodes":[{"author":{"login":"claude[bot]","__typename":"Bot"},"body":"Reviewed a1b2c3d. One finding: widget.sh line 9 quotes nothing"}]}}]}}}}}'
