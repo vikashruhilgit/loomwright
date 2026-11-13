@@ -1,0 +1,6 @@
+# named required set: the base cannot be protected (GitHub's paid-plan 403 on the required read) and
+# .supervisor/config.json names `required_checks: ["Unit Tests"]` ⇒ required_mode named. The deployment
+# status (FAILURE — the git author cannot deploy, no code fix reaches it) is outside the set and never
+# blocks; the claude[bot] finding is dismissed ⇒ READY converged with no fix (rounds 1).
+call: --start drain
+call: --result-file "$CASE/report-1.json"

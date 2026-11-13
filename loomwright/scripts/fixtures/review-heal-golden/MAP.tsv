@@ -5,7 +5,8 @@
 # A case directory holds: drive (the `call:` lines, run in order), gh.table (the stubbed gh argv → output
 # table), <name>.lines (the wait / probe / rules / escalation stubs — one line per call, the last line
 # repeats; _common/ supplies a missing one), report-<n>.json (the model's --result reports — fixed input
-# for the judgment the driver hands out), and the expected files: expected.out (each call's printed
+# for the judgment the driver hands out), config.json (optional: copied to the sandbox root's
+# .supervisor/config.json), and the expected files: expected.out (each call's printed
 # instruction and exit code), expected.result.md (the REVIEW_HEAL_RESULT block), expected.ledger.json
 # (`drain-rounds.sh read` after the last call), expected.comments (the PR comments posted) and
 # expected.side (the notify / postmortem recorder lines).
@@ -21,3 +22,4 @@ fix-floor-invalid-escalated	fix_floor_invalid	a refused --fix-floor ⇒ the comm
 fallback-once-per-run	fallback_review_ran	the fallback spawns in round 1 and never again in the same drain run
 fallback-red-review-check	no_review_lens_posted_red_check	a red, non-required review-producing check whose output is empty (only a runner annotation) ⇒ the fallback still spawns
 clean-review-not-dismissed	clean_verdict	a bot review that raises no issue validated clean: own marker, findings_clean, no dismissed key, READY converged, no fallback
+named-required-ready	named_required	protection unreadable (paid-plan 403) + config required_checks [Unit Tests] ⇒ required_mode named: a red deployment status outside the set never blocks, READY converged

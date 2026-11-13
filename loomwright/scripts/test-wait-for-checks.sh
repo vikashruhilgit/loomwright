@@ -49,6 +49,11 @@
 #      mutation control (normalisation removed).
 #  42. the poll sleep is cut to the remaining --call-max budget: --call-max 1
 #      --interval 8 prints CONTINUE within 4 s; mutation control (clamp removed).
+#  49-56. (drain-named-required-checks) --named-required <json>: stands in only
+#      where the protection read yields no list (paid-plan, unreadable, 404 with
+#      no ruleset check); a readable read (200 — even an empty list — or a 404 +
+#      ruleset list) wins; an absent named check is pending; a malformed value
+#      is ignored.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1017,6 +1022,59 @@ rs_case 45 "classic 404 + unreadable ruleset read => required=unknown, NEVER gre
 rs_case 46 "classic [ci] alone => required=green (e2e not required)" '^SETTLED sha=deadbeef00 required=green ' '["ci"]' none
 rs_case 47 "classic [ci] + ruleset [e2e] => the union: required=red on e2e" '^SETTLED sha=deadbeef00 required=red .*red_names=e2e' '["ci"]' "$RS_E2E"
 rs_case 48 "classic [ci] + unreadable ruleset read => required=unknown" '^SETTLED sha=deadbeef00 required=unknown ' '["ci"]' fail
+
+# ----------------------------------------------------------------------------
+# Cases 49-56 (drain-named-required-checks): --named-required <json> stands in for the required set ONLY where
+# this script's own protection read yields no list (paid-plan refusal, an unreadable read, a 404 with no ruleset
+# check); a readable read (a 200, even an empty list; a 404 + ruleset list) always wins; an absent named check is
+# pending; a malformed value is ignored.
+# ----------------------------------------------------------------------------
+NR_UT='["Unit Tests"]'
+NR_ROLL='[{"name":"Unit Tests","status":"COMPLETED","conclusion":"SUCCESS","state":""},{"name":"deploy","status":"COMPLETED","conclusion":"FAILURE","state":"","detailsUrl":"https://github.com/acme/widgets/actions/runs/88/job/1"}]'
+NR_UT_RED='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS","state":""},{"name":"Unit Tests","status":"COMPLETED","conclusion":"FAILURE","state":"","detailsUrl":"https://github.com/acme/widgets/actions/runs/91/job/1"}]}'
+NR_CI_ONLY='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS","state":""}]}'
+nr_refusal() { # <num> <title> <expect-regex> <body> <err> <rollup> <named arg | -> — the SUT under --required-only --names
+  local d o; d="$(fresh_stub_dir)"
+  write_refusal_stub "$d" "$4" "$5" "$6"
+  echo "== $1. $2 =="
+  if [ "$7" = - ]; then o="$(WFC_NO_LIST_GRACE=0 GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names 2>/dev/null)"
+  else o="$(WFC_NO_LIST_GRACE=0 GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names --named-required "$7" 2>/dev/null)"; fi
+  if grep -qE "$3" <<<"$o"; then ok "$2 ($o)"; else no "$2 wrong: '$o'"; fi
+  rm -rf "$d"
+}
+nr_names() { # <num> <title> <expect-regex> <view json> <classic ctx json|404> <rulesets json|none> [named arg] — sets NR_OUT
+  local d; d="$(fresh_stub_dir)"
+  if [ "$5" = 404 ]; then write_names_stub "$d" "$4"; touch "$d/prot-404"; else write_names_stub "$d" "$4" "$5"; fi
+  [ "$6" = none ] || printf '%s\n' "$6" > "$d/rulesets.json"
+  echo "== $1. $2 =="
+  if [ "$#" -ge 7 ]; then NR_OUT="$(GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names --named-required "$7" 2>/dev/null)"
+  else NR_OUT="$(GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names 2>/dev/null)"; fi
+  if grep -qE "$3" <<<"$NR_OUT"; then ok "$2 ($NR_OUT)"; else no "$2 wrong: '$NR_OUT'"; fi
+  rm -rf "$d"
+}
+nr_refusal 49 "paid-plan 403 + named [Unit Tests] => only the named set: green, the red deploy check ignored" \
+  '^SETTLED sha=deadbeef00 required=green review_producing=settled pending_names=none red_names=none$' "$PAID_BODY" "$PAID_ERR" "$NR_ROLL" "$NR_UT"
+nr_refusal 49b "control: paid-plan 403, no named set => every non-neutral check: red on deploy (unchanged)" \
+  '^SETTLED sha=deadbeef00 required=red .*red_names=deploy@88$' "$PAID_BODY" "$PAID_ERR" "$NR_ROLL" -
+nr_refusal 50 "token-scope 403 (unreadable) + named => the named set, never required=unknown" \
+  '^SETTLED sha=deadbeef00 required=green ' '{"message":"Resource not accessible by integration","status":"403"}' \
+  'gh: Resource not accessible by integration (HTTP 403)' "$NR_ROLL" "$NR_UT"
+nr_refusal 51 "paid-plan 403 + named check absent from the rollup => pending (never green), named in pending_names" \
+  '^ELAPSED sha=deadbeef00 required=pending .*pending_names=Unit Tests red_names=none$' "$PAID_BODY" "$PAID_ERR" "$CI_GREEN" "$NR_UT"
+nr_refusal 52 "a malformed --named-required (a bare string) is ignored => the paid-plan outcome, red on deploy" \
+  '^SETTLED sha=deadbeef00 required=red .*red_names=deploy@88$' "$PAID_BODY" "$PAID_ERR" "$NR_ROLL" '"Unit Tests"'
+nr_names 53 "classic 404 + no ruleset check + named => the named set: red on Unit Tests (not a vacuous green)" \
+  '^SETTLED sha=deadbeef00 required=red .*red_names=Unit Tests@91$' "$NR_UT_RED" 404 none "$NR_UT"
+nr_names 54 "AC 4: a readable [ci] read wins over the named set (Unit Tests absent, never waited on)" \
+  '^SETTLED sha=deadbeef00 required=green .*pending_names=none red_names=none$' "$NR_CI_ONLY" '["ci"]' none "$NR_UT"
+nr_names 55 "classic 404 + ruleset [e2e] wins over the named set: red on e2e" \
+  '^SETTLED sha=deadbeef00 required=red .*red_names=e2e@-$' "$RS_ROLL" 404 "$RS_E2E" "$NR_UT"
+nr_names 56 "AC 5: a readable EMPTY list (reviews-only protection, a 200) wins: verified empty, green" \
+  '^SETTLED sha=deadbeef00 required=green ' "$NR_CI_ONLY" '[]' none "$NR_UT"
+NR_WITH="$NR_OUT"
+nr_names 56b "AC 5 control: the same read with no named set" '^SETTLED sha=deadbeef00 required=green ' "$NR_CI_ONLY" '[]' none
+[ "$NR_WITH" = "$NR_OUT" ] && ok "AC 5: the empty-list outcome with the named set is byte-identical to the one without it" \
+  || no "AC 5: the named set changed a readable empty-list outcome: '$NR_WITH' vs '$NR_OUT'"
 
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
