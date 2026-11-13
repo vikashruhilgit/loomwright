@@ -174,7 +174,7 @@
 #                                     print ONE integer — how many in-progress briefs
 #                                     the classification above does NOT prove stranded
 #                                     (every state other than stranded_merged /
-#                                     stranded_closed, i.e. `unknown`) — and exit 0.
+#                                     stranded_closed / stranded_split, i.e. `unknown`) — and exit 0.
 #                                     Read-only: implies no repair even beside --repair.
 #                                     0 when in-progress/ is absent or empty. The
 #                                     sanctioned seam for the two user-question scope
