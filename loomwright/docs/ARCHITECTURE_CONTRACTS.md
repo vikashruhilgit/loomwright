@@ -605,7 +605,7 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 47556¹ | 7 |
+| `launch-pad`        | 47557 | 47428¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 12462 | 11382¹ | 0 |
 | `product-owner`     | 17356 | 17195¹ | 3 |
@@ -767,7 +767,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `dreaming` | 39945 | 36313 |
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
-| `janitor` | 1470 | 1427 |
+| `janitor` | 1470 | 1456 |
 | `launch-pad` | 6857 | 6439 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
