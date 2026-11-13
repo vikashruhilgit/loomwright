@@ -122,10 +122,21 @@
 #                    human stamp with step 2 never run (historically also step
 #                    2.5 running without step 2). REPAIRABLE, and the
 #                    emitted `## Outcome` says the PR was not determinable.
+#   stranded_split   done/ already holds a file of this brief's name that is the
+#                    completion tail's `## Outcome` WITHOUT the brief body
+#                    (is_outcome_stub): the tail ran, but its move did not — a
+#                    `git mv -k … || mv …` on an ignored file exits 0 having moved
+#                    nothing, and the `cat >>` that followed created the stub
+#                    (observed 2026-11-10, PR #873). Checked after the --evidence
+#                    arm and before the others. REPAIRABLE, also under
+#                    --repair-merged: the repair JOINS brief + stub (the stub's
+#                    Outcome kept verbatim), the one case where an existing
+#                    destination is not refused.
 #   unknown          No offline evidence either way. Reported, NEVER repaired.
 #
 # EXIT CODES
-#   0  always, on every path, including a repair that failed. This is a
+#   0  always, on every path, including a repair that failed — EXCEPT
+#      --finalize, whose caller is the agent running the tail (see USAGE). This is a
 #      fail-SAFE reporting/repair tool per the CLAUDE.md bimodal-failure
 #      invariant: it is read by a SessionStart hook that must never break a
 #      session. Failures are reported on stderr and in the output rows; nothing
@@ -142,6 +153,13 @@
 #   reconcile-jobs.sh --repair --evidence <requirement_path>=<pr_url> [--evidence …]
 #                                     engine-supplied evidence (repeatable, off by
 #                                     default); repair ONLY the matching brief(s)
+#   reconcile-jobs.sh --finalize <brief> <done|failed>   < outcome.md
+#                                     the completion tail's own move, as code: brief
+#                                     body + the `## Outcome` text on stdin into
+#                                     jobs/<done|failed>/, brief removed, both checked
+#                                     after the write. The ONE non-zero-exit mode
+#                                     (1 refused, nothing written; 2 post-write check
+#                                     failed) — see the block above its dispatch.
 #   reconcile-jobs.sh --print-base-ref
 #                                     print `vcs_base_ref`'s resolved remote-tracking
 #                                     base ref (`origin/<branch>`, the branch from
@@ -156,7 +174,7 @@
 #                                     print ONE integer — how many in-progress briefs
 #                                     the classification above does NOT prove stranded
 #                                     (every state other than stranded_merged /
-#                                     stranded_closed, i.e. `unknown`) — and exit 0.
+#                                     stranded_closed / stranded_split, i.e. `unknown`) — and exit 0.
 #                                     Read-only: implies no repair even beside --repair.
 #                                     0 when in-progress/ is absent or empty. The
 #                                     sanctioned seam for the two user-question scope
@@ -220,6 +238,9 @@ REPAIR_MERGED_ONLY=0
 PRINT_BASE_REF=0
 NOT_STRANDED_COUNT=0
 MISSING_OUTCOME=0
+FINALIZE=0
+FIN_BRIEF=""
+FIN_TO=""
 # EVIDENCE_MODE flips to 1 the moment ANY --evidence flag is PARSED — before its
 # value is validated. Scoping (see the main loop) keys on this, not on whether a
 # value was accepted: a supplied-but-rejected evidence list must repair NOTHING,
@@ -239,6 +260,11 @@ while [ "$#" -gt 0 ]; do
     --print-base-ref) PRINT_BASE_REF=1 ;;
     --not-stranded-count) NOT_STRANDED_COUNT=1 ;;
     --missing-outcome) MISSING_OUTCOME=1 ;;
+    --finalize)
+      FINALIZE=1
+      FIN_BRIEF="${2:-}"; FIN_TO="${3:-}"
+      [ "$#" -ge 3 ] && shift 2 || shift "$(( $# - 1 ))"
+      ;;
     --evidence)
       EVIDENCE_MODE=1
       shift
@@ -335,6 +361,86 @@ has_outcome_section() {
     END { exit (found ? 0 : 1) }
   ' "$1" 2>/dev/null
 }
+
+# is_outcome_stub <done_file> <brief> — 0 when <done_file> is the completion
+# tail's `## Outcome` written WITHOUT the brief body it belongs to: it carries an
+# Outcome section, the brief in in-progress/ does not, and the brief's title
+# line (its first non-blank line) appears nowhere in <done_file>. This is the
+# split a non-moving move leaves behind — `git mv -k` exits 0 without moving an
+# ignored file, so a `git mv -k … || mv …` fallback never fires and the
+# following `cat >> done/<brief>` creates a fresh file holding the tail alone.
+# A done/ file that is itself a whole brief never matches (it holds the title).
+is_outcome_stub() {
+  local stub="$1" brief="$2" title
+  [ -f "$stub" ] && [ -f "$brief" ] || return 1
+  has_outcome_section "$stub" || return 1
+  has_outcome_section "$brief" && return 1
+  title="$(awk 'NF { print; exit }' "$brief" 2>/dev/null)"
+  [ -n "$title" ] || return 1
+  grep -qFx -- "$title" "$stub" 2>/dev/null && return 1
+  return 0
+}
+
+# join_stub <brief> <stub> — rebuild <stub> as the brief body followed by the
+# stub's own Outcome (the completion tail's record, kept verbatim), then drop
+# the brief. Staged copy first, original removed last — the repair() order.
+join_stub() {
+  local brief="$1" stub="$2" tmp
+  tmp="$(mktemp "${stub}.XXXXXX")" || { echo "reconcile-jobs: mktemp failed" >&2; return 1; }
+  { cat "$brief" && printf '\n' && cat "$stub"; } > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$stub" || { rm -f "$tmp"; return 1; }
+  rm -f "$brief" || {
+    echo "reconcile-jobs: joined '$(basename "$brief")' into done/ but could not remove the original" >&2
+    return 1
+  }
+  return 0
+}
+
+# --finalize <brief> <done|failed> — THE completion-tail move (completion-tail.md
+# step 2), as code: reads the `## Outcome` markdown (plus any `## Not verified`)
+# on stdin and writes <dest>/<brief> = brief body + that text, then removes the
+# brief. The ONE mode of this script that exits non-zero: its caller is the
+# agent running the tail, which must see a move that did not happen (exit 0
+# everywhere else stays, for the SessionStart readers). It writes nothing on a
+# refusal, and verifies after the write that the source is gone and the
+# destination carries the Outcome — the check a hand-rolled `ls done/<brief>`
+# could not make (a stub passes it).
+#   exit 0  finalized <dest>
+#   exit 1  refused (reason on stderr), nothing written
+#   exit 2  wrote the destination but the post-write check failed (reason on stderr)
+if [ "$FINALIZE" -eq 1 ]; then
+  fin_fail() { echo "reconcile-jobs: --finalize refused — $1" >&2; exit 1; }
+  case "$FIN_TO" in done|failed) ;; *) fin_fail "destination must be 'done' or 'failed' (got '${FIN_TO}')" ;; esac
+  case "$FIN_BRIEF" in
+    "$JOBS_IN"/*.md|./"$JOBS_IN"/*.md) ;;
+    *) fin_fail "brief must be a .md under $JOBS_IN/ (got '${FIN_BRIEF}')" ;;
+  esac
+  case "$FIN_BRIEF" in *..*) fin_fail "brief path contains '..'" ;; esac
+  [ -f "$FIN_BRIEF" ] || fin_fail "no brief at '$FIN_BRIEF' (already moved? a done/ file alone is not proof — check in-progress/)"
+  has_outcome_section "$FIN_BRIEF" && fin_fail "brief already carries an ## Outcome section"
+  fin_dir=".supervisor/jobs/$FIN_TO"
+  fin_dest="$fin_dir/$(basename "$FIN_BRIEF")"
+  [ -e "$fin_dest" ] && fin_fail "destination '$fin_dest' already exists (reconcile-jobs.sh --repair joins an outcome-only stub)"
+  mkdir -p "$fin_dir" 2>/dev/null || fin_fail "cannot create $fin_dir"
+  fin_tmp="$(mktemp "$fin_dir/.finalize.XXXXXX")" || fin_fail "mktemp failed"
+  fin_out="$(mktemp "$fin_dir/.finalize-outcome.XXXXXX")" || { rm -f "$fin_tmp"; fin_fail "mktemp failed"; }
+  cat > "$fin_out" || { rm -f "$fin_tmp" "$fin_out"; fin_fail "cannot read the outcome on stdin"; }
+  if ! has_outcome_section "$fin_out"; then
+    rm -f "$fin_tmp" "$fin_out"; fin_fail "stdin carries no '## Outcome' heading — nothing written"
+  fi
+  { cat "$FIN_BRIEF" && printf '\n' && cat "$fin_out"; } > "$fin_tmp" || { rm -f "$fin_tmp" "$fin_out"; fin_fail "staging write failed"; }
+  rm -f "$fin_out"
+  mv "$fin_tmp" "$fin_dest" || { rm -f "$fin_tmp"; fin_fail "mv into $fin_dir failed"; }
+  rm -f "$FIN_BRIEF"
+  if [ -e "$FIN_BRIEF" ]; then
+    echo "reconcile-jobs: --finalize wrote '$fin_dest' but '$FIN_BRIEF' is still present" >&2; exit 2
+  fi
+  if ! has_outcome_section "$fin_dest"; then
+    echo "reconcile-jobs: --finalize wrote '$fin_dest' but it carries no ## Outcome section" >&2; exit 2
+  fi
+  echo "finalized $fin_dest"
+  exit 0
+fi
 
 # --missing-outcome is a standalone REPORT-ONLY mode over done/: it runs before
 # (and instead of) the in-progress/ classification below and writes nothing.
@@ -629,6 +735,15 @@ classify() {
     return 0
   fi
 
+  # The completion tail already ran and wrote its Outcome to done/ — but beside
+  # the brief instead of onto it (is_outcome_stub). That stub IS the tail's own
+  # record, stronger than any evidence below, and joining it moves nothing the
+  # tail did not already finish — so it is repairable under --repair-merged too.
+  if is_outcome_stub "$JOBS_DONE/$(basename "$brief")" "$brief"; then
+    printf 'stranded_split\tdone/ holds this brief'"'"'s completion-tail ## Outcome without the brief body (the move never ran; the Outcome was appended to a new file)\n'
+    return 0
+  fi
+
   req="$(brief_requirement_path "$raw_req" "$ROOT_P" || true)"
 
   if [ -n "$req" ]; then
@@ -688,9 +803,17 @@ repair() {
   dest="$JOBS_DONE/$base"
 
   case "$state" in
-    stranded_merged|stranded_closed) ;;
+    stranded_merged|stranded_closed|stranded_split) ;;
     *) echo "reconcile-jobs: refusing to repair '$base' (state=$state)" >&2; return 1 ;;
   esac
+  # An outcome-only stub at the destination is the other half of THIS brief:
+  # rejoin them (brief body, then the tail's Outcome verbatim) instead of
+  # refusing — whatever the state, since an engine --evidence match classifies
+  # before the split check does.
+  if is_outcome_stub "$dest" "$brief"; then
+    join_stub "$brief" "$dest"
+    return $?
+  fi
   if [ -e "$dest" ]; then
     echo "reconcile-jobs: refusing to repair '$base' — destination already exists" >&2
     return 1
@@ -818,7 +941,7 @@ for brief in "${briefs[@]}"; do
   # brief as a side effect) — test 31d holds it there.
   if [ "$NOT_STRANDED_COUNT" -eq 1 ]; then
     case "$state" in
-      stranded_merged|stranded_closed) ;;
+      stranded_merged|stranded_closed|stranded_split) ;;
       *) n_not_stranded=$((n_not_stranded+1)) ;;
     esac
     continue
@@ -829,7 +952,7 @@ for brief in "${briefs[@]}"; do
   # repaired; everything else is reported exactly as before and left in place.
   repair_ok=0
   if [ "$REPAIR" -eq 1 ] && [ "$state" != "unknown" ]; then
-    if [ "$REPAIR_MERGED_ONLY" -eq 1 ] && [ "$state" != "stranded_merged" ]; then
+    if [ "$REPAIR_MERGED_ONLY" -eq 1 ] && [ "$state" != "stranded_merged" ] && [ "$state" != "stranded_split" ]; then
       : # --repair-merged: a done stamp alone is reported, never moved here
     elif [ "$EVIDENCE_MODE" -eq 1 ]; then
       case "$evidence" in

@@ -884,7 +884,7 @@ unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 # --- 31. --not-stranded-count (stranded-brief residual gaps, Gap 1b/1c) -------
 # The seam notify-desktop.sh marker 1 and send-webhook.sh's paused gate read: ONE
 # integer = in-progress briefs NOT proven stranded. `unknown` counts (UNVERIFIED
-# is not stale); stranded_merged / stranded_closed do not.
+# is not stale); stranded_merged / stranded_closed / stranded_split do not.
 r="$(new_repo ".supervisor/requirements/req.md")"
 printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
 out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
@@ -982,6 +982,93 @@ if [ -f "$r/.supervisor/jobs/done/brief.md" ] && grep -q '^## Outcome$' "$r/.sup
 else
   no "33b an Outcomes-Rubric-only brief was refused"
 fi
+
+# --- 34. stranded_split: the completion tail wrote its Outcome BESIDE the brief
+# The 2026-11-10 PR #873 shape: `git mv -k` on an ignored file exits 0 having
+# moved nothing, `|| mv` never runs, and `cat >> done/<brief>` creates an
+# Outcome-only file. Before this case the repair refused ("destination already
+# exists") on every path, while SessionStart kept recommending it.
+STUB_OUTCOME='## Outcome
+- **Status:** completed_with_escalation
+- **PR:** https://github.com/o/r/pull/873
+
+## Not verified
+- **x** — y (subtask 2)'
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '\n%s\n' "$STUB_OUTCOME" > "$r/.supervisor/jobs/done/brief.md"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_split*) ok "34a Outcome-only file in done/ ⇒ stranded_split (before the unknown fallback)" ;; *) no "34a expected stranded_split, got: $out" ;; esac
+n="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
+[ "$n" = "0" ] && ok "34b stranded_split counts as a proven strand, not a live run" || no "34b not-stranded-count=[$n]"
+(cd "$r" && bash "$RECON" --repair-merged >/dev/null 2>&1)
+d="$r/.supervisor/jobs/done/brief.md"
+if [ ! -e "$r/.supervisor/jobs/in-progress/brief.md" ] && [ "$(head -1 "$d")" = "# Supervisor Job: thing" ] \
+   && grep -q '^## Outcome$' "$d" && grep -q 'pull/873' "$d" && grep -q '^## Not verified$' "$d" \
+   && [ "$(grep -c '^## Outcome$' "$d")" = "1" ]; then
+  ok "34c --repair-merged rejoins brief body + the stub's own Outcome, verbatim, one Outcome"
+else
+  no "34c join wrong: $(cat "$d" 2>/dev/null | head -20)"
+fi
+left="$(cd "$r/.supervisor/jobs/done" && ls -A)"
+[ "$left" = "brief.md" ] && ok "34d no temp file left in done/ (dotfiles included)" || no "34d done/ holds more than the joined brief: [$left]"
+# (control) a done/ file that is itself a whole brief is never joined over
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/5 | branch: b\n' > "$r/.supervisor/automate/run.md"
+printf '# Supervisor Job: thing\n\n## Outcome\n- **Status:** completed\n' > "$r/.supervisor/jobs/done/brief.md"
+before="$(cat "$r/.supervisor/jobs/done/brief.md")"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+if [ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && [ "$(cat "$r/.supervisor/jobs/done/brief.md")" = "$before" ]; then
+  ok "34e (control) a whole brief already in done/ is still refused, never joined"
+else
+  no "34e a whole-brief destination was overwritten"
+fi
+# the engine --evidence path (closeout's brief-repair) joins the stub too
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '\n%s\n' "$STUB_OUTCOME" > "$r/.supervisor/jobs/done/brief.md"
+out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence ".supervisor/requirements/req.md=https://github.com/o/r/pull/873" 2>/dev/null)"
+case "$out" in repaired*pull/873*) ok "34f --evidence repair (closeout brief-repair) joins the stub" ;; *) no "34f evidence repair did not join: $out" ;; esac
+
+# --- 35. --finalize: the completion tail's move as code ----------------------
+r="$(new_repo ".supervisor/requirements/req.md")"
+out="$(cd "$r" && printf '%s\n' "$STUB_OUTCOME" | bash "$RECON" --finalize .supervisor/jobs/in-progress/brief.md done 2>&1)"; rc=$?
+d="$r/.supervisor/jobs/done/brief.md"
+if [ "$rc" -eq 0 ] && [ "$out" = "finalized .supervisor/jobs/done/brief.md" ] && [ ! -e "$r/.supervisor/jobs/in-progress/brief.md" ] \
+   && [ "$(head -1 "$d")" = "# Supervisor Job: thing" ] && grep -q '^## Not verified$' "$d"; then
+  ok "35a --finalize moves brief + stdin Outcome into done/, exit 0"
+else
+  no "35a rc=$rc out=[$out]"
+fi
+# refusal: the brief is already gone (the 06a session's `ls done/` would have passed here)
+out="$(cd "$r" && printf '%s\n' "$STUB_OUTCOME" | bash "$RECON" --finalize .supervisor/jobs/in-progress/brief.md done 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && case "$out" in *"no brief at"*) true ;; *) false ;; esac && ok "35b a second --finalize refuses (exit 1) — never creates an Outcome-only file" || no "35b rc=$rc out=[$out]"
+# refusal: destination exists
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo old > "$r/.supervisor/jobs/done/brief.md"
+out="$(cd "$r" && printf '%s\n' "$STUB_OUTCOME" | bash "$RECON" --finalize .supervisor/jobs/in-progress/brief.md done 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [ "$(cat "$r/.supervisor/jobs/done/brief.md")" = "old" ] && [ -f "$r/.supervisor/jobs/in-progress/brief.md" ]; then
+  ok "35c existing destination ⇒ exit 1, nothing written"
+else
+  no "35c rc=$rc out=[$out]"
+fi
+# refusal: stdin without ## Outcome
+r="$(new_repo ".supervisor/requirements/req.md")"
+out="$(cd "$r" && printf 'just text\n' | bash "$RECON" --finalize .supervisor/jobs/in-progress/brief.md done 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && [ -z "$(ls -A "$r/.supervisor/jobs/done")" ]; then
+  ok "35d stdin without '## Outcome' ⇒ exit 1, done/ untouched (no temp left)"
+else
+  no "35d rc=$rc out=[$out] done=[$(ls -A "$r/.supervisor/jobs/done")]"
+fi
+# refusal: bad destination / path outside in-progress/
+out="$(cd "$r" && printf '%s\n' "$STUB_OUTCOME" | bash "$RECON" --finalize .supervisor/jobs/in-progress/brief.md archive 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && ok "35e destination other than done|failed ⇒ exit 1" || no "35e rc=$rc"
+out="$(cd "$r" && printf '%s\n' "$STUB_OUTCOME" | bash "$RECON" --finalize .supervisor/jobs/pending/brief.md done 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && ok "35f a brief outside in-progress/ ⇒ exit 1" || no "35f rc=$rc"
+# failed/ destination
+out="$(cd "$r" && printf '## Outcome\n- **Status:** failed\n' | bash "$RECON" --finalize .supervisor/jobs/in-progress/brief.md failed 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$r/.supervisor/jobs/failed/brief.md" ] && ok "35g --finalize … failed writes jobs/failed/ (created on demand)" || no "35g rc=$rc out=[$out]"
 
 echo "---------------------------------------------------------------------------"
 echo "test-reconcile-jobs: $pass passed, $fail failed"

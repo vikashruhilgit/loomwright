@@ -344,7 +344,7 @@ if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; the
   # by a run that died before the completion tail's move no longer reads as
   # "Supervisor is active". It counts only when reconcile-jobs.sh
   # --not-stranded-count (offline: files and local git refs, no forge call, no
-  # network) reports a brief that is not stranded_merged / stranded_closed —
+  # network) reports a brief that is not stranded_merged / stranded_closed / stranded_split —
   # `unknown` counts as live. Fail direction is TOWARD the webhook (the old
   # behaviour): an unreadable reconciler or an empty / non-numeric answer
   # means "live". Cost: one reconciler run (measured ~170ms per in-progress

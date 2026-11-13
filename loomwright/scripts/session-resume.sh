@@ -283,8 +283,9 @@ stranded_briefs_startup_line() {
 
   # THE MECHANICAL HALF (v15.84.0). `--repair-merged` finishes the lifecycle
   # move for every brief whose MERGE the disk proves — an engine-verified run
-  # file, or a merge commit on the local base ref naming the brief's slug — and
-  # only those. It runs BEFORE the debounce gate on purpose: the move is the
+  # file, or a merge commit on the local base ref naming the brief's slug — plus
+  # every `stranded_split` brief (the tail's Outcome already sits in done/ as a
+  # stub; the repair rejoins the two), and only those. It runs BEFORE the debounce gate on purpose: the move is the
   # work-done cleanup the completion tail failed to make, not a nudge, so a
   # fresh session within the 24h window must still perform it. A brief the
   # disk can only stamp `stranded_closed` (done stamp, PR not determinable) is
@@ -974,7 +975,7 @@ if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
 
     if [ -n "$REPAIRED" ]; then
       append "### Repaired briefs — lifecycle move completed mechanically at SessionStart"$'\n'
-      append "The disk proved these merged (run file or merge commit on the local base ref); reconcile-jobs.sh --repair-merged moved them. Nothing to resume."$'\n'
+      append "The disk proved these finished (run file or merge commit on the local base ref, or the completion tail's own Outcome already in done/); reconcile-jobs.sh --repair-merged moved them. Nothing to resume."$'\n'
       append "$REPAIRED"
       append $'\n'
     fi
