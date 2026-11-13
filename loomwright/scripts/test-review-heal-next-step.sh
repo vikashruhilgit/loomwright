@@ -1028,6 +1028,28 @@ gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"502"}'; ac9_rules_stderr
 drv "$DRIVER" --start drain
 [ "$(nr_side required_mode)" = '"named"' ] && ok "B: classic 404 + rulesets 502 + config ⇒ named (no list was read)" \
   || no "B: classic 404 + rulesets 502 + config ⇒ $(nr_what) mode $(nr_side required_mode)"
+# reviews-only protection (classic 404 "Required status checks not enabled") + rulesets 500: the 404's body still
+# says a protection exists (drain-gh-read carries it as `(classic: …)`; the wait's /protection read answers 200 and
+# ignores --named-required) ⇒ never named, ESCALATED required_checks_unavailable, byte-identical to no key
+nr_reviews_only_rs_fail() { nr_reviews_only; gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"500"}'
+  ac9_rules_stderr 'gh: Server Error (HTTP 500)'; }
+nr_reviews_only_rs_fail; ac9_drv "$DRIVER" --start drain; NR_B0="$(ac9_bundle)"
+nr_reviews_only_rs_fail; nr_cfg "$NR_UT_CFG"; ac9_drv "$DRIVER" --start drain; NR_B1="$(ac9_bundle)"
+[ "$NR_B0" = "$NR_B1" ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] \
+  && [ "$(nr_side required_mode)" != '"named"' ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: reviews-only 404 + rulesets 500 + config ⇒ never named, required_checks_unavailable, byte-identical to no key" \
+  || no "B: reviews-only 404 + rulesets 500 + config ⇒ $(nr_what) mode $(nr_side required_mode); differs: $(diff <(printf '%s\n' "$NR_B0") <(printf '%s\n' "$NR_B1") | head -n 5)"
+nr_reviews_only_rs_fail; drv "$DRIVER" --start drain --required-checks "name:Unit Tests"
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && [ "$(nr_side required_mode)" != '"named"' ] \
+  && ok "B: reviews-only 404 + rulesets 500 + --required-checks name: ⇒ never named, required_checks_unavailable" \
+  || no "B: reviews-only 404 + rulesets 500 + name: ⇒ $(nr_what) mode $(nr_side required_mode)"
+# a 404 that cannot see the protection ("Not Found") + rulesets 500: no list was read at all ⇒ named
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
+gh_row "$REQ_ROW" 1 '{"message":"Not Found","status":"404"}'; printf 'gh: Not Found (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"500"}'; ac9_rules_stderr 'gh: Server Error (HTTP 500)'
+drv "$DRIVER" --start drain
+[ "$(nr_side required_mode)" = '"named"' ] && ok "B: classic 404 Not Found + rulesets 500 + config ⇒ named (no list was read)" \
+  || no "B: classic 404 Not Found + rulesets 500 + config ⇒ $(nr_what) mode $(nr_side required_mode)"
 # a blank name is not a check name (required-checks-named.sh): config ["  "] is malformed
 setup_case "$FIX/named-required-ready"; nr_cfg '{"required_checks": ["  "]}'; drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -q "config.json's required_checks is malformed" "$C/comments.log" \

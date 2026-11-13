@@ -32,12 +32,14 @@
 # The required-checks advisory (a github.com origin and a scripted `gh` stub on PATH per case):
 #   c_adv_paid        paid-plan refusal, no `required_checks` ⇒ the advisory + fix lines, exit 0,
 #                     the drain's own read made, nothing written
-#   c_adv_unprotected classic 404 with no ruleset list ⇒ the advisory line
+#   c_adv_unprotected classic 404 with no ruleset list ⇒ the advisory line; also with the rules read
+#                     failing (a 500) behind a "Branch not protected" 404 (no list was read at all)
 #   c_adv_key_set     `required_checks` set ⇒ no advisory and no protection read at all
 #   c_adv_readable    a 200 read (a list, or an empty list) ⇒ no advisory
 #   c_adv_malformed   `[]` / a string / `[1]` / `[""]` / `["  "]` ⇒ the malformed-key line, not the no-key one
-#   c_adv_protection_exists  a reviews-only 404 ("Required status checks not enabled") or classic
-#                     readable with the rules read failing, with and without a malformed key ⇒ no
+#   c_adv_protection_exists  a reviews-only 404 ("Required status checks not enabled") — with the
+#                     rules read readable or failing (a 500) — or classic readable with the rules
+#                     read failing, with and without a malformed key ⇒ no
 #                     advisory (the drain ignores the key there: required_read_no_list)
 #   c_adv_quiet       a non-GitHub origin, no `gh` to read with, and set's / remove's verify:
 #                     blocks ⇒ no line, no read
@@ -289,6 +291,7 @@ c_usage() {
 #   protected classic 200 requiring `ci`        empty   classic 200 with an empty list
 #   notenabled classic 404 "Required status checks not enabled" (a reviews-only protected base)
 #   rsfail    classic 200 requiring `ci`, the rules read a 502 (classic readable, rulesets not)
+#   notprot-rs / notenabled-rs  notprot / notenabled with the rules read a 500 (rulesets unreadable)
 ADV_LINE='advisory: base branch has no readable required-check list and no `required_checks` set — every drain will gate READY on every non-neutral check (or escalate)'
 adv_env() {
   local d="$T/adv-bin-$1"
@@ -300,16 +303,17 @@ mode="$1"
 case "\$*" in
   *"/rules/branches/"*)
     [ "\$mode" != rsfail ] || { echo '{"message":"Server Error","status":"502"}'; echo 'gh: Server Error (HTTP 502)' >&2; exit 1; }
+    case "\$mode" in *-rs) echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;; esac
     [ "\$mode" = paid ] || { echo '[]'; exit 0; } ;;
 esac
 case "\$mode" in
   paid)
     echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest","status":"403"}'
     echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2; exit 1 ;;
-  notprot)
+  notprot|notprot-rs)
     echo '{"message":"Branch not protected","status":"404"}'
     echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1 ;;
-  notenabled)
+  notenabled|notenabled-rs)
     echo '{"message":"Required status checks not enabled","status":"404"}'
     echo 'gh: Required status checks not enabled (HTTP 404)' >&2; exit 1 ;;
   protected|rsfail) echo '{"strict":true,"contexts":["ci"],"checks":[{"context":"ci","app_id":null}]}' ;;
@@ -348,6 +352,10 @@ c_adv_unprotected() {
   run "$e" "$r" status
   [ "$rc" -eq 0 ] && grep -qxF "$ADV_LINE" <<<"$out" || { echo "rc=$rc out=$out"; return 1; }
   has "$out" "not readable (gh: Branch not protected (HTTP 404))" || { echo "cause: $out"; return 1; }
+  adv_env notprot-rs; r="$(gh_repo an-rs)"
+  run "$e" "$r" status
+  [ "$rc" -eq 0 ] && grep -qxF "$ADV_LINE" <<<"$out" && has "$out" "Branch not protected (HTTP 404)" \
+    || { echo "notprot-rs: rc=$rc out=$out"; return 1; }
 }
 
 c_adv_key_set() {
@@ -383,7 +391,7 @@ c_adv_malformed() {
 # checks not enabled") or classic readable with only the rules read failing — is one the drain
 # never lets a named set stand in for (required_read_no_list): no advisory, with or without a key
 c_adv_protection_exists() {
-  local e="$1" r m v; for m in notenabled rsfail; do
+  local e="$1" r m v; for m in notenabled rsfail notenabled-rs; do
     for v in none '[]'; do
       adv_env "$m"; r="$(gh_repo "ape-$m")"
       [ "$v" = none ] || { mkdir -p "$r/.supervisor"; printf '{"required_checks": %s}\n' "$v" > "$(cfg "$r")"; }

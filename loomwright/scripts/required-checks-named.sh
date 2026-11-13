@@ -16,7 +16,10 @@
 #   a body that is not JSON, an unreadable ruleset read behind an unprotected classic base). 1 when a
 #   protection exists: classic protection was READABLE and only the ruleset read failed (drain-gh-read.sh's
 #   `(classic protection readable)` marker — the readable classic list must never be replaced), or a 404 with
-#   any other body ("Required status checks not enabled", a reworded 404 — the safe direction).
+#   any other body ("Required status checks not enabled", a reworded 404 — the safe direction). A failed
+#   ruleset read behind a classic 404 is judged by that 404's body, which drain-gh-read.sh carries in its
+#   `(classic: <err>)` part — so a reviews-only base (classic 404 "Required status checks not enabled",
+#   the wait's /protection read 200) never takes a named set, matching wait-for-checks.sh --named-required.
 
 named_required_valid() {
   "$1" -ce 'if type == "array" and length > 0
