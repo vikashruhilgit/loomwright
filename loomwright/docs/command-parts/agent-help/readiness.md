@@ -60,8 +60,7 @@ $ /launch-pad goal: "add JWT authentication"
 - Issues found: 0
 - Attempts: 1/3
 
-## Phase 6: SAVE — saved
-Brief saved: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
+## Phase 6: SAVE — saved .supervisor/jobs/pending/<date>-jwt-auth.md
 
 To execute: /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```

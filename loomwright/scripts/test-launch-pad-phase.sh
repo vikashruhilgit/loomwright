@@ -14,6 +14,7 @@
 #       prompt drops (or an id the table lacks) turns this red; each file's
 #       rule runs the script through the install root, never a bare
 #       relative scripts/ path.
+#   H.  the unknown-id refusal's hint names every id `--list` prints.
 #   K.  MUTATION CONTROLS against COPIES: a dropped table row; an unknown id
 #       printed instead of refused; the em-dash separator changed.
 
@@ -110,6 +111,12 @@ for f in "$AGENT" "$CMD"; do
   done
 done
 
+echo "H. unknown-id hint names every table id"
+hint="$(bash "$SCRIPT" 9.9 x 2>&1 >/dev/null)"
+for id in $ids; do
+  if grep -qE "[ :]${id//./\\.}( |\\))" <<<"$hint"; then ok "H hint names $id"; else no "H hint [$hint] lacks $id"; fi
+done
+
 echo "K. mutation controls"
 mutant() {
   local name="$1" expr="$2" m="$TMP/mut-$1.sh"
@@ -119,7 +126,7 @@ mutant() {
 }
 for spec in \
   'drop-row|/^2\.5\|FEASIBILITY$/d' \
-  'print-unknown|s/^  exit 2$/  :/' \
+  'print-unknown|/^  printf .launch-pad-phase: unknown phase/,/^  exit 2$/s/^  exit 2$/  :/' \
   'separator|s/^printf .## Phase %s: %s — %s\\n.*/printf "## Phase %s: %s - %s\\n" "$phase" "$name" "$verdict"/'; do
   name="${spec%%|*}"; expr="${spec#*|}"
   m="$(mutant "$name" "$expr")" || continue

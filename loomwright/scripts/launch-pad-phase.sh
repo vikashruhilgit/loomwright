@@ -63,17 +63,20 @@ fi
 phase=$1
 shift
 name=''
+known=''
 while IFS='|' read -r id n; do
   if [ "$id" = "$phase" ]; then
     name=$n
     break
   fi
+  known="$known $id"
 done <<EOF
 $PHASES
 EOF
 
 if [ -z "$name" ]; then
-  printf 'launch-pad-phase: unknown phase "%s" (known: 1 2 2.5 2.7 3 4 5 5.5 6 7)\n' "$phase" >&2
+  # `known` is every id in PHASES (the loop ran to the end without a match).
+  printf 'launch-pad-phase: unknown phase "%s" (known:%s)\n' "$phase" "$known" >&2
   exit 2
 fi
 
