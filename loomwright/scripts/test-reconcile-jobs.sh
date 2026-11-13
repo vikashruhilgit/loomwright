@@ -884,7 +884,7 @@ unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 # --- 31. --not-stranded-count (stranded-brief residual gaps, Gap 1b/1c) -------
 # The seam notify-desktop.sh marker 1 and send-webhook.sh's paused gate read: ONE
 # integer = in-progress briefs NOT proven stranded. `unknown` counts (UNVERIFIED
-# is not stale); stranded_merged / stranded_closed do not.
+# is not stale); stranded_merged / stranded_closed / stranded_split do not.
 r="$(new_repo ".supervisor/requirements/req.md")"
 printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
 out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
@@ -1010,7 +1010,8 @@ if [ ! -e "$r/.supervisor/jobs/in-progress/brief.md" ] && [ "$(head -1 "$d")" = 
 else
   no "34c join wrong: $(cat "$d" 2>/dev/null | head -20)"
 fi
-ls "$r/.supervisor/jobs/done" | grep -qv '^brief\.md$' && no "34d a temp file was left in done/" || ok "34d no temp file left in done/"
+left="$(cd "$r/.supervisor/jobs/done" && ls -A)"
+[ "$left" = "brief.md" ] && ok "34d no temp file left in done/ (dotfiles included)" || no "34d done/ holds more than the joined brief: [$left]"
 # (control) a done/ file that is itself a whole brief is never joined over
 r="$(new_repo ".supervisor/requirements/req.md")"
 echo "# req" > "$r/.supervisor/requirements/req.md"

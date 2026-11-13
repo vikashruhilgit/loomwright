@@ -161,7 +161,7 @@ fi
 # context. A brief now counts only when the sibling reconcile-jobs.sh (offline
 # by construction: files and local git refs only, no forge call, no network)
 # does NOT prove it stranded — `--not-stranded-count` prints how many
-# in-progress briefs are anything but stranded_merged / stranded_closed; its
+# in-progress briefs are anything but stranded_merged / stranded_closed / stranded_split; its
 # `unknown` counts as live (UNVERIFIED is not stale). Fail direction is TOWARD
 # notifying, i.e. the old behaviour: an unreadable reconciler or an empty /
 # non-numeric answer means "live" — a fail-safe reader's empty output is never
