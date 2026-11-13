@@ -31,8 +31,8 @@
 #   of the row's IDENTITY — what it is plus the state it was judged in, never its age. A row whose
 #   identity changes (a pid recycled, a lock re-taken, a sweep verdict or would-remove set changed, a
 #   look-alike's session ended) gets a NEW id, so
-#   `act` with the old id refuses it. Kinds: reg fin unreg scan lock lane leaks wt br brkept cfgbak
-#   mw mpf ret slot caf ext unk.
+#   `act` with the old id refuses it. Kinds: reg fin unreg scan lock lane leaks wave wt wtp br brkept
+#   cfgbak mw mpf ret slot caf sib ext unk.
 #
 # GROUPS (this order; the closed list):
 #   processes        `proc-registry.sh list --scan`: a running entry ⇒ none; overdue / orphaned ⇒
@@ -76,7 +76,14 @@
 #                    `lane-status <parent>.md --leaks` — the COMPARE mode only, NEVER `--snapshot`
 #                    (that writes `<parent>.leaks-snapshot`) — its first line as ONE `leaks` row, shown
 #                    as-is (`leaks: unknown — no snapshot …` included). A parent whose every lane is
-#                    removed is skipped (a note counts them).
+#                    removed makes no lane row (a note counts them). Then one `wave` row per
+#                    `<primary>-lanes/<wave>/` folder with no `L*/` clone left and no lane row above:
+#                    lane-remove leaves the wave's `L<n>.stream.log`, `L<n>.stdin.json` and `salvage/` there
+#                    and nothing else removes them. wave-prune only when its `.lanes` table exists,
+#                    `lane-status` read every lane removed / abandoned, its run file says `## Status: done`
+#                    and the folder holds nothing else; otherwise none, the reason naming which check failed
+#                    (FAIL-CLOSED: an unreadable lane-status is none). Its identity carries the sorted entry
+#                    list, so a folder that changed after the report gets a new id.
 #   worktrees        `automate-helpers.sh sweep --root <primary>` (dry run; it already runs
 #                    `worktree-salvage.sh --check-ignored` per worktree, so a worktree is removable only
 #                    when sweep says `would-remove`): would-remove ⇒ sweep-apply, its identity carrying
@@ -84,7 +91,9 @@
 #                    set, so a set that changed after the report gives every such row a new id and
 #                    act refuses the old one); kept worktree / app /
 #                    lane / other ⇒ none; every kept branch together ⇒ ONE `brkept` row; age = the tip
-#                    commit's age.
+#                    commit's age. Each record `git worktree list --porcelain` marks prunable and not
+#                    locked (its folder is gone) ⇒ ONE `wtp` row ⇒ worktree-prune, replacing the sweep's
+#                    `kept other` row for that path; its identity carries the whole prunable set.
 #   stale-state      `retention-sweep.sh --project-root <primary>` (report mode): one row per directory
 #                    with candidates ⇒ none (`--delete` is irreversible and its own call); per
 #                    `<primary>/.supervisor/automate/*.config-backup.json` ⇒ config-restore only when the
@@ -96,7 +105,10 @@
 #                    registry entry has its pid, and the snapshot shows no automate-merge-watch.sh at
 #                    it) ⇒ none; per `*.meta-push-failed` marker (`automate-helpers.sh
 #                    meta-push-failed <runfile>`) ⇒ none.
-#   plugin-adjacent  `ci-slot.sh status --json` (run in the primary): one row per slot holder and
+#   plugin-adjacent  per `<primary>-*` entry beside the primary that is not `<primary>-lanes` and not a
+#                    registered worktree of it (a hand-made clone or spike folder) ⇒ ONE `sib` row ⇒ none,
+#                    a git checkout's evidence naming origin, branch, uncommitted and unpushed counts;
+#                    `ci-slot.sh status --json` (run in the primary): one row per slot holder and
 #                    waiter; per snapshot `caffeinate` process with `-w <pid>` (a keep-awake) ⇒ none.
 #   not-the-plugins  per snapshot process that is (1) older than the scan threshold
 #                    (LOOMWRIGHT_PROC_UNREG_MIN_S, else 3600), (2) not a registry row's live pid, not a
@@ -124,6 +136,15 @@
 #                      per-path filter, so picking ANY sweep row applies the WHOLE sweep (every
 #                      would-remove row); it runs once per act call
 #   lane-remove        automate-helpers.sh lane-remove <lane dir> (its own fail-CLOSED refusals apply)
+#   wave-prune         janitor's own, after the re-read: `salvage/` moves to
+#                      <archive>/<primary name>-lanes/<wave>/salvage (archive = LOOMWRIGHT_JANITOR_ARCHIVE,
+#                      else $XDG_STATE_HOME/loomwright/lane-salvage, else ~/.local/state/loomwright/
+#                      lane-salvage); an existing copy there refuses, a failed move deletes nothing; then
+#                      only `L<n>.stream.log` / `L<n>.stdin.json` are deleted and the folder is rmdir'd (never
+#                      rm -rf: anything else left keeps it, and the act line names what), then
+#                      `<primary>-lanes` itself when empty
+#   worktree-prune     git -C <primary> worktree prune -v. Like sweep-apply it has no per-path filter: picking
+#                      ANY wtp row prunes every prunable record; it runs once per act call
 #   lock-reclaim       run-lock.sh has no reclaim subcommand (reclaim happens inside acquire, only for a
 #                      dead holder at age ≥ 1800 s): act re-reads `liveness --pid <recorded pid>` and
 #                      `status`, then runs `acquire --owner human:janitor --root <c>` immediately followed
@@ -520,7 +541,7 @@ _jr_c_locks() {
 
 # ---- group: lanes -------------------------------------------------------------------------------------
 _jr_c_lanes() {
-  local g=lanes t rf parent js rows n=0 skipped=0 lk lane state path item pr prs started why now age act reason
+  local g=lanes t rf parent js rows n=0 skipped=0 lk lane state path item pr prs started why now age act reason busy="" closed=""
   local found=0
   now="$(_jr_now)"
   for t in "$JR_PRIMARY"/.supervisor/automate/*.lanes; do
@@ -552,16 +573,65 @@ _jr_c_lanes() {
       _jr_row lane "$g" "lane|$path|$state" "lane $lane of $parent" "run $parent" "$age" "$state${prs:+ (PR $prs)}" \
         "path $path; item ${item:--}; pr ${pr:--}${why:+; $why}" "$act" "$reason" "" "$path"
     done <<<"$rows"
-    if [ "$n" -eq 0 ]; then skipped=$((skipped + 1)); continue; fi
+    if [ "$n" -eq 0 ]; then skipped=$((skipped + 1)); closed="$closed$parent "; continue; fi
+    busy="$busy$parent "
     lk="$(bash "$JR_AH" lane-status "$rf" --leaks 2>/dev/null | head -1)"
     [ -n "$lk" ] || lk="leaks: unknown — lane-status --leaks printed nothing"
     _jr_row leaks "$g" "leaks|$parent|${lk%% (vs snapshot*}" "leak check of wave $parent" "run $parent" "" "$lk" \
       "lane-status $rf --leaks (compare mode)" none "report only — \`lane-status $rf --leaks\` prints each changed section"
   done
   [ "$found" = 1 ] || _jr_note "$g" "no lane table under $JR_PRIMARY/.supervisor/automate/"
-  [ "$skipped" -eq 0 ] || _jr_note "$g" "$skipped wave(s) skipped: every lane removed"
+  [ "$skipped" -eq 0 ] || _jr_note "$g" "$skipped wave(s) with every lane removed (a wave folder still on disk is a wave row)"
+  _jr_c_waves "$busy" "$closed"
   return 0
 }
+
+# _jr_c_waves <busy parents> <closed parents> — one row per `<primary>-lanes/<wave>/` folder that no lane clone uses any more.
+# lane-remove deletes the clone `L<n>/` but leaves the wave's `L<n>.stream.log`, `L<n>.stdin.json` and
+# `salvage/` beside it, and nothing else ever removes them; a table that says every lane is removed is not
+# proof the folder is gone.
+_jr_c_waves() {
+  local g=lanes busy=" $1" closed=" $2" ad="$JR_PRIMARY/.supervisor/automate" w parent d clone ents e odd nlog rst kb mt now age act reason ev
+  now="$(_jr_now)"
+  for w in "$JR_PRIMARY-lanes"/*/; do
+    [ -d "$w" ] || continue
+    w="${w%/}"; parent="${w##*/}"
+    clone=0; for d in "$w"/L*/; do [ -d "$d" ] && { clone=1; break; }; done
+    [ "$clone" = 0 ] || continue                         # a lane clone is still there: its lane row owns it
+    case "$busy" in *" $parent "*) continue ;; esac      # a lane of this wave is still listed above
+    ents="$(cd "$w" 2>/dev/null && ls -A 2>/dev/null | env LC_ALL=C sort)"
+    odd=""; nlog=0
+    while IFS= read -r e; do
+      [ -n "$e" ] || continue
+      case "$e" in
+        L[0-9]*.stream.log) nlog=$((nlog + 1)) ;;
+        L[0-9]*.stdin.json|salvage) ;;
+        *) odd="$odd$e " ;;
+      esac
+    done <<<"$ents"
+    rst=""; [ -f "$ad/$parent.md" ] && rst="$(_jr_run_status "$ad/$parent.md")"
+    kb="$(du -sk "$w" 2>/dev/null | awk '{ print $1 }')"; _jr_is_uint "$kb" || kb=""
+    mt="$(_jr_mtime "$w")"; age=""; [ -n "$mt" ] && age=$((now - mt))
+    ev="$w; ${kb:-?} KB; $nlog stream log(s); salvage: $( [ -d "$w/salvage" ] && echo yes || echo no )${odd:+; other entries: ${odd% }}"
+    if [ ! -f "$ad/$parent.lanes" ]; then
+      act=none; reason="report only — no lane table at $ad/$parent.lanes names this wave, so whether it ended cannot be judged; delete it by hand once nothing in it is needed"
+    elif case "$closed" in *" $parent "*) false ;; *) true ;; esac; then   # fail CLOSED: lane-status unread
+      act=none; reason="report only — \`lane-status $parent.md\` could not be read, so whether every lane is removed cannot be judged"
+    elif [ "$rst" != done ]; then
+      act=none; reason="run $parent says ${rst:-no \`## Status:\`} — its coordinator may still write here; report only until that run is done"
+    elif [ -n "$odd" ]; then
+      act=none; reason="it holds entries a lane run does not write (${odd% }) — report only; check them by hand"
+    else
+      act=wave-prune
+      reason="every lane is removed and run $parent is done — wave-prune moves salvage/ to the janitor archive, deletes the stream logs and stdin files, then removes the empty folder"
+    fi
+    _jr_row wave "$g" "wave|$w|$rst|$act|$(_jr_hash "$ents")" "wave folder $parent" "run $parent" "$age" \
+      "left on disk after its lanes were removed" "$ev" "$act" "$reason" "" "$w"
+  done
+  return 0
+}
+# the archive wave-prune moves a wave's salvage/ into: <archive>/<primary name>-lanes/<wave>/salvage
+_jr_archive_root() { printf '%s' "${LOOMWRIGHT_JANITOR_ARCHIVE:-${XDG_STATE_HOME:-$HOME/.local/state}/loomwright/lane-salvage}"; }
 
 # ---- group: worktrees ---------------------------------------------------------------------------------
 _jr_tip_age() {   # _jr_tip_age <git dir or worktree> <rev>
@@ -570,8 +640,15 @@ _jr_tip_age() {   # _jr_tip_age <git dir or worktree> <rev>
   _jr_is_uint "$ct" && printf '%s' $(( $(_jr_now) - ct ))
   return 0
 }
+# _jr_prunable — the paths `git worktree list --porcelain` marks prunable and not locked, sorted
+_jr_prunable() {
+  git -C "$JR_PRIMARY" worktree list --porcelain 2>/dev/null | awk '
+    /^worktree / { if (p != "" && pr && !lk) print p; p = substr($0, 10); pr = 0; lk = 0; next }
+    /^prunable/ { pr = 1 } /^locked/ { lk = 1 }
+    END { if (p != "" && pr && !lk) print p }' | env LC_ALL=C sort
+}
 _jr_c_worktrees() {
-  local g=worktrees out line head verb kind subj reason nact kept="" nkept=0 sum act owner age wset
+  local g=worktrees out line head verb kind subj reason nact kept="" nkept=0 sum act owner age wset pset pid8 p
   [ -f "$JR_AH" ] || { _jr_unknown "$g" automate-helpers.sh "missing ($JR_AH)"; return 0; }
   out="$(bash "$JR_AH" sweep --root "$JR_PRIMARY" 2>/dev/null)"
   sum="$(printf '%s\n' "$out" | grep '^sweep: summary — ' | tail -1)"
@@ -582,10 +659,25 @@ _jr_c_worktrees() {
   # because sweep-apply removes the whole set — a set that changed after the report gives every row a new id
   wset="$(printf '%s\n' "$out" | awk '/^sweep: would-remove / { sub(/ — .*$/, ""); sub(/^sweep: would-remove /, ""); print }' | env LC_ALL=C sort)"
   wset="$nact:$(_jr_hash "$wset")"
+  # prunable worktree records (their folder is gone, not locked): `git worktree prune` drops all of them at
+  # once, so like sweep-apply every row's identity carries the whole set
+  pset="$(_jr_prunable)"
+  if [ -n "$pset" ]; then
+    pid8="$(printf '%s\n' "$pset" | awk 'NF { n++ } END { print n + 0 }'):$(_jr_hash "$pset")"
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      _jr_row wtp "$g" "prunable|$p|set:$pid8" "worktree record $p" "git's worktree list" "" "prunable — its folder is gone" \
+        "\`git worktree list --porcelain\` marks it prunable (folder missing, not locked)" worktree-prune \
+        "only git's record is left — \`git worktree prune\` drops every prunable record (it touches no files and no branch)" "" "$JR_PRIMARY"
+    done <<<"$pset"
+  fi
   while IFS= read -r line; do
     case "$line" in "sweep: would-remove "*|"sweep: kept "*) ;; *) continue ;; esac
     head="${line%% — *}"; reason="${line#* — }"
     head="${head#sweep: }"; verb="${head%% *}"; head="${head#* }"; kind="${head%% *}"; subj="${head#* }"
+    # a prunable record is listed once, above, with its own action
+    # (a case match, never `printf | grep -q`: under pipefail grep's early exit can SIGPIPE the printf)
+    if [ -n "$pset" ] && [ "$kind" != branch ]; then case "$NL$pset$NL" in *"$NL$subj$NL"*) continue ;; esac; fi
     if [ "$verb" = kept ] && [ "$kind" = branch ]; then kept="$kept$subj$US"; nkept=$((nkept + 1)); continue; fi
     case "$kind" in
       worktree) owner="plugin-made worktree" ;; app) owner="the host app" ;; lane) owner="a lane" ;;
@@ -697,9 +789,34 @@ _jr_c_state() {
 }
 
 # ---- group: plugin-adjacent ---------------------------------------------------------------------------
+# _jr_c_siblings — report-only rows for every `<primary>-*` entry beside the primary that is neither the
+# lanes folder nor a registered worktree of this checkout: a hand-made clone or spike folder that no reader
+# above owns. A git checkout's evidence names its origin, branch, uncommitted and unpushed counts.
+_jr_c_siblings() {
+  local g=plugin-adjacent wts f b now mt age ev o br dirty ahead state
+  now="$(_jr_now)"
+  wts="$(git -C "$JR_PRIMARY" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')"
+  for f in "$JR_PRIMARY"-*; do
+    [ -e "$f" ] || continue
+    [ "$f" != "$JR_PRIMARY-lanes" ] || continue
+    case "$NL$wts$NL" in *"$NL$f$NL"*) continue ;; esac
+    b="${f##*/}"; mt="$(_jr_mtime "$f")"; age=""; [ -n "$mt" ] && age=$((now - mt))
+    if [ -d "$f" ] && git -C "$f" rev-parse --is-inside-work-tree >/dev/null 2>&1 && [ "$(cd "$f" && git rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$f" && pwd -P)" ]; then
+      o="$(git -C "$f" remote get-url origin 2>/dev/null)"; br="$(git -C "$f" symbolic-ref -q --short HEAD 2>/dev/null)"
+      dirty="$(git -C "$f" status --porcelain 2>/dev/null | awk 'NF { n++ } END { print n + 0 }')"
+      ahead="$(git -C "$f" rev-list --count '@{upstream}..HEAD' 2>/dev/null)"; _jr_is_uint "$ahead" || ahead="no upstream"
+      state="git checkout"; ev="$f; origin ${o:-none}; branch ${br:-detached}; $dirty uncommitted; unpushed: $ahead"
+    elif [ -d "$f" ]; then state="folder"; ev="$f; not a git checkout"
+    else state="file"; ev="$f"; fi
+    _jr_row sib "$g" "sib|$f|$state|$ev" "$b beside this checkout" "not the plugin's — named like this checkout" "$age" "$state" "$ev" none \
+      "report only — no plugin reader made it or owns it; delete it by hand once nothing in it is needed"
+  done
+  return 0
+}
 _jr_c_adjacent() {
   local g=plugin-adjacent js rows k pid co name st now age w p cmd et ls
   now="$(_jr_now)"
+  _jr_c_siblings
   if [ ! -f "$JR_CS" ]; then _jr_unknown "$g" ci-slot.sh "missing ($JR_CS)"
   elif ! _jr_has_jq; then _jr_unknown "$g" "ci-slot.sh status --json" "(jq not found)"
   else
@@ -846,9 +963,9 @@ _jr_json() {
 # ---- act ----------------------------------------------------------------------------------------------
 _jr_group_of_id() {
   case "$1" in
-    reg-*|fin-*|unreg-*|scan-*) echo processes ;; lock-*) echo locks ;; lane-*|leaks-*) echo lanes ;;
-    wt-*|br-*|brkept-*) echo worktrees ;; cfgbak-*|mw-*|mpf-*|ret-*) echo stale-state ;;
-    slot-*|caf-*) echo plugin-adjacent ;; ext-*) echo not-the-plugins ;; unk-*) echo unknown ;; *) echo "" ;;
+    reg-*|fin-*|unreg-*|scan-*) echo processes ;; lock-*) echo locks ;; lane-*|leaks-*|wave-*) echo lanes ;;
+    wt-*|wtp-*|br-*|brkept-*) echo worktrees ;; cfgbak-*|mw-*|mpf-*|ret-*) echo stale-state ;;
+    slot-*|caf-*|sib-*) echo plugin-adjacent ;; ext-*) echo not-the-plugins ;; unk-*) echo unknown ;; *) echo "" ;;
   esac
 }
 _jr_find() { awk -F'\t' -v i="$1" '$1 == i { print; exit }' <<<"$JR_ROWS"; }
@@ -875,8 +992,36 @@ _jr_act_lock() {   # _jr_act_lock <id> <checkout> <recorded pid> <mode reclaim|f
   return 0
 }
 
+# _jr_act_wave <id> <wave dir> — move salvage/ to the archive (never over an existing copy), delete only the
+# files a lane run writes there, then rmdir: anything else left makes the rmdir fail and is reported, never
+# deleted. The row was just re-read, so the folder still has no lane clone and no unexpected entry.
+_jr_act_wave() {
+  local w="$2" dest out n=0 f left
+  dest="$(_jr_archive_root)/${JR_PRIMARY##*/}-lanes/${w##*/}"
+  if [ -d "$w/salvage" ]; then
+    [ ! -e "$dest/salvage" ] || { echo "janitor: refused $1 — $dest/salvage already exists; nothing moved or deleted"; return 0; }
+    mkdir -p "$dest" 2>/dev/null && mv "$w/salvage" "$dest/salvage" 2>/dev/null
+    if [ ! -d "$dest/salvage" ] || [ -e "$w/salvage" ]; then
+      echo "janitor: act $1 — wave-prune: moving salvage/ to $dest failed; nothing deleted"; return 0
+    fi
+    out="archived salvage/ to $dest/salvage; "
+  fi
+  for f in "$w"/L[0-9]*.stream.log "$w"/L[0-9]*.stdin.json; do
+    [ -f "$f" ] || continue
+    rm -f "$f" && n=$((n + 1))
+  done
+  if rmdir "$w" 2>/dev/null; then
+    rmdir "$JR_PRIMARY-lanes" 2>/dev/null   # only when no other wave is left
+    echo "janitor: act $1 — wave-prune: ${out}deleted $n log file(s); removed $w"
+  else
+    left="$(cd "$w" 2>/dev/null && ls -A 2>/dev/null | tr '\n' ' ')"
+    echo "janitor: act $1 — wave-prune: ${out}deleted $n log file(s); $w kept — it still holds: ${left:-?}"
+  fi
+  return 0
+}
+
 jr_act() {
-  local confirm=0 report=0 force=0 root="" ids="" a why="" groups="" gr id row action alt data swept=0
+  local confirm=0 report=0 force=0 root="" ids="" a why="" groups="" gr id row action alt data swept=0 pruned=0
   while [ "$#" -gt 0 ]; do
     a="$1"; shift
     case "$a" in
@@ -927,6 +1072,11 @@ jr_act() {
         swept=1
         echo "janitor: act $id — sweep-apply (the whole sweep): $(_jr_clean "$(bash "$JR_AH" sweep --apply --root "$data" 2>&1)")" ;;
       lane-remove) echo "janitor: act $id — lane-remove: $(_jr_clean "$(bash "$JR_AH" lane-remove "$data" 2>&1)")" ;;
+      wave-prune) _jr_act_wave "$id" "$data" ;;
+      worktree-prune)
+        if [ "$pruned" = 1 ]; then echo "janitor: act $id — worktree-prune: already applied in this call"; continue; fi
+        pruned=1
+        echo "janitor: act $id — worktree-prune (every prunable record): $(_jr_clean "$(git -C "$data" worktree prune -v 2>&1)")" ;;
       lock-reclaim) _jr_act_lock "$id" "${data%%"$US"*}" "${data#*"$US"}" reclaim ;;
       config-restore)
         if bash "$JR_AH" config-restore "${data%%"$US"*}" "${data#*"$US"}" >/dev/null 2>&1; then
