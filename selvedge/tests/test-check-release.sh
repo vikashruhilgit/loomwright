@@ -77,6 +77,21 @@ d="$(fixture no-changelog)"
 rm "$d/CHANGELOG.md"
 expect_gate "absent changelog fails" nonzero changelog_absent "$d"
 
+# The two CANNOT RUN branches exit 2 (cannot check), never 1 (violated) or 0.
+# expect_cannot_run <label> <message> <out> <rc>
+expect_cannot_run() {
+  if [ "$4" -eq 2 ] && grep -qF -- "$2" <<<"$3"; then
+    pass=$((pass + 1)); echo "  ok   $1"
+  else
+    fail=$((fail + 1)); echo "  FAIL $1: expected exit 2 naming '$2', got rc=$4 — $3"
+  fi
+}
+rc=0; out="$(bash "$GATE" "$TMP/no-such-plugin" 2>&1)" || rc=$?
+expect_cannot_run "a missing plugin dir exits 2 (cannot check)" "check-release: CANNOT RUN — no such plugin dir: $TMP/no-such-plugin" "$out" "$rc"
+d="$(fixture nojq)"
+rc=0; out="$(PATH="$TMP/empty-path" "$BASH" "$GATE" "$d" 2>&1)" || rc=$?
+expect_cannot_run "no jq on PATH exits 2 (cannot check)" "check-release: CANNOT RUN — jq not found" "$out" "$rc"
+
 # run.sh fails CLOSED: a fixture plugin whose tests/ holds the gate scripts but no test-*.sh, then
 # the same with one failing test-*.sh.
 runner_fixture() {

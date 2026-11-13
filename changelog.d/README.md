@@ -62,7 +62,9 @@ Exit 1 means the rule is broken. Exit 2 means it cannot check (no base ref, or a
 as a failure. On a selvedge-only branch it also fails on a fragment the merge base did not have, or on any
 loomwright version change. Only committed paths can make a branch more than selvedge-only, so an uncommitted or
 untracked file elsewhere never makes a local check pass where CI's would fail. A fragment the merge base already had
-stays legal there: the next loomwright bump folds it.
+stays legal there, unedited: the next loomwright bump folds it. Editing it fails, because that changes loomwright's
+next release; deleting it fails as in any not-bumped branch. Fragments are read from the working tree, as in every
+rule here.
 
 **A fragment added after the bump** (for example, by a heal fix) is folded by **re-running**
 `bash scripts/bump-version.sh`. On a branch that already carries a bump, the script **re-folds**:

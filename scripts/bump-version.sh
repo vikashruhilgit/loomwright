@@ -50,11 +50,14 @@
 # paths against B (renames split into both sides), minus the bump-owned paths (plugin.json,
 # marketplace.json, CHANGELOG.md, capabilities.json, changelog.d/*), are classified: when at least
 # one is under a self-releasing plugin dir and no COMMITTED one is outside one, the branch is
-# selvedge-only (uncommitted and untracked paths count only toward the self-releasing side, so a
-# local run is never looser than CI's clean checkout), and then a pending fragment absent from B,
-# or a loomwright version different from B's, is a violation (exit 1, one finding per kind, naming the plugin-side fix). A
-# branch that also changes any other path is checked exactly as before. A fragment B already had
-# stays legal on a selvedge-only branch (main's pending fragment; the next loomwright bump folds it).
+# selvedge-only (uncommitted and untracked paths count only toward the self-releasing side, so an
+# uncommitted path never makes the branch look mixed locally; fragments and version files are still
+# read from the working tree, as in every --check rule), and then a pending fragment absent from B,
+# a fragment B had whose content changed, or a loomwright version different from B's, is a
+# violation (exit 1, one finding per kind, naming the plugin-side fix). A branch that also changes
+# any other path is checked exactly as before. A fragment B already had stays legal, unedited, on a
+# selvedge-only branch (main's pending fragment; the next loomwright bump folds it); deleting one is
+# the not-bumped rule's finding (or the bump's), never a second scope finding.
 #
 # RE-FOLD (--refold, and a plain run on a branch that already carries a bump): a fragment added
 # after the bump (a heal or drain fix) used to need the bump commit dropped or reverted by hand —
@@ -500,9 +503,11 @@ fold_names() { local i s=""; for i in ${FOLD_IDX[@]+"${FOLD_IDX[@]}"}; do s="$s 
 # check_scope — SCOPE in the header. Classifies the branch's changed paths against the merge base
 # with the bump-owned paths ignored (renames split, so both sides count). A branch whose remaining
 # paths all sit under a SELF_RELEASING_PLUGINS dir (and at least one does) releases through that
-# plugin's own manifest + CHANGELOG, so a pending fragment new on this branch or a loomwright version
-# change is a violation (CHK[]). Any other branch is untouched. Two path sources, deliberately
-# asymmetric so a local run is never looser than CI (which checks a clean checkout of the pushed HEAD):
+# plugin's own manifest + CHANGELOG, so a pending fragment new on this branch, an edit to a fragment
+# the merge base had, or a loomwright version change is a violation (CHK[]). Any other branch is
+# untouched. Two path sources, deliberately asymmetric so an uncommitted path never makes the branch
+# look mixed locally (CI checks a clean checkout of the pushed HEAD); fragments and version files are
+# still read from the working tree, as in every --check rule:
 #   committed — HEAD vs BASE_SHA: what CI and a push see; counts on both sides.
 #   local     — uncommitted work (working tree vs BASE_SHA, plus untracked files): counts ONLY toward
 #               the self-releasing side. An uncommitted path elsewhere (a stray reports/ dir, an
@@ -510,7 +515,7 @@ fold_names() { local i s=""; for i in ${FOLD_IDX[@]+"${FOLD_IDX[@]}"}; do s="$s 
 #               here; commit it and it counts.
 # Needs resolve_base, read_wt and CW; exits 2 when the paths cannot be listed.
 check_scope() {
-  local p d hit src base_list scope_sv=0 scope_other=0 sv_new_frags=0 sv_frag_names="" sv_dirs="" fix=""
+  local p d hit src base_list blob scope_sv=0 scope_other=0 sv_new_frags=0 sv_frag_names="" sv_dirs="" fix="" sv_edited=""
   { git diff --no-renames --name-only -z "$BASE_SHA" HEAD -- > "$CW/scope.committed" \
       && { git diff --no-renames --name-only -z "$BASE_SHA" -- && git ls-files -z --others --exclude-standard; } > "$CW/scope.local"; } 2>/dev/null \
     || { echo "bump-version: check CANNOT RUN — cannot list this branch's changed paths against the merge base ${BASE_SHA:0:12}"; exit 2; }
@@ -532,13 +537,20 @@ check_scope() {
   [ "$scope_sv" -eq 1 ] && [ "$scope_other" -eq 0 ] || return 0
   tree_frags "$BASE_SHA" > "$CW/scope.base.frags"
   base_list=" "
-  while IFS="$(printf '\t')" read -r p _; do base_list="$base_list$p "; done < "$CW/scope.base.frags"
+  while IFS="$(printf '\t')" read -r p blob; do
+    base_list="$base_list$p "
+    # Still present but not the merge base's blob: an edit to main's pending fragment changes
+    # loomwright's next release. A deleted one is left to the not-bumped rule (or the bump finding).
+    [ -f "$p" ] || continue
+    [ "$(git hash-object -- "$p" 2>/dev/null)" = "$blob" ] || sv_edited="${sv_edited:+$sv_edited }$p"
+  done < "$CW/scope.base.frags"
   for p in ${frags[@]+"${frags[@]}"}; do
     case "$base_list" in *" $p "*) continue ;; esac   # on the merge base already: main's pending fragment, legal
     sv_new_frags=$((sv_new_frags + 1)); sv_frag_names="${sv_frag_names:+$sv_frag_names }$p"
   done
   for d in $sv_dirs; do fix="${fix:+$fix; }bump $d/.claude-plugin/plugin.json and add the release to $d/CHANGELOG.md"; done
   [ "$sv_new_frags" -gt 0 ] && chk "selvedge-only change carries a changelog.d fragment ($sv_frag_names): a $FRAG_DIR/ fragment releases loomwright, but this branch changes only self-releasing plugin(s) ($sv_dirs) — delete the fragment and release the plugin itself instead: $fix (D19)"
+  [ -n "$sv_edited" ] && chk "selvedge-only change edits a changelog.d fragment main already has ($sv_edited): that changes loomwright's next release, but this branch changes only self-releasing plugin(s) ($sv_dirs) — restore it with git checkout ${BASE_SHA:0:12} -- <path> and release the plugin itself instead: $fix (D19)"
   [ "$W_VER" != "$BASE_VER" ] && chk "selvedge-only change carries a loomwright bump ($BASE_VER -> ${W_VER:-<none>}): this branch changes only self-releasing plugin(s) ($sv_dirs), so it must not move loomwright's version — revert the bump (and its fragment) and release the plugin itself instead: $fix (D19)"
   return 0
 }

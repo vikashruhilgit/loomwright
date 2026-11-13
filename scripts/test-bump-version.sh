@@ -614,7 +614,7 @@ D="$TMP/v2b"; make_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD
 sv_files "$D"; frag "$D" sv.md 'Selvedge headline\n'   # nothing committed: untracked selvedge files + fragment
 expect_fail "$D" "selvedge-only change carries a changelog.d fragment" "scope: an uncommitted (untracked) selvedge-only change with a fragment FAILS"
 # Uncommitted paths outside selvedge/ never reach CI's clean checkout, so they must not rescue a
-# selvedge-only branch locally (a local run is never looser than CI).
+# selvedge-only branch locally (an uncommitted path never makes the branch look mixed).
 D="$TMP/v2c"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + a fragment"
 mkdir -p "$D/reports"; echo "scratch" > "$D/reports/notes.txt"   # untracked, unrelated
 expect_fail "$D" "selvedge-only change carries a changelog.d fragment (changelog.d/sv.md)" "scope: an unrelated untracked file outside selvedge/ does not rescue a selvedge-only branch with a fragment"
@@ -643,6 +643,25 @@ expect_ok "$D" "check OK — not bumped" "scope: a rename from another path into
 D="$TMP/v6"; make_fixture "$D"; frag "$D" onmain.md 'Merged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
 g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; sv_files "$D"; g "$D" add -A && g "$D" commit -q -m "selvedge only"
 expect_ok "$D" "1 fragment(s) pending" "scope: main's pending fragment on a selvedge-only branch passes (it is not this branch's)"
+# ...but editing it changes loomwright's next release, so it FAILS — committed or not (the working tree is read).
+D="$TMP/v6b"; make_fixture "$D"; frag "$D" onmain.md '<!-- bump: patch -->\nMerged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; sv_files "$D"
+frag "$D" onmain.md '<!-- bump: major -->\nMerged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + rewrite main's fragment"
+expect_fail "$D" "selvedge-only change edits a changelog.d fragment main already has (changelog.d/onmain.md)" "scope: a selvedge-only branch editing main's pending fragment FAILS"
+D="$TMP/v6c"; make_fixture "$D"; frag "$D" onmain.md 'Merged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; sv_files "$D"; g "$D" add -A && g "$D" commit -q -m "selvedge only"
+frag "$D" onmain.md 'Rewritten, not committed\n'
+expect_fail "$D" "selvedge-only change edits a changelog.d fragment main already has (changelog.d/onmain.md)" "scope: an uncommitted edit to main's pending fragment on a selvedge-only branch FAILS"
+# Deleting main's fragment is the not-bumped rule's single finding, not a second scope finding.
+g "$D" checkout -q -- changelog.d/onmain.md; rm "$D/changelog.d/onmain.md"
+expect_fail "$D" "changelog.d/onmain.md (on the merge base) was deleted without a bump" "scope: deleting main's pending fragment on a selvedge-only branch FAILS via the not-bumped rule"
+! grep -qF 'selvedge-only change' "$TMP/last.out"; check $? "scope: a deleted base fragment raises no scope finding (one finding per cause)"
+# check_scope fails CLOSED (exit 2) when it cannot list the branch's changed paths: a corrupt index
+# makes the working-tree listing fail while the merge base and HEAD still resolve.
+D="$TMP/v8"; make_sv_branch "$D"; printf 'garbage' > "$D/.git/index"
+run_check "$D"; rc=$?
+[ "$rc" -eq 2 ] && grep -qF "bump-version: check CANNOT RUN — cannot list this branch's changed paths against the merge base" "$TMP/last.out"
+check $? "scope: an unlistable changed-path set exits 2 (CANNOT RUN), never 0 or 1"
 # No path outside the bump-owned set changed: not selvedge-only, checked as before.
 D="$TMP/v7"; make_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
 frag "$D" a.md 'Alpha headline\n'; g "$D" add -A && g "$D" commit -q -m "fragment only"
