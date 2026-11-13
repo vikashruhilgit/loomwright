@@ -29,11 +29,22 @@
 #   c_ancestor_link   (c) a repo reached through a symlinked ancestor ⇒ set and remove still write
 #   c_unresolved      no origin, no config ⇒ status `unresolved (base_branch_unresolved)`
 #   c_usage           missing / unknown subcommand, set without a branch ⇒ exit 2
+# The required-checks advisory (a github.com origin and a scripted `gh` stub on PATH per case):
+#   c_adv_paid        paid-plan refusal, no `required_checks` ⇒ the advisory + fix lines, exit 0,
+#                     the drain's own read made, nothing written
+#   c_adv_unprotected classic 404 with no ruleset list ⇒ the advisory line
+#   c_adv_key_set     `required_checks` set ⇒ no advisory and no protection read at all
+#   c_adv_readable    a 200 read (a list, or an empty list) ⇒ no advisory
+#   c_adv_malformed   `[]` / a string / `[1]` / `[""]` ⇒ the malformed-key line, not the no-key one
+#   c_adv_quiet       a non-GitHub origin, no `gh` to read with, and set's / remove's verify:
+#                     blocks ⇒ no line, no read
 # Mutation controls (gated: non-empty + differs + bash -n, on a scratch copy beside a copy of the
-# resolver and of contained-path-lib.sh, which the engine loads from its own directory): remove writes
+# resolver, contained-path-lib.sh and the protection readers, which the engine loads from its own
+# directory): remove writes
 # `{}` (c_remove must fail), the already-configured early exit deleted (c_idempotent must fail), the
 # origin/<branch> check deleted (c_refuse_missing must fail), the containment call neutralized
-# (`cpl_check_write` → `true`; c_outside must fail).
+# (`cpl_check_write` → `true`; c_outside must fail), the advisory echo deleted (c_adv_paid must
+# fail), the `required_checks`-present guard dropped (c_adv_key_set must fail).
 # Exit 0 = all pass, 1 = any failure, 2 = fixture setup broken.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -265,7 +276,119 @@ c_usage() {
   [ ! -e "$(cfg "$r")" ] || { echo "a usage error wrote config.json"; return 1; }
 }
 
+# ---- the required-checks advisory (status only) ----------------------------------------------
+# Each case runs in its own `$(…)` subshell, so the PATH / env set by adv_env stays in that case.
+# adv_env <mode> — a scripted `gh` first on PATH (overriding the failing one) that logs every call
+# to $T/adv-<mode>.log and answers the protection reads, never the network:
+#   paid      every api call: GitHub's paid-plan refusal (403, stdout + stderr as captured live)
+#   notprot   classic 404 "Branch not protected"; rules read `[]` (no ruleset list)
+#   protected classic 200 requiring `ci`        empty   classic 200 with an empty list
+ADV_LINE='advisory: base branch has no readable required-check list and no `required_checks` set — every drain will gate READY on every non-neutral check (or escalate)'
+adv_env() {
+  local d="$T/adv-bin-$1"
+  mkdir -p "$d"; ADV_LOG="$T/adv-$1.log"; : > "$ADV_LOG"
+  cat > "$d/gh" <<GHEOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$ADV_LOG"
+mode="$1"
+case "\$*" in
+  *"/rules/branches/"*)
+    [ "\$mode" = paid ] || { echo '[]'; exit 0; } ;;
+esac
+case "\$mode" in
+  paid)
+    echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest","status":"403"}'
+    echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2; exit 1 ;;
+  notprot)
+    echo '{"message":"Branch not protected","status":"404"}'
+    echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1 ;;
+  protected) echo '{"strict":true,"contexts":["ci"],"checks":[{"context":"ci","app_id":null}]}' ;;
+  empty) echo '{"strict":false,"contexts":[],"checks":[]}' ;;
+esac
+exit 0
+GHEOF
+  chmod +x "$d/gh"
+  unset LOOMWRIGHT_GH_BIN GH
+  export PATH="$d:$PATH"
+}
+# gh_repo <name> — a fresh clone whose origin URL is a github.com one; origin/HEAD stays the
+# clone's, so the resolver answers from origin-head without touching the remote.
+gh_repo() { local r; r="$(fresh "$1")"; git -C "$r" remote set-url origin https://github.com/acme/widgets.git; printf '%s' "$r"; }
+adv_count() { printf '%s\n' "$1" | grep -c '^advisory: ' | tr -d ' '; }
+
+c_adv_paid() {
+  local e="$1" r; adv_env paid; r="$(gh_repo ap)"
+  run "$e" "$r" status
+  [ "$rc" -eq 0 ] && has "$out" "base-branch: main (source: origin-head)" || { echo "rc=$rc out=$out"; return 1; }
+  printf '%s\n' "$out" | grep -qxF "$ADV_LINE" || { echo "advisory line missing: $out"; return 1; }
+  printf '%s\n' "$out" | grep -q '^  fix: add "required_checks": \[' || { echo "fix line missing: $out"; return 1; }
+  has "$out" "paid-plan refusal" || { echo "cause not named: $out"; return 1; }
+  grep -qF 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' "$ADV_LOG" \
+    || { echo "the drain's protection read was not made: $(cat "$ADV_LOG")"; return 1; }
+  [ ! -e "$(cfg "$r")" ] || { echo "status wrote a config"; return 1; }
+  # the same with a config carrying other keys but no required_checks
+  seed_cfg "$r"; cp "$(cfg "$r")" "$T/ap.snap"
+  run "$e" "$r" status
+  [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qxF "$ADV_LINE" || { echo "with other keys: rc=$rc out=$out"; return 1; }
+  cmp -s "$(cfg "$r")" "$T/ap.snap" && [ "$(nbackups "$(cfg "$r")")" = "0" ] || { echo "status changed the config"; return 1; }
+}
+
+c_adv_unprotected() {
+  local e="$1" r; adv_env notprot; r="$(gh_repo an)"
+  run "$e" "$r" status
+  [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qxF "$ADV_LINE" || { echo "rc=$rc out=$out"; return 1; }
+  has "$out" "not readable (gh: Branch not protected (HTTP 404))" || { echo "cause: $out"; return 1; }
+}
+
+c_adv_key_set() {
+  local e="$1" r; adv_env paid; r="$(gh_repo ak)"
+  mkdir -p "$r/.supervisor"; printf '{"required_checks": ["Unit Tests"]}\n' > "$(cfg "$r")"
+  run "$e" "$r" status
+  [ "$rc" -eq 0 ] && has "$out" "base-branch: main (source: origin-head)" || { echo "rc=$rc out=$out"; return 1; }
+  [ "$(adv_count "$out")" = "0" ] && ! has "$out" "  fix: " || { echo "advisory printed with the key set: $out"; return 1; }
+  [ ! -s "$ADV_LOG" ] || { echo "a read was made with the key set: $(cat "$ADV_LOG")"; return 1; }
+}
+
+c_adv_readable() {
+  local e="$1" r m; for m in protected empty; do
+    adv_env "$m"; r="$(gh_repo "ar-$m")"
+    run "$e" "$r" status
+    [ "$rc" -eq 0 ] && [ "$(adv_count "$out")" = "0" ] || { echo "[$m] rc=$rc out=$out"; return 1; }
+    [ -s "$ADV_LOG" ] || { echo "[$m] no protection read was made"; return 1; }
+  done
+}
+
+c_adv_malformed() {
+  local e="$1" r v; for v in '[]' '"Unit Tests"' '[1]' '[""]'; do
+    adv_env paid; r="$(gh_repo am)"
+    mkdir -p "$r/.supervisor"; printf '{"required_checks": %s}\n' "$v" > "$(cfg "$r")"
+    run "$e" "$r" status
+    [ "$rc" -eq 0 ] && [ "$(adv_count "$out")" = "1" ] && has "$out" '`required_checks` is malformed' \
+      && has "$out" "required_checks_unavailable" && ! printf '%s\n' "$out" | grep -qxF "$ADV_LINE" \
+      || { echo "[$v] rc=$rc out=$out"; return 1; }
+  done
+}
+
+c_adv_quiet() {
+  local e="$1" r; adv_env paid
+  # a non-GitHub origin (the local bare one): nothing to read, no line, no gh call
+  r="$(fresh aq)"
+  run "$e" "$r" status
+  [ "$rc" -eq 0 ] && [ "$(adv_count "$out")" = "0" ] && [ ! -s "$ADV_LOG" ] || { echo "local origin: rc=$rc out=$out log=$(cat "$ADV_LOG")"; return 1; }
+  # a GitHub origin but no gh to read with: nothing is known, so no line
+  r="$(gh_repo aq1)"
+  out="$(LOOMWRIGHT_GH_BIN="$T/no-such-gh" bash "$e" status --repo "$r" 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] && [ "$(adv_count "$out")" = "0" ] && has "$out" "base-branch: main (source: origin-head)" || { echo "no gh: rc=$rc out=$out"; return 1; }
+  # set's and remove's verify: blocks never read protection
+  r="$(gh_repo aq2)"
+  run "$e" "$r" set development
+  has "$out" "set: applied (created" && [ "$(adv_count "$out")" = "0" ] || { echo "set: $out"; return 1; }
+  run "$e" "$r" remove
+  has "$out" "remove: removed" && [ "$(adv_count "$out")" = "0" ] && [ ! -s "$ADV_LOG" ] || { echo "remove: $out log=$(cat "$ADV_LOG")"; return 1; }
+}
+
 CASES="c_status_default c_create c_merge c_idempotent c_refuse_missing c_refuse_invalid c_remove c_malformed c_symlink c_outside c_inside_link c_ancestor_link c_unresolved c_usage"
+CASES="$CASES c_adv_paid c_adv_unprotected c_adv_key_set c_adv_readable c_adv_malformed c_adv_quiet"
 
 echo "== setup-base-branch.sh =="
 for c in $CASES; do
@@ -277,11 +400,12 @@ echo "== mutation controls (each must turn its case red) =="
 mutant() {
   local name="$1" prog="$2" case_fn="$3" d="$T/mut-$1"
   mkdir -p "$d"; cp "$RESOLVER" "$d/resolve-base-branch.sh"; cp "$HERE/contained-path-lib.sh" "$d/contained-path-lib.sh"
+  cp "$HERE/drain-gh-read.sh" "$HERE/protection-paid-plan.sh" "$HERE/required-checks-rulesets.sh" "$d/"
   awk "$prog" "$ENGINE" > "$d/setup-base-branch.sh"
   if [ ! -s "$d/setup-base-branch.sh" ] || cmp -s "$d/setup-base-branch.sh" "$ENGINE" || ! bash -n "$d/setup-base-branch.sh" 2>/dev/null; then
     no "MUTATION CONTROL $name: mutant is empty, identical or does not parse — control inconclusive"; return 0
   fi
-  if "$case_fn" "$d/setup-base-branch.sh" >/dev/null 2>&1; then
+  if ( "$case_fn" "$d/setup-base-branch.sh" ) >/dev/null 2>&1; then
     no "MUTATION CONTROL $name: $case_fn still PASSES against the mutant"
   else
     ok "MUTATION CONTROL $name: $case_fn is red against the mutant"
@@ -291,6 +415,8 @@ mutant remove-writes-empty '{ if (index($0, "proposed=\"$(jq '\''del(.base_branc
 mutant no-idempotent-exit '/if \[ "\$proposed" = "\$current" \]; then/ { skip = 4 } skip > 0 { skip--; next } { print }' c_idempotent
 mutant no-containment '{ if (index($0, "cpl_check_write \"$1\" \"$CFG\" \"$REPO\" config_symlink")) sub(/cpl_check_write/, "true"); print }' c_outside
 mutant no-origin-check '/refs\/remotes\/origin\/\$BRANCH\^\{commit\}/ { skip = 4 } skip > 0 { skip--; next } { print }' c_refuse_missing
+mutant no-advisory-line '{ if (index($0, "every drain will gate READY on every non-neutral check (or escalate)\"")) next; print }' c_adv_paid
+mutant no-key-guard '{ if (index($0, "case \"$key\" in valid|unknown)")) sub(/valid[|]unknown/, "unknown"); print }' c_adv_key_set
 
 echo
 echo "test-setup-base-branch: $pass passed, $fail failed"
