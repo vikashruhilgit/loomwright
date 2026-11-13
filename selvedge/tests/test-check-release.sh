@@ -27,7 +27,7 @@ expect_gate() {
   if [ "$want" = nonzero ] && [ "$rc" -eq 0 ]; then
     fail=$((fail + 1)); echo "  FAIL $label: expected a non-zero exit, got 0 — $out"; return
   fi
-  if [ -n "$token" ] && ! printf '%s\n' "$out" | grep -qF -- "$token"; then
+  if [ -n "$token" ] && ! grep -qF -- "$token" <<<"$out"; then
     fail=$((fail + 1)); echo "  FAIL $label: output does not name $token — $out"; return
   fi
   pass=$((pass + 1)); echo "  ok   $label"
@@ -87,13 +87,13 @@ runner_fixture() {
 }
 d="$(runner_fixture runner-empty)"
 rc=0; out="$(bash "$d/tests/run.sh" 2>&1)" || rc=$?
-{ [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -qF "no tests/test-*.sh found"; } \
+{ [ "$rc" -ne 0 ] && grep -qF "no tests/test-*.sh found" <<<"$out"; } \
   && { pass=$((pass + 1)); echo "  ok   run.sh with zero test files fails closed"; } \
   || { fail=$((fail + 1)); echo "  FAIL run.sh with zero test files: rc=$rc — $out"; }
 d="$(runner_fixture runner-red)"
 printf 'exit 1\n' > "$d/tests/test-red.sh"
 rc=0; out="$(bash "$d/tests/run.sh" 2>&1)" || rc=$?
-{ [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -qF "FAIL test-red.sh"; } \
+{ [ "$rc" -ne 0 ] && grep -qF "FAIL test-red.sh" <<<"$out"; } \
   && { pass=$((pass + 1)); echo "  ok   run.sh fails when one test file fails"; } \
   || { fail=$((fail + 1)); echo "  FAIL run.sh with a failing test: rc=$rc — $out"; }
 

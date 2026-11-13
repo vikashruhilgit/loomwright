@@ -613,6 +613,16 @@ check $? "scope: the finding names the selvedge-side fix, and the P7 footer stay
 D="$TMP/v2b"; make_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
 sv_files "$D"; frag "$D" sv.md 'Selvedge headline\n'   # nothing committed: untracked selvedge files + fragment
 expect_fail "$D" "selvedge-only change carries a changelog.d fragment" "scope: an uncommitted (untracked) selvedge-only change with a fragment FAILS"
+# Uncommitted paths outside selvedge/ never reach CI's clean checkout, so they must not rescue a
+# selvedge-only branch locally (a local run is never looser than CI).
+D="$TMP/v2c"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + a fragment"
+mkdir -p "$D/reports"; echo "scratch" > "$D/reports/notes.txt"   # untracked, unrelated
+expect_fail "$D" "selvedge-only change carries a changelog.d fragment (changelog.d/sv.md)" "scope: an unrelated untracked file outside selvedge/ does not rescue a selvedge-only branch with a fragment"
+D="$TMP/v2d"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + a fragment"
+echo '{"name":"stackpack","version":"9.9.9"}' > "$D/stackpack/.claude-plugin/plugin.json"   # tracked, uncommitted
+expect_fail "$D" "selvedge-only change carries a changelog.d fragment (changelog.d/sv.md)" "scope: an uncommitted edit to a tracked file outside selvedge/ does not rescue a selvedge-only branch with a fragment"
+g "$D" commit -q -am "stackpack too"
+expect_ok "$D" "check OK — not bumped (version 1.2.3, the merge base's); 1 fragment(s) pending" "scope: the same edit once committed makes the branch mixed (passes with its fragment)"
 
 D="$TMP/v3"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m frag; bump_commit "$D"
 [ "$(ver_of "$D")" = "1.2.4 1.2.4 1.2.4" ] && [ ! -e "$D/changelog.d/sv.md" ]; check $? "scope precondition: a scripted loomwright bump folded the fragment (1.2.4, none pending)"

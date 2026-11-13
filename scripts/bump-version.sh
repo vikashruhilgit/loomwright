@@ -47,11 +47,12 @@
 # SCOPE (--check only; the plain bump and --refold never apply it): a sibling plugin named in
 # SELF_RELEASING_PLUGINS releases on its own (its own .claude-plugin/plugin.json version and its
 # own CHANGELOG.md, D19), so its changes must never move loomwright's version. The branch's changed
-# paths against B (tracked, renames split into both sides, plus untracked files), minus the
-# bump-owned paths (plugin.json, marketplace.json, CHANGELOG.md, capabilities.json, changelog.d/*),
-# are classified: when at least one is under a self-releasing plugin dir and none is outside one,
-# the branch is selvedge-only, and then a pending fragment absent from B, or a loomwright version
-# different from B's, is a violation (exit 1, one finding per kind, naming the plugin-side fix). A
+# paths against B (renames split into both sides), minus the bump-owned paths (plugin.json,
+# marketplace.json, CHANGELOG.md, capabilities.json, changelog.d/*), are classified: when at least
+# one is under a self-releasing plugin dir and no COMMITTED one is outside one, the branch is
+# selvedge-only (uncommitted and untracked paths count only toward the self-releasing side, so a
+# local run is never looser than CI's clean checkout), and then a pending fragment absent from B,
+# or a loomwright version different from B's, is a violation (exit 1, one finding per kind, naming the plugin-side fix). A
 # branch that also changes any other path is checked exactly as before. A fragment B already had
 # stays legal on a selvedge-only branch (main's pending fragment; the next loomwright bump folds it).
 #
@@ -497,28 +498,37 @@ verify_bump_content() {
 fold_names() { local i s=""; for i in ${FOLD_IDX[@]+"${FOLD_IDX[@]}"}; do s="$s ${POOL_PATH[$i]#"$FRAG_DIR"/}"; done; printf '%s' "${s# }"; }
 
 # check_scope — SCOPE in the header. Classifies the branch's changed paths against the merge base
-# (tracked: working tree vs BASE_SHA, renames split so both sides count; plus untracked files) with
-# the bump-owned paths ignored. A branch whose remaining paths all sit under a SELF_RELEASING_PLUGINS
-# dir (and at least one does) releases through that plugin's own manifest + CHANGELOG, so a pending
-# fragment new on this branch or a loomwright version change is a violation (CHK[]). Any other branch
-# is untouched. Needs resolve_base, read_wt and CW; exits 2 when the paths cannot be listed.
+# with the bump-owned paths ignored (renames split, so both sides count). A branch whose remaining
+# paths all sit under a SELF_RELEASING_PLUGINS dir (and at least one does) releases through that
+# plugin's own manifest + CHANGELOG, so a pending fragment new on this branch or a loomwright version
+# change is a violation (CHK[]). Any other branch is untouched. Two path sources, deliberately
+# asymmetric so a local run is never looser than CI (which checks a clean checkout of the pushed HEAD):
+#   committed — HEAD vs BASE_SHA: what CI and a push see; counts on both sides.
+#   local     — uncommitted work (working tree vs BASE_SHA, plus untracked files): counts ONLY toward
+#               the self-releasing side. An uncommitted path elsewhere (a stray reports/ dir, an
+#               unstaged edit) never reaches CI, so it must not turn a selvedge-only branch "mixed"
+#               here; commit it and it counts.
+# Needs resolve_base, read_wt and CW; exits 2 when the paths cannot be listed.
 check_scope() {
-  local p d hit base_list scope_sv=0 scope_other=0 sv_new_frags=0 sv_frag_names="" sv_dirs="" fix=""
-  { git diff --no-renames --name-only -z "$BASE_SHA" -- && git ls-files -z --others --exclude-standard; } > "$CW/scope.paths" 2>/dev/null \
+  local p d hit src base_list scope_sv=0 scope_other=0 sv_new_frags=0 sv_frag_names="" sv_dirs="" fix=""
+  { git diff --no-renames --name-only -z "$BASE_SHA" HEAD -- > "$CW/scope.committed" \
+      && { git diff --no-renames --name-only -z "$BASE_SHA" -- && git ls-files -z --others --exclude-standard; } > "$CW/scope.local"; } 2>/dev/null \
     || { echo "bump-version: check CANNOT RUN — cannot list this branch's changed paths against the merge base ${BASE_SHA:0:12}"; exit 2; }
-  while IFS= read -r -d '' p; do
-    case "$p" in
-      "$PLUGIN_JSON"|"$MARKETPLACE_JSON"|"$CHANGELOG"|"$CAPS_JSON"|"$FRAG_DIR"/*) continue ;;
-    esac
-    hit=""
-    for d in $SELF_RELEASING_PLUGINS; do
-      case "$p" in "$d"/*) hit="$d" ;; esac
-    done
-    [ -n "$hit" ] || scope_other=1
-    [ -z "$hit" ] && continue
-    scope_sv=1
-    case " $sv_dirs " in *" $hit "*) ;; *) sv_dirs="${sv_dirs:+$sv_dirs }$hit" ;; esac
-  done < "$CW/scope.paths"
+  for src in committed local; do
+    while IFS= read -r -d '' p; do
+      case "$p" in
+        "$PLUGIN_JSON"|"$MARKETPLACE_JSON"|"$CHANGELOG"|"$CAPS_JSON"|"$FRAG_DIR"/*) continue ;;
+      esac
+      hit=""
+      for d in $SELF_RELEASING_PLUGINS; do
+        case "$p" in "$d"/*) hit="$d" ;; esac
+      done
+      [ -n "$hit" ] || [ "$src" = local ] || scope_other=1
+      [ -z "$hit" ] && continue
+      scope_sv=1
+      case " $sv_dirs " in *" $hit "*) ;; *) sv_dirs="${sv_dirs:+$sv_dirs }$hit" ;; esac
+    done < "$CW/scope.$src"
+  done
   [ "$scope_sv" -eq 1 ] && [ "$scope_other" -eq 0 ] || return 0
   tree_frags "$BASE_SHA" > "$CW/scope.base.frags"
   base_list=" "

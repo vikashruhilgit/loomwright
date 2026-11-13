@@ -29,9 +29,7 @@ cl="$plugin_dir/CHANGELOG.md"
 
 [ -f "$pj" ] || fail "manifest_absent: $pj does not exist"
 jq -e 'type == "object"' "$pj" >/dev/null 2>&1 || fail "manifest_invalid_json: $pj is not a valid JSON object"
-for field in name version description; do
-  [ -n "$(jq -r --arg f "$field" '.[$f] | strings' "$pj" 2>/dev/null)" ] || fail "manifest_missing_field: $pj has no non-empty string \"$field\""
-done
+for field in name version description; do [ -n "$(jq -r --arg f "$field" '.[$f] | strings' "$pj" 2>/dev/null)" ] || fail "manifest_missing_field: $pj has no non-empty string \"$field\""; done
 pj_ver="$(jq -r '.version' "$pj")"
 
 [ -f "$cl" ] || fail "changelog_absent: $cl does not exist"
