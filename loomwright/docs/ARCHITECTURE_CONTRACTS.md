@@ -605,7 +605,7 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 47428¹ | 7 |
+| `launch-pad`        | 47557 | 47556¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 12462 | 11382¹ | 0 |
 | `product-owner`     | 17356 | 17195¹ | 3 |
