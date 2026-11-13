@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# selvedge — the selvedge plugin's command-line entry point.
+#
+# Runs on user machines, so it needs nothing beyond bash 3.2 + BSD/GNU userland: no jq, no
+# `readlink -f`. The version is read at run time from this plugin's own manifest
+# (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
+# through the `install-cli` link in ~/.local/bin).
+#
+# Exit codes: 0 ok, 1 an operation failed, 2 usage error.
+set -uo pipefail
+
+die() { printf 'selvedge: %s\n' "$*" >&2; exit 1; }
+
+# Resolve this script's real path. A relative link target is relative to the link's own dir.
+self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")" || die "cannot read the link $self"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+BIN_DIR="$(cd "$(dirname "$self")" && pwd)" || die "cannot resolve the directory of $self"
+SELF="$BIN_DIR/$(basename "$self")"
+MANIFEST="$BIN_DIR/../.claude-plugin/plugin.json"
+
+manifest_version() {
+  [ -f "$MANIFEST" ] || die "plugin manifest not found: $MANIFEST"
+  local v
+  # The first version key in the file (top-level in this plugin's manifest), pretty-printed or
+  # minified alike.
+  v="$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$MANIFEST" | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  [ -n "$v" ] || die "no version field in $MANIFEST"
+  printf '%s\n' "$v"
+}
+
+usage() {
+  local v
+  v="$(manifest_version)" || exit 1
+  cat <<EOF
+selvedge $v
+
+Usage: selvedge <command>
+
+Commands:
+  --version, version   print the plugin version
+  install-cli          link this CLI into \$HOME/.local/bin/selvedge (a plugin's bin/ may not
+                       be on PATH; see docs/cli-discovery.md)
+  help, -h, --help     print this help
+EOF
+}
+
+cmd_version() {
+  local v
+  v="$(manifest_version)" || exit 1
+  printf 'selvedge %s\n' "$v"
+}
+
+cmd_install_cli() {
+  [ -n "${HOME:-}" ] || die "HOME is not set"
+  local dest_dir="$HOME/.local/bin"
+  local dest="$dest_dir/selvedge"
+  mkdir -p "$dest_dir" || die "cannot create $dest_dir"
+  [ ! -e "$dest" ] || [ -L "$dest" ] || die "refusing to overwrite $dest: it exists and is not a symlink (move it aside, then re-run)"
+  local old=""
+  [ -L "$dest" ] && old="$(readlink "$dest")"
+  if [ "$old" = "$SELF" ]; then
+    printf 'selvedge: %s already links to %s (nothing to do)\n' "$dest" "$SELF"
+  else
+    ln -sfn "$SELF" "$dest" || die "cannot create the symlink $dest"
+    printf 'selvedge: linked %s -> %s\n' "$dest" "$SELF"
+    [ -z "$old" ] || printf 'selvedge: replaced the previous link (it pointed to %s)\n' "$old"
+  fi
+  case ":${PATH:-}:" in
+    *":$dest_dir:"*) ;;
+    *) printf 'selvedge: note: %s is not on your PATH; add it to run `selvedge` by name\n' "$dest_dir" ;;
+  esac
+}
+
+case "${1:-}" in
+  "") usage ;;
+  --version|version) cmd_version ;;
+  install-cli) cmd_install_cli ;;
+  help|-h|--help) usage ;;
+  *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+esac
