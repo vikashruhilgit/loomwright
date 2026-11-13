@@ -7,6 +7,8 @@ export LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs"
 export LOOMWRIGHT_LANES_RESOLVE_BASE="$HERE/resolve-base-branch.sh"
 
 # ---- A: create (AC1) --------------------------------------------------------------------------------
+# the primary names a required-check set (drain-named-required-checks): the lane's drain reads its own copy
+jq -c '. + {required_checks: ["Unit Tests"]}' "$P/.supervisor/config.json" > "$T/config.rq" && cp "$T/config.rq" "$P/.supervisor/config.json"
 out="$(run lane-create "$RF" reqs/a.md 1 --parallel 2 --max-tokens 1000)"; rc=$?
 check "A1 lane-create L1 exits 0" "$rc" 0
 has "A1 names the lane path" "$out" "$LR/L1"
@@ -15,6 +17,7 @@ L1="$LR/L1"; L2="$LR/L2"
 check "A3 origin is the remote URL, not the primary" "$(git -C "$L1" remote get-url origin)" "$ORIGIN"
 hasnt "A4 inherited primary-only ref pruned" "$(git -C "$L1" branch -r)" "primary-only"
 check "A5 config.json byte-for-byte" "$(cmp -s "$P/.supervisor/config.json" "$L1/.supervisor/config.json" && echo same)" same
+check "A5b the lane's config.json keeps required_checks" "$(jq -c '.required_checks' "$L1/.supervisor/config.json" 2>/dev/null)" '["Unit Tests"]'
 check "A6 notify-config.json byte-for-byte" "$(cmp -s "$P/.supervisor/notify-config.json" "$L2/.supervisor/notify-config.json" && echo same)" same
 check "A7 lane.json shape" "$(jq -c '[.schema_version, .lane, .run_id, .parent_run_id, .primary, .parallel, .max_tokens, (.created | test("Z$"))]' "$L1/.supervisor/lane.json")" \
   "[1,\"L1\",\"$PARENT-L1\",\"$PARENT\",\"$P\",2,500,true]"
