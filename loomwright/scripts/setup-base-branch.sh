@@ -18,7 +18,11 @@
 #                   cell, and the headline `base-branch: <branch> (source: <step>)` from the
 #                   resolver (or `base-branch: unresolved (<status token>)`). Note: the resolver's
 #                   origin-head step may itself run `git remote set-head origin -a`.
-#   set <branch>    write `.base_branch = <branch>`. Refused when the name is not a valid branch
+#                   Then, for a github.com origin whose config has no valid `required_checks`, one
+#                   read-only protection read (`drain-gh-read.sh required-checks`); when it yields
+#                   no list, an `advisory:` line (what every drain will do) and a `fix:` line.
+#                   `set`/`remove`'s `verify:` block never makes that read.
+#   set <branch>   write `.base_branch = <branch>`. Refused when the name is not a valid branch
 #                   name or `origin/<branch>` is not a remote-tracking ref of <repo>. Backup-first,
 #                   parse-gated, atomic (tmp + mv), and idempotent by byte-comparison: when the
 #                   document it would write equals the one on disk (in jq's normal form), it
@@ -177,6 +181,70 @@ refuse_symlink() {
   cpl_check_write "$1" "$CFG" "$REPO" config_symlink
 }
 
+# origin_github_slug — `<owner>/<repo>` of a github.com `origin` remote (ssh or https form); empty
+# for any other origin (a local path, another host), so the advisory below has nothing to read.
+origin_github_slug() {
+  local u
+  u="$(git -C "$REPO" remote get-url origin 2>/dev/null)" || return 0
+  case "$u" in
+    git@github.com:*) u="${u#git@github.com:}" ;;
+    ssh://git@github.com/*) u="${u#ssh://git@github.com/}" ;;
+    https://github.com/*|http://github.com/*) u="${u#*://github.com/}" ;;
+    https://*@github.com/*) u="${u#*@github.com/}" ;;
+    *) return 0 ;;
+  esac
+  u="${u%/}"; u="${u%.git}"
+  [[ "$u" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && printf '%s' "$u"
+  return 0
+}
+
+# required_checks_key — the config's `required_checks` key: `valid` (a non-empty array of non-empty
+# strings — the set a drain gates READY on when protection supplies no list), `absent`, `malformed`,
+# or `unknown` (jq unavailable or the config unparseable: nothing reliable to say).
+required_checks_key() {
+  if [ ! -f "$CFG" ]; then printf 'absent'; return 0; fi
+  if ! jq_works || ! config_is_object; then printf 'unknown'; return 0; fi
+  jq -r 'if has("required_checks") | not then "absent"
+         elif (.required_checks | type) == "array" and (.required_checks | length) > 0
+              and all(.required_checks[]; type == "string" and length > 0) then "valid"
+         else "malformed" end' "$CFG" 2>/dev/null || printf 'unknown'
+}
+
+# required_checks_advisory <base> — `status` only, advisory only (never changes the exit status).
+# Reads the base's required-check list with the drain's own reader (`drain-gh-read.sh
+# required-checks`) and, when that read yields no list and the config names no valid
+# `required_checks`, says what every drain will do and how to fix it. Prints nothing when the key
+# is set (no read is made), when the read succeeds (even with an empty list — readable protection
+# always wins), when origin is not a github.com repo, or when no `gh` is found to read with.
+required_checks_advisory() {
+  local base="$1" key slug rd rc=0 err why
+  key="$(required_checks_key)"
+  case "$key" in valid|unknown) return 0 ;; esac
+  slug="$(origin_github_slug)"
+  [ -n "$slug" ] || return 0
+  command -v "${LOOMWRIGHT_GH_BIN:-gh}" >/dev/null 2>&1 || return 0   # no gh: no read, nothing known
+  rd="$(GH="${LOOMWRIGHT_GH_BIN:-gh}" bash "$script_dir/drain-gh-read.sh" required-checks "$slug" "$base" </dev/null 2>"$TMPERR")" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  err="$(cat "$TMPERR" 2>/dev/null)"
+  # shellcheck source=protection-paid-plan.sh
+  . "$script_dir/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
+  if protection_paid_plan_refusal "$rd $err"; then
+    why="GitHub's paid-plan refusal (a private repo on GitHub Free cannot protect a branch)"
+  else
+    why="$(printf '%s\n' "$err" | head -n 1 | tr -d '\r' | cut -c1-160)"
+    why="not readable${why:+ ($why)}"
+  fi
+  if [ "$key" = malformed ]; then
+    echo "advisory: base branch has no readable required-check list and \`required_checks\` is malformed ($(jq -c '.required_checks' "$CFG" 2>/dev/null | cut -c1-80)) — a drain run without --required-checks ends ESCALATED required_checks_unavailable"
+    echo "  protection read ($slug $base): $why"
+    echo "  fix: make \"required_checks\" in $CFG a non-empty array of check names, e.g. [\"<check name>\"]"
+    return 0
+  fi
+  echo "advisory: base branch has no readable required-check list and no \`required_checks\` set — every drain will gate READY on every non-neutral check (or escalate)"
+  echo "  protection read ($slug $base): $why"
+  echo "  fix: add \"required_checks\": [\"<check name>\", …] to $CFG — the drain then gates READY on exactly that set while protection supplies no list (or pass --required-checks name:<a>,<b> to one drain run)"
+}
+
 do_status() {
   local out rc tok
   echo "== base-branch =="
@@ -185,6 +253,7 @@ do_status() {
   out="$(bash "$RESOLVER" --repo "$REPO" --explain 2>"$TMPERR")"; rc=$?
   if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
     echo "base-branch: $out"
+    [ "$SUBCMD" != status ] || required_checks_advisory "${out%% *}"
   else
     tok="$(head -1 "$TMPERR" 2>/dev/null)"
     echo "base-branch: unresolved (${tok:-resolver_failed})"
