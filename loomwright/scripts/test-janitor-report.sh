@@ -59,6 +59,18 @@
 #   leg_meta_push_failed  a `<run>.meta-push-failed` marker is ONE stale-state `mpf` row, action none, its
 #        evidence the line `automate-helpers.sh meta-push-failed` prints (the marker's first line) and its
 #        reason the report-only retry pointer; act refuses it, the marker unchanged.
+#   leg_wave_residue  a `<primary>-lanes/<wave>/` folder whose lanes are all removed (only stream logs, stdin
+#        files and salvage/ left) and whose run is done is ONE wave row, action wave-prune; the same folder
+#        under a running run, with an extra entry, or with no lane table is none (each reason names why); a
+#        wave that still has a lane clone makes no wave row. `act --confirm` moves salvage/ to the archive,
+#        deletes the logs and removes the folder; an archive that already holds that wave's salvage is
+#        refused with nothing moved or deleted; a lane table lane-status cannot read (no jq) leaves a done
+#        wave's folder report-only.
+#   leg_worktree_prune  a worktree record whose folder is gone is ONE wtp row (action worktree-prune, no
+#        sweep `kept other` row for it); `act --confirm` drops the record and keeps its branch.
+#   leg_siblings  a hand-made clone and a file named `<primary>-*` beside the primary are sib rows, action
+#        none (the clone's evidence names its unpushed count); the lanes folder and a registered worktree
+#        named like the primary make none; act refuses a sib row.
 #   leg_usage  bad arguments exit 2; an unknown row id is refused, exit 0.
 #   leg_empty_id  an empty-string row id (`act --confirm ''`, `act ''`) is a usage error, exit 2, never the
 #        checkout refusal.
@@ -73,7 +85,9 @@
 #   (leg_act_reap), the lock and config-backup no-status fail-closeds dropped (leg_nostatus), the
 #   config-backup unjudgeable-lock fail-closed dropped (leg_cfg_unjudged), the mpf row's helper read dropped
 #   and its none action flipped to stop-unregistered (leg_meta_push_failed), act's empty-id arm deleted
-#   (leg_empty_id).
+#   (leg_empty_id), the wave row's lane-clone guard, run-done check, extra-entry check and archive-exists
+#   refusal and unreadable-lane-status fail-closed each dropped (leg_wave_residue), the wtp row no longer replacing the sweep row (leg_worktree_prune),
+#   the sibling scan's registered-worktree exclusion dropped (leg_siblings).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -327,7 +341,7 @@ leg_json_checks() {
   check "leg_json the same row ids, in the same order, as the text table" eval '[ -n "$ids_j" ] && [ "$ids_j" = "$ids_t" ]'
   check "leg_json the summary counts every row" eq "$(jq -r '.summary.rows' <<<"$js")" "$(printf '%s\n' "$ids_j" | awk 'NF { n++ } END { print n + 0 }')"
   check "leg_json every action is in the closed set" \
-    eq "$(jq -r '[.groups[].rows[].action] | map(select(IN("reap","stop-unregistered","sweep-apply","lane-remove","lock-reclaim","config-restore","none") | not)) | length' <<<"$js")" 0
+    eq "$(jq -r '[.groups[].rows[].action] | map(select(IN("reap","stop-unregistered","sweep-apply","lane-remove","wave-prune","worktree-prune","lock-reclaim","config-restore","none") | not)) | length' <<<"$js")" 0
 }
 
 leg_report_only() {
@@ -717,6 +731,86 @@ leg_meta_push_failed() {
   leg_end
 }
 
+# mk_wave <name> <run status|-> [extra entry] — a wave folder holding what lane-remove leaves (L1/L2 stream
+# logs and stdin files, salvage/), its lane table with both lanes removed (dirs gone), and its run file
+mk_wave() {
+  local w="$P-lanes/$1" l
+  mkdir -p "$w/salvage/L1-removed-x"; printf 'kept\n' > "$w/salvage/L1-removed-x/run.md"
+  for l in L1 L2; do printf 'log\n' > "$w/$l.stream.log"; printf '{}\n' > "$w/$l.stdin.json"
+    printf '%s\t%s\t.supervisor/requirements/%s.md\t%s-%s\t%s\t%s\tsess-%s\tremoved\t2001-01-01T00:00:00Z\t-\n' \
+      "$l" "$w/$l" "$l" "$1" "$l" "$(dead_pid)" "$FAKE_LSTART" "$l" >> "$P/.supervisor/automate/$1.lanes"
+  done
+  [ "$2" = - ] || printf '# Automate Run: %s\n\n## Status: %s\n' "$1" "$2" > "$P/.supervisor/automate/$1.md"
+  [ -z "${3:-}" ] || printf 'x\n' > "$w/$3"
+}
+leg_wave_residue() {
+  local js id did out arch r
+  mk_fixture --lanes
+  mk_wave w-done done; mk_wave w-run running; mk_wave w-odd done notes.txt; mk_wave w-dup done
+  mkdir -p "$P-lanes/w-notable"; printf 'log\n' > "$P-lanes/w-notable/L1.stream.log"
+  arch="$XDG_STATE_HOME/loomwright/lane-salvage/proj-lanes"
+  mkdir -p "$arch/w-dup/salvage"; printf 'older\n' > "$arch/w-dup/salvage/keep"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" '.what == "wave folder w-done"')"; id="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_wave_residue a done wave's leftover folder is ONE lanes row, action wave-prune, every field filled" \
+    eval '[ "$(nrows "$js" ".what == \"wave folder w-done\"")" = 1 ] && full_row "$r" && [ "$(jq -r ".group + \"|\" + .action" <<<"$r")" = "lanes|wave-prune" ] && has "$(jq -r .evidence <<<"$r")" "2 stream log(s); salvage: yes"'
+  check "leg_wave_residue ... under a running run it is none, the reason naming the status" \
+    eval '[ "$(nrows "$js" ".what == \"wave folder w-run\" and .action == \"none\" and (.reason | test(\"says running\"))")" = 1 ]'
+  check "leg_wave_residue ... with an entry a lane run does not write it is none, naming the entry" \
+    eval '[ "$(nrows "$js" ".what == \"wave folder w-odd\" and .action == \"none\" and (.reason | test(\"notes.txt\"))")" = 1 ]'
+  check "leg_wave_residue ... with no lane table it is none" \
+    eval '[ "$(nrows "$js" ".what == \"wave folder w-notable\" and .action == \"none\" and (.reason | test(\"no lane table\"))")" = 1 ]'
+  check "leg_wave_residue a wave that still has a lane clone makes no wave row" eq "$(nrows "$js" '.what == "wave folder fx-wave"')" 0
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_wave_residue act --confirm archives salvage/, deletes the logs and removes the folder" \
+    eval 'has "$out" "janitor: act $id — wave-prune: archived salvage/ to $arch/w-done/salvage; deleted 4 lane file(s) (stream logs and stdin files); removed $P-lanes/w-done" && [ ! -e "$P-lanes/w-done" ] && [ -f "$arch/w-done/salvage/L1-removed-x/run.md" ]'
+  check "leg_wave_residue ... and leaves every other wave folder as it was" \
+    eval '[ -f "$P-lanes/w-run/L1.stream.log" ] && [ -f "$P-lanes/w-odd/notes.txt" ] && [ -d "$P-lanes/fx-wave/L1" ] && [ -f "$P-lanes/w-notable/L1.stream.log" ]'
+  # fail CLOSED: with lane-status unreadable (no jq) a done wave's folder is none, never wave-prune
+  out="$(env LOOMWRIGHT_JQ_BIN="$WORK/no-such-jq" LOOMWRIGHT_PROC_PS_SNAPSHOT="$SNAP" CI= bash "$S" --root "$P" 2>/dev/null)"
+  check "leg_wave_residue a lane table lane-status cannot read leaves the wave report-only (none, 'could not be read')" \
+    eval 'has "$(grep -A4 "| wave folder w-dup\$" <<<"$out")" "action: none — report only — \`lane-status w-dup.md\` could not be read" && ! has "$out" "wave-prune — every lane is removed"'
+  did="$(row_id "$js" '.what == "wave folder w-dup" and .action == "wave-prune"')"
+  out="$(jr act --confirm --root "$P" "$did" 2>/dev/null)"
+  check "leg_wave_residue an archive already holding that wave's salvage refuses: nothing moved or deleted" \
+    eval '[ -n "$did" ] && has "$out" "janitor: refused $did — $arch/w-dup/salvage already exists" && [ -f "$P-lanes/w-dup/L1.stream.log" ] && [ -d "$P-lanes/w-dup/salvage" ] && [ "$(cat "$arch/w-dup/salvage/keep")" = older ] && [ ! -e "$arch/w-dup/salvage/salvage" ]'
+  leg_end
+}
+
+leg_worktree_prune() {
+  local js id out gw n
+  mk_fixture
+  gw="$WORK/fx$FXN/gone-wt"
+  git -C "$P" branch -q feat/gone main && git -C "$P" worktree add -q "$gw" feat/gone >/dev/null 2>&1; rm -rf "$gw"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  n="$(nrows "$js" ".group == \"worktrees\" and (.what | endswith(\"$gw\"))")"
+  id="$(row_id "$js" '.id | startswith("wtp-")')"
+  check "leg_worktree_prune a record whose folder is gone is ONE worktrees row, wtp, action worktree-prune" \
+    eval '[ "$n" = 1 ] && [ -n "$id" ] && [ "$(rows_where "$js" ".id == \"$id\"" | jq -r .action)" = worktree-prune ]'
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_worktree_prune act --confirm drops the record and keeps the branch" \
+    eval 'has "$out" "janitor: act $id — worktree-prune" && ! has "$(git -C "$P" worktree list --porcelain)" "gone-wt" && git -C "$P" rev-parse -q --verify refs/heads/feat/gone >/dev/null'
+  leg_end
+}
+
+leg_siblings() {
+  local js id out
+  mk_fixture --lanes
+  git init -q "$P-clone" && ( cd "$P-clone" && echo a > a && git add a && git -c commit.gpgsign=false commit -qm a ) >/dev/null 2>&1
+  printf 'notes\n' > "$P-notes.txt"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  check "leg_siblings a hand-made clone beside the primary is one sib row, action none, its evidence naming the unpushed count" \
+    eval '[ "$(nrows "$js" ".group == \"plugin-adjacent\" and .what == \"proj-clone beside this checkout\" and .state == \"git checkout\" and .action == \"none\" and (.evidence | test(\"unpushed: no upstream\"))")" = 1 ]'
+  check "leg_siblings ... and so is a file named like the primary" \
+    eq "$(nrows "$js" '.what == "proj-notes.txt beside this checkout" and .state == "file" and .action == "none"')" 1
+  check "leg_siblings the lanes folder and a registered worktree named like the primary make no sib row" \
+    eval '[ "$(nrows "$js" ".what == \"proj-lanes beside this checkout\" or .what == \"proj-merged beside this checkout\"")" = 0 ]'
+  id="$(row_id "$js" '.what == "proj-clone beside this checkout"')"
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_siblings act --confirm refuses a sib row, the clone kept" eval '[ -n "$id" ] && has "$out" "janitor: refused $id — a report-only row" && [ -d "$P-clone/.git" ]'
+  leg_end
+}
+
 leg_usage() {
   local rc out
   mk_fixture
@@ -750,7 +844,7 @@ leg_empty_id() {
 
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_abandoned_removed leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_usage leg_empty_id; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_abandoned_removed leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_wave_residue leg_worktree_prune leg_siblings leg_usage leg_empty_id; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -833,6 +927,21 @@ mk_mutant abandongone sub 'removed|abandoned) [ -d "$path" ] || continue' 'remov
 run_mutant "an abandoned lane with its dir gone no longer skipped (a removed lane offered for lane-remove)" leg_abandoned_removed
 mk_mutant emptyid del "act — empty row id"
 run_mutant "act's empty-id arm deleted (an empty id reaches the checkout guard, exit 0)" leg_empty_id
+
+mk_mutant waveclone del '[ "$clone" = 0 ] || continue'
+run_mutant "the wave row's lane-clone guard dropped (a live wave's folder listed as residue)" leg_wave_residue
+mk_mutant wavedone sub 'elif [ "$rst" != done ]; then' 'elif false; then'
+run_mutant "the wave row's run-done check dropped (a running wave offered for wave-prune)" leg_wave_residue
+mk_mutant waveodd sub 'elif [ -n "$odd" ]; then' 'elif false; then'
+run_mutant "the wave row's extra-entry check dropped (a folder with unknown files offered for wave-prune)" leg_wave_residue
+mk_mutant wavearch del '[ ! -e "$dest/salvage" ] || { echo "janitor: refused $1'
+run_mutant "wave-prune's archive-exists refusal dropped (salvage nested into an older archive)" leg_wave_residue
+mk_mutant waveunread sub 'elif case "$closed" in *" $parent "*) false ;; *) true ;; esac; then' 'elif false; then'
+run_mutant "the wave row's fail-closed on an unreadable lane-status dropped (wave-prune offered unjudged)" leg_wave_residue
+mk_mutant wtpdup sub 'case "$NL$pset$NL" in *"$NL$subj$NL"*) continue ;; esac' ':'
+run_mutant "the wtp row no longer replaces the sweep's row (a prunable record listed twice)" leg_worktree_prune
+mk_mutant sibwt sub 'case "$NL$wts$NL" in *"$NL$f$NL"*) continue ;; esac' ':'
+run_mutant "the sibling scan's registered-worktree exclusion dropped (a worktree listed as a stray folder)" leg_siblings
 
 echo
 echo "test-janitor-report.sh: $pass passed, $fail failed"
