@@ -915,6 +915,10 @@ paid_case core-green.json; : > "$C/ac9.out"
 DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 ac9_drv "$DRIVER" --start drain
 DRV_WAIT_CMD="" WFC_NO_LIST_GRACE=0 ac9_drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
 ac9_check "paid-plan 403" 27510862826159
+# the mode is sidecar-only (an unset required_names reads as null, so the bundle alone cannot tell): base's mode
+[ "$(jq -r '.required_mode // "absent"' "$C_ROOT"/.supervisor/review-heal/*.next-step.json 2>/dev/null)" = no_required_list ] \
+  && ok "B: AC 9 paid-plan 403 — required_mode no_required_list, as on base" \
+  || no "B: AC 9 paid-plan 403 — required_mode $(jq -r '.required_mode // "absent"' "$C_ROOT"/.supervisor/review-heal/*.next-step.json 2>/dev/null)"
 setup_case "$FIX/converged-ready"; : > "$C/ac9.out"
 gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
 gh_row "$RS_ROW" 1 "$PAID_REQ_OUT"; ac9_rules_stderr "$PAID_ERR_LINE"
