@@ -35,7 +35,10 @@
 #   c_adv_unprotected classic 404 with no ruleset list ⇒ the advisory line
 #   c_adv_key_set     `required_checks` set ⇒ no advisory and no protection read at all
 #   c_adv_readable    a 200 read (a list, or an empty list) ⇒ no advisory
-#   c_adv_malformed   `[]` / a string / `[1]` / `[""]` ⇒ the malformed-key line, not the no-key one
+#   c_adv_malformed   `[]` / a string / `[1]` / `[""]` / `["  "]` ⇒ the malformed-key line, not the no-key one
+#   c_adv_protection_exists  a reviews-only 404 ("Required status checks not enabled") or classic
+#                     readable with the rules read failing, with and without a malformed key ⇒ no
+#                     advisory (the drain ignores the key there: required_read_no_list)
 #   c_adv_quiet       a non-GitHub origin, no `gh` to read with, and set's / remove's verify:
 #                     blocks ⇒ no line, no read
 # Mutation controls (gated: non-empty + differs + bash -n, on a scratch copy beside a copy of the
@@ -44,7 +47,8 @@
 # `{}` (c_remove must fail), the already-configured early exit deleted (c_idempotent must fail), the
 # origin/<branch> check deleted (c_refuse_missing must fail), the containment call neutralized
 # (`cpl_check_write` → `true`; c_outside must fail), the advisory echo deleted (c_adv_paid must
-# fail), the `required_checks`-present guard dropped (c_adv_key_set must fail).
+# fail), the `required_checks`-present guard dropped (c_adv_key_set must fail), the
+# protection-exists guard dropped (c_adv_protection_exists must fail).
 # Exit 0 = all pass, 1 = any failure, 2 = fixture setup broken.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -283,6 +287,8 @@ c_usage() {
 #   paid      every api call: GitHub's paid-plan refusal (403, stdout + stderr as captured live)
 #   notprot   classic 404 "Branch not protected"; rules read `[]` (no ruleset list)
 #   protected classic 200 requiring `ci`        empty   classic 200 with an empty list
+#   notenabled classic 404 "Required status checks not enabled" (a reviews-only protected base)
+#   rsfail    classic 200 requiring `ci`, the rules read a 502 (classic readable, rulesets not)
 ADV_LINE='advisory: base branch has no readable required-check list and no `required_checks` set — every drain will gate READY on every non-neutral check (or escalate)'
 adv_env() {
   local d="$T/adv-bin-$1"
@@ -293,6 +299,7 @@ printf '%s\n' "\$*" >> "$ADV_LOG"
 mode="$1"
 case "\$*" in
   *"/rules/branches/"*)
+    [ "\$mode" != rsfail ] || { echo '{"message":"Server Error","status":"502"}'; echo 'gh: Server Error (HTTP 502)' >&2; exit 1; }
     [ "\$mode" = paid ] || { echo '[]'; exit 0; } ;;
 esac
 case "\$mode" in
@@ -302,7 +309,10 @@ case "\$mode" in
   notprot)
     echo '{"message":"Branch not protected","status":"404"}'
     echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1 ;;
-  protected) echo '{"strict":true,"contexts":["ci"],"checks":[{"context":"ci","app_id":null}]}' ;;
+  notenabled)
+    echo '{"message":"Required status checks not enabled","status":"404"}'
+    echo 'gh: Required status checks not enabled (HTTP 404)' >&2; exit 1 ;;
+  protected|rsfail) echo '{"strict":true,"contexts":["ci"],"checks":[{"context":"ci","app_id":null}]}' ;;
   empty) echo '{"strict":false,"contexts":[],"checks":[]}' ;;
 esac
 exit 0
@@ -320,8 +330,8 @@ c_adv_paid() {
   local e="$1" r; adv_env paid; r="$(gh_repo ap)"
   run "$e" "$r" status
   [ "$rc" -eq 0 ] && has "$out" "base-branch: main (source: origin-head)" || { echo "rc=$rc out=$out"; return 1; }
-  printf '%s\n' "$out" | grep -qxF "$ADV_LINE" || { echo "advisory line missing: $out"; return 1; }
-  printf '%s\n' "$out" | grep -q '^  fix: add "required_checks": \[' || { echo "fix line missing: $out"; return 1; }
+  grep -qxF "$ADV_LINE" <<<"$out" || { echo "advisory line missing: $out"; return 1; }
+  grep -q '^  fix: add "required_checks": \[' <<<"$out" || { echo "fix line missing: $out"; return 1; }
   has "$out" "paid-plan refusal" || { echo "cause not named: $out"; return 1; }
   grep -qF 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' "$ADV_LOG" \
     || { echo "the drain's protection read was not made: $(cat "$ADV_LOG")"; return 1; }
@@ -329,14 +339,14 @@ c_adv_paid() {
   # the same with a config carrying other keys but no required_checks
   seed_cfg "$r"; cp "$(cfg "$r")" "$T/ap.snap"
   run "$e" "$r" status
-  [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qxF "$ADV_LINE" || { echo "with other keys: rc=$rc out=$out"; return 1; }
+  [ "$rc" -eq 0 ] && grep -qxF "$ADV_LINE" <<<"$out" || { echo "with other keys: rc=$rc out=$out"; return 1; }
   cmp -s "$(cfg "$r")" "$T/ap.snap" && [ "$(nbackups "$(cfg "$r")")" = "0" ] || { echo "status changed the config"; return 1; }
 }
 
 c_adv_unprotected() {
   local e="$1" r; adv_env notprot; r="$(gh_repo an)"
   run "$e" "$r" status
-  [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qxF "$ADV_LINE" || { echo "rc=$rc out=$out"; return 1; }
+  [ "$rc" -eq 0 ] && grep -qxF "$ADV_LINE" <<<"$out" || { echo "rc=$rc out=$out"; return 1; }
   has "$out" "not readable (gh: Branch not protected (HTTP 404))" || { echo "cause: $out"; return 1; }
 }
 
@@ -359,13 +369,28 @@ c_adv_readable() {
 }
 
 c_adv_malformed() {
-  local e="$1" r v; for v in '[]' '"Unit Tests"' '[1]' '[""]'; do
+  local e="$1" r v; for v in '[]' '"Unit Tests"' '[1]' '[""]' '["  "]'; do
     adv_env paid; r="$(gh_repo am)"
     mkdir -p "$r/.supervisor"; printf '{"required_checks": %s}\n' "$v" > "$(cfg "$r")"
     run "$e" "$r" status
     [ "$rc" -eq 0 ] && [ "$(adv_count "$out")" = "1" ] && has "$out" '`required_checks` is malformed' \
-      && has "$out" "required_checks_unavailable" && ! printf '%s\n' "$out" | grep -qxF "$ADV_LINE" \
+      && has "$out" "required_checks_unavailable" && ! grep -qxF "$ADV_LINE" <<<"$out" \
       || { echo "[$v] rc=$rc out=$out"; return 1; }
+  done
+}
+
+# a failed read that still says a protection exists — a reviews-only base (404 "Required status
+# checks not enabled") or classic readable with only the rules read failing — is one the drain
+# never lets a named set stand in for (required_read_no_list): no advisory, with or without a key
+c_adv_protection_exists() {
+  local e="$1" r m v; for m in notenabled rsfail; do
+    for v in none '[]'; do
+      adv_env "$m"; r="$(gh_repo "ape-$m")"
+      [ "$v" = none ] || { mkdir -p "$r/.supervisor"; printf '{"required_checks": %s}\n' "$v" > "$(cfg "$r")"; }
+      run "$e" "$r" status
+      [ "$rc" -eq 0 ] && [ "$(adv_count "$out")" = "0" ] && ! has "$out" "  fix: " || { echo "[$m $v] rc=$rc out=$out"; return 1; }
+      [ -s "$ADV_LOG" ] || { echo "[$m $v] no protection read was made"; return 1; }
+    done
   done
 }
 
@@ -388,7 +413,7 @@ c_adv_quiet() {
 }
 
 CASES="c_status_default c_create c_merge c_idempotent c_refuse_missing c_refuse_invalid c_remove c_malformed c_symlink c_outside c_inside_link c_ancestor_link c_unresolved c_usage"
-CASES="$CASES c_adv_paid c_adv_unprotected c_adv_key_set c_adv_readable c_adv_malformed c_adv_quiet"
+CASES="$CASES c_adv_paid c_adv_unprotected c_adv_key_set c_adv_readable c_adv_malformed c_adv_protection_exists c_adv_quiet"
 
 echo "== setup-base-branch.sh =="
 for c in $CASES; do
@@ -400,7 +425,7 @@ echo "== mutation controls (each must turn its case red) =="
 mutant() {
   local name="$1" prog="$2" case_fn="$3" d="$T/mut-$1"
   mkdir -p "$d"; cp "$RESOLVER" "$d/resolve-base-branch.sh"; cp "$HERE/contained-path-lib.sh" "$d/contained-path-lib.sh"
-  cp "$HERE/drain-gh-read.sh" "$HERE/protection-paid-plan.sh" "$HERE/required-checks-rulesets.sh" "$d/"
+  cp "$HERE/drain-gh-read.sh" "$HERE/protection-paid-plan.sh" "$HERE/required-checks-rulesets.sh" "$HERE/required-checks-named.sh" "$d/"
   awk "$prog" "$ENGINE" > "$d/setup-base-branch.sh"
   if [ ! -s "$d/setup-base-branch.sh" ] || cmp -s "$d/setup-base-branch.sh" "$ENGINE" || ! bash -n "$d/setup-base-branch.sh" 2>/dev/null; then
     no "MUTATION CONTROL $name: mutant is empty, identical or does not parse — control inconclusive"; return 0
@@ -417,6 +442,7 @@ mutant no-containment '{ if (index($0, "cpl_check_write \"$1\" \"$CFG\" \"$REPO\
 mutant no-origin-check '/refs\/remotes\/origin\/\$BRANCH\^\{commit\}/ { skip = 4 } skip > 0 { skip--; next } { print }' c_refuse_missing
 mutant no-advisory-line '{ if (index($0, "every drain will gate READY on every non-neutral check (or escalate)\"")) next; print }' c_adv_paid
 mutant no-key-guard '{ if (index($0, "case \"$key\" in valid|unknown)")) sub(/valid[|]unknown/, "unknown"); print }' c_adv_key_set
+mutant no-protection-exists-guard '{ if (index($0, "required_read_no_list \"$rd $err\" || return 0")) next; print }' c_adv_protection_exists
 
 echo
 echo "test-setup-base-branch: $pass passed, $fail failed"

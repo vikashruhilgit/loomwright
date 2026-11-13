@@ -155,9 +155,13 @@ for r in 403 garbage; do
   rc_run 404 "$r"
   [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -q 'ruleset read failed' <<<"$ERR" \
     && ok "classic 404 + rules '$r' (unreadable) ⇒ exit 1, no list (fail CLOSED)" || no "classic 404 + rules $r wrong (rc=$RC out='$OUT' err='$ERR')"
+  ! grep -q '(classic protection readable)' <<<"$ERR" \
+    && ok "classic 404 + rules '$r' ⇒ no classic-readable marker" || no "classic 404 + rules $r carries the classic-readable marker ($ERR)"
   rc_run ok "$r"
   [ "$RC" -eq 1 ] && [ -z "$OUT" ] \
     && ok "classic readable + rules '$r' (unreadable) ⇒ exit 1: a ruleset that cannot be read may require more" || no "classic ok + rules $r wrong (rc=$RC out='$OUT')"
+  grep -q 'ruleset read failed for release/2.x (classic protection readable): ' <<<"$ERR" \
+    && ok "classic readable + rules '$r' ⇒ the error names classic as readable (a named set never replaces it)" || no "classic ok + rules $r marker missing ($ERR)"
 done
 rc_run paid list
 [ "$RC" -eq 1 ] && grep -q 'Upgrade to GitHub Pro' <<<"$OUT $ERR" && [ "$(wc -l < "$CALLS" | tr -d ' ')" = 1 ] \

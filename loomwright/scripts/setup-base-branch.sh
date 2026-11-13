@@ -198,16 +198,22 @@ origin_github_slug() {
   return 0
 }
 
-# required_checks_key — the config's `required_checks` key: `valid` (a non-empty array of non-empty
-# strings — the set a drain gates READY on when protection supplies no list), `absent`, `malformed`,
-# or `unknown` (jq unavailable or the config unparseable: nothing reliable to say).
+# required_checks_key — the config's `required_checks` key: `valid` (a set the drain accepts —
+# required-checks-named.sh's named_required_valid, the drain's own rule: a non-empty array of check
+# names, each with a non-space character and no control character), `absent`, `malformed`, or
+# `unknown` (jq unavailable, the config unparseable, or the shared library missing: nothing
+# reliable to say).
 required_checks_key() {
   if [ ! -f "$CFG" ]; then printf 'absent'; return 0; fi
   if ! jq_works || ! config_is_object; then printf 'unknown'; return 0; fi
-  jq -r 'if has("required_checks") | not then "absent"
-         elif (.required_checks | type) == "array" and (.required_checks | length) > 0
-              and all(.required_checks[]; type == "string" and length > 0) then "valid"
-         else "malformed" end' "$CFG" 2>/dev/null || printf 'unknown'
+  # shellcheck source=required-checks-named.sh
+  . "$script_dir/required-checks-named.sh" 2>/dev/null || { printf 'unknown'; return 0; }
+  if ! jq -e 'has("required_checks")' "$CFG" >/dev/null 2>&1; then printf 'absent'; return 0; fi
+  if jq -c '.required_checks' "$CFG" 2>/dev/null | named_required_valid jq >/dev/null; then
+    printf 'valid'
+  else
+    printf 'malformed'
+  fi
 }
 
 # required_checks_advisory <base> — `status` only, advisory only (never changes the exit status).
@@ -215,7 +221,10 @@ required_checks_key() {
 # required-checks`) and, when that read yields no list and the config names no valid
 # `required_checks`, says what every drain will do and how to fix it. Prints nothing when the key
 # is set (no read is made), when the read succeeds (even with an empty list — readable protection
-# always wins), when origin is not a github.com repo, or when no `gh` is found to read with.
+# always wins), when the failed read still says a protection exists (the drain's own predicate,
+# required-checks-named.sh's required_read_no_list: a 404 "Required status checks not enabled", or
+# classic readable with only the ruleset read failed — the drain ignores the key there, so adding
+# it fixes nothing), when origin is not a github.com repo, or when no `gh` is found to read with.
 required_checks_advisory() {
   local base="$1" key slug rd rc=0 err why
   key="$(required_checks_key)"
@@ -226,6 +235,9 @@ required_checks_advisory() {
   rd="$(GH="${LOOMWRIGHT_GH_BIN:-gh}" bash "$script_dir/drain-gh-read.sh" required-checks "$slug" "$base" </dev/null 2>"$TMPERR")" || rc=$?
   [ "$rc" -ne 0 ] || return 0
   err="$(cat "$TMPERR" 2>/dev/null)"
+  # the key matters only where the drain lets a named set stand in; a missing library says nothing
+  . "$script_dir/required-checks-named.sh" 2>/dev/null || return 0
+  required_read_no_list "$rd $err" || return 0
   # shellcheck source=protection-paid-plan.sh
   . "$script_dir/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
   if protection_paid_plan_refusal "$rd $err"; then

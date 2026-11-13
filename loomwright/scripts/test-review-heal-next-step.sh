@@ -1006,6 +1006,33 @@ gh_row "$REQ_ROW" 1 '{"message":"Not Found","documentation_url":"https://docs.gi
 printf 'gh: Not Found (HTTP 404)\n' > "$C/gh.stderr"; drv "$DRIVER" --start drain
 [ "$(nr_side required_mode)" = '"named"' ] && ok "B: a 404 Not Found (no admin read) + config ⇒ named (an unreadable read)" \
   || no "B: 404 Not Found + config ⇒ $(nr_what) mode $(nr_side required_mode)"
+# classic protection READABLE ([ci]) with only the ruleset read failing (a 502) is a protection, not "no list": the
+# config set and a `name:` flag are both ignored, the outcome byte-identical to the same read with no key —
+# ESCALATED required_checks_unavailable before the wait, as with no named set
+nr_classic_rs_fail() { setup_case "$FIX/converged-ready"; : > "$C/ac9.out"; gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"502"}'
+  ac9_rules_stderr 'gh: Server Error (HTTP 502)'; }
+nr_classic_rs_fail; ac9_drv "$DRIVER" --start drain; NR_B0="$(ac9_bundle)"
+nr_classic_rs_fail; nr_cfg "$NR_UT_CFG"; ac9_drv "$DRIVER" --start drain; NR_B1="$(ac9_bundle)"
+[ "$NR_B0" = "$NR_B1" ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] \
+  && [ "$(nr_side required_mode)" != '"named"' ] && ! grep -q '^wait ' "$C/calls.log" \
+  && ok "B: classic readable [ci] + rulesets 502 + config ⇒ never named, ESCALATED required_checks_unavailable, byte-identical to no key" \
+  || no "B: classic readable + rulesets 502 + config ⇒ $(nr_what) mode $(nr_side required_mode); differs: $(diff <(printf '%s\n' "$NR_B0") <(printf '%s\n' "$NR_B1") | head -n 5)"
+nr_classic_rs_fail; drv "$DRIVER" --start drain --required-checks "name:Unit Tests"
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && [ "$(nr_side required_mode)" != '"named"' ] \
+  && ok "B: classic readable [ci] + rulesets 502 + --required-checks name: ⇒ never named, required_checks_unavailable" \
+  || no "B: classic readable + rulesets 502 + name: ⇒ $(nr_what) mode $(nr_side required_mode)"
+# classic 404 "Branch not protected" + rulesets 502: no list was read at all ⇒ the config set stands in
+setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
+gh_row "$REQ_ROW" 1 '{"message":"Branch not protected","status":"404"}'; printf 'gh: Branch not protected (HTTP 404)\n' > "$C/gh.stderr"
+gh_row "$RS_ROW" 1 '{"message":"Server Error","status":"502"}'; ac9_rules_stderr 'gh: Server Error (HTTP 502)'
+drv "$DRIVER" --start drain
+[ "$(nr_side required_mode)" = '"named"' ] && ok "B: classic 404 + rulesets 502 + config ⇒ named (no list was read)" \
+  || no "B: classic 404 + rulesets 502 + config ⇒ $(nr_what) mode $(nr_side required_mode)"
+# a blank name is not a check name (required-checks-named.sh): config ["  "] is malformed
+setup_case "$FIX/named-required-ready"; nr_cfg '{"required_checks": ["  "]}'; drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -q "config.json's required_checks is malformed" "$C/comments.log" \
+  && ok "B: config [\"  \"] ⇒ malformed (a blank name), ESCALATED required_checks_unavailable" \
+  || no "B: config [\"  \"] ⇒ $(nr_what)"
 # AC 6 — --required-checks all-non-neutral wins over the config key
 setup_case "$FIX/converged-ready"; nr_cfg "$NR_UT_CFG"
 gh_row "$REQ_ROW" 1 '{"message":"Resource not accessible by integration","status":"403"}'

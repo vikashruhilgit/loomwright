@@ -144,14 +144,14 @@ command -v "$JQ" >/dev/null 2>&1 || { rh_err "jq not on PATH"; exit 1; }
 # A missing library reads the paid-plan refusal as any other 403: required_checks_unavailable, fail CLOSED.
 . "$HERE/protection-paid-plan.sh" 2>/dev/null || protection_paid_plan_refusal() { return 1; }
 
-# rh_named_ok — stdin: a JSON value; prints it de-duplicated (first occurrence kept) and returns 0 when it is a
-# non-empty array of check names (strings with a non-space character and no control character), else 1. The
-# one validation of a named required set, for the `name:` flag and the config key alike.
-rh_named_ok() {
-  "$JQ" -ce 'if type == "array" and length > 0
-      and all(.[]; type == "string" and test("\\S") and (explode | any(.[]; . < 32 or . == 127) | not))
-    then reduce .[] as $n ([]; if index($n) then . else . + [$n] end) else empty end' 2>/dev/null
-}
+# The named required set's validation and the "did the required read leave no list" predicate: one library,
+# shared with wait-for-checks.sh and setup-base-branch.sh. A missing library refuses every named set (rh_named_ok
+# fails, rh_no_list says a protection exists): the outcome with no named set, fail CLOSED.
+. "$HERE/required-checks-named.sh" 2>/dev/null \
+  || { named_required_valid() { return 1; }; required_read_no_list() { return 1; }; }
+# rh_named_ok — stdin: a JSON value; prints it de-duplicated and returns 0 when it is a valid named set
+# (named_required_valid), else 1. The one validation of a named required set, for the `name:` flag and the config key alike.
+rh_named_ok() { named_required_valid "$JQ"; }
 # rh_flag_names <list> — the `--required-checks name:<list>` value as a JSON array (split on commas, never
 # trimmed: a check name may hold spaces); 1 on an empty list or an empty name (`name:`, `name:,a`, `name:a,`).
 rh_flag_names() { "$JQ" -cn --arg l "$1" '$l | split(",")' 2>/dev/null | rh_named_ok; }
@@ -406,17 +406,11 @@ rh_round() {
 }
 
 # rh_no_list <read output> — 0 when the required read that just failed left the drain no list to honour, so a
-# named set may stand in: GitHub's paid-plan refusal, a 404 saying the base is not protected ("Branch not
-# protected") or cannot be seen ("Not Found" — a token without admin read; both bodies read live from `gh api`),
-# and every other unreadable read (a token-scope 403, a 5xx, an unreadable ruleset, a body that is not JSON). A
-# 404 with any other body — "Required status checks not enabled", a protected base whose list is empty — says a
-# protection exists: never named, the outcome stays the one with no named set (a reworded 404 fails that way too).
-rh_no_list() {
-  local t; t="$1 $(cat "$RH_READ_ERR" 2>/dev/null)"
-  case "$t" in *"(HTTP 404)"*|*'"status":"404"'*) ;; *) return 0 ;; esac
-  case "$t" in *"Branch not protected"*|*'"message":"Not Found"'*|*"gh: Not Found (HTTP 404)"*) return 0 ;; esac
-  return 1
-}
+# named set may stand in (required_read_no_list over the read's stdout and stderr: the paid-plan refusal, a 404
+# "Branch not protected" / "Not Found", every other unreadable read); 1 when a protection exists — classic
+# protection readable with only the ruleset read failed, or a 404 with any other body ("Required status checks
+# not enabled") — never named there, the outcome stays the one with no named set.
+rh_no_list() { required_read_no_list "$1 $(cat "$RH_READ_ERR" 2>/dev/null)"; }
 # rh_config_names — the named set in `required_checks` of `$ROOT/.supervisor/config.json` (ROOT's file, never the
 # cwd's). Prints it and returns 0 when valid (rh_named_ok); 1 when the key is absent — a missing or non-JSON file
 # reads as absent, the outcome with no key being the stricter one; 2 when the key is there but malformed.

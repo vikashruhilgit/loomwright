@@ -49,11 +49,11 @@
 #      mutation control (normalisation removed).
 #  42. the poll sleep is cut to the remaining --call-max budget: --call-max 1
 #      --interval 8 prints CONTINUE within 4 s; mutation control (clamp removed).
-#  49-56. (drain-named-required-checks) --named-required <json>: stands in only
+#  49-59. (drain-named-required-checks) --named-required <json>: stands in only
 #      where the protection read yields no list (paid-plan, unreadable, 404 with
-#      no ruleset check); a readable read (200 — even an empty list — or a 404 +
-#      ruleset list) wins; an absent named check is pending; a malformed value
-#      is ignored.
+#      no ruleset check); a readable read (200 — even an empty list, or with an
+#      unreadable ruleset read — or a 404 + ruleset list) wins; an absent named
+#      check is pending; a malformed value (a blank name included) is ignored.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1042,10 +1042,10 @@ nr_refusal() { # <num> <title> <expect-regex> <body> <err> <rollup> <named arg |
   if grep -qE "$3" <<<"$o"; then ok "$2 ($o)"; else no "$2 wrong: '$o'"; fi
   rm -rf "$d"
 }
-nr_names() { # <num> <title> <expect-regex> <view json> <classic ctx json|404> <rulesets json|none> [named arg] — sets NR_OUT
+nr_names() { # <num> <title> <expect-regex> <view json> <classic ctx json|404> <rulesets json|fail|none> [named arg] — sets NR_OUT
   local d; d="$(fresh_stub_dir)"
   if [ "$5" = 404 ]; then write_names_stub "$d" "$4"; touch "$d/prot-404"; else write_names_stub "$d" "$4" "$5"; fi
-  [ "$6" = none ] || printf '%s\n' "$6" > "$d/rulesets.json"
+  case "$6" in fail) touch "$d/rulesets-fail" ;; none) : ;; *) printf '%s\n' "$6" > "$d/rulesets.json" ;; esac
   echo "== $1. $2 =="
   if [ "$#" -ge 7 ]; then NR_OUT="$(GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names --named-required "$7" 2>/dev/null)"
   else NR_OUT="$(GH="$d/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names 2>/dev/null)"; fi
@@ -1075,6 +1075,19 @@ NR_WITH="$NR_OUT"
 nr_names 56b "AC 5 control: the same read with no named set" '^SETTLED sha=deadbeef00 required=green ' "$NR_CI_ONLY" '[]' none
 [ "$NR_WITH" = "$NR_OUT" ] && ok "AC 5: the empty-list outcome with the named set is byte-identical to the one without it" \
   || no "AC 5: the named set changed a readable empty-list outcome: '$NR_WITH' vs '$NR_OUT'"
+# a READABLE classic read whose ruleset read failed is a protection, not "no list": the named set never replaces
+# the classic [ci] list there — required=unknown, ci's red still named, byte-identical to the run without the flag
+NR_CI_RED='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE","state":"","detailsUrl":"https://github.com/acme/widgets/actions/runs/91/job/1"},{"name":"Unit Tests","status":"COMPLETED","conclusion":"SUCCESS","state":""}]}'
+nr_names 57 "classic [ci] + unreadable ruleset read + named [Unit Tests] => required=unknown, ci red, never green" \
+  '^SETTLED sha=deadbeef00 required=unknown .*red_names=ci@91$' "$NR_CI_RED" '["ci"]' fail "$NR_UT"
+NR_WITH="$NR_OUT"
+nr_names 57b "control: the same read with no named set" '^SETTLED sha=deadbeef00 required=unknown .*red_names=ci@91$' "$NR_CI_RED" '["ci"]' fail
+[ "$NR_WITH" = "$NR_OUT" ] && ok "classic readable + rulesets unreadable: the named set changes nothing (byte-identical)" \
+  || no "the named set replaced a readable classic list: '$NR_WITH' vs '$NR_OUT'"
+nr_names 58 "classic 404 + unreadable ruleset read + named => no list was read: the named set, red on Unit Tests" \
+  '^SETTLED sha=deadbeef00 required=red .*red_names=Unit Tests@91$' "$NR_UT_RED" 404 fail "$NR_UT"
+nr_refusal 59 "a blank name (\"  \") is not a check name (the drain's rule) => ignored, the paid-plan outcome" \
+  '^SETTLED sha=deadbeef00 required=red .*red_names=deploy@88$' "$PAID_BODY" "$PAID_ERR" "$NR_ROLL" '["  "]'
 
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
