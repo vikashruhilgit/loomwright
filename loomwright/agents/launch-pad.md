@@ -55,6 +55,7 @@ The Core Principles above are critical rules too. In addition:
 - **If environment has blockers:** output fix instructions, don't offer save
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
 - **Can't-ask rule:** this run cannot ask when `--non-interactive`/`--non-interactive-fallback` is set OR it is executing as a subagent (the ask tool is absent from its tool set) — never from a stdin-TTY probe alone. Every question gate then takes its named branch and never improvises: Phase 2 clarification (incl. step 0's unusable requirement file) → `status: aborted, status_reason: "clarification_needed_non_interactive"` with the open questions listed; Phase 2.5 NO-GO → `status: aborted, status_reason: "no_go_non_interactive"`; Phase 2.7 `LP-APPROACH` → the default pick recorded `status: unconfirmed`, never asked, never aborted; Phase 6 NEEDS_HUMAN → action 2a auto-strip / action 2b `rule_conflict_non_interactive` / action 2 `needs_human_non_interactive`; Phase 6 scope widening (action 1a, paths outside Touches; never in a `--parallel N > 1` lane, which records them instead) → save nothing, `status: aborted`, summary leading `scope_widening_non_interactive: <n> path(s) outside Touches`, even with the explicit flag; Phase 6 PASS → with the explicit flag (the owner's unattended opt-in), save the unmutated PASSed brief, noted `saved_on_pass_non_interactive` (no Outcomes Rubric is auto-authored when the run cannot ask — Phase 5 step 7 is a no-op, so the saved brief carries only a rubric the requirement already had); with no flag (a subagent only) → save nothing, `status: aborted, status_reason: "save_requires_flag_non_interactive"`; Plan Review FAIL × 3 → `status: blocked, status_reason: "plan_review_fail_non_interactive"`; memory candidates → write nothing, list them under `memory_candidates_deferred_non_interactive`. Each named status rides in `LAUNCH_PAD_RESULT.summary` as its leading token (`summary: "no_go_non_interactive: …"`), never as a new key: the block's key set is closed and `validate-launch-pad-result.py --raw` blocks any unknown key, a `status_reason:` line included. Interactive options are unchanged.
+- **Phase lines:** every phase ends by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/launch-pad-phase.sh" <id> <verdict>` (each `**Output:**` names it; a skip passes `skipped`). Stdout is the line; never type it.
 - **Every question names a catalog code** (`docs/LANE_GATES.md`): a free-form question that is no catalog gate (a design or contract choice, e.g. which grant form to use) is asked under `LP-CLARIFY`, never under an improvised header.
 - **Mandatory plan review** — Phase 5.5 is non-skippable. PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
 - **Feasibility gate (Phase 2.5)** — soft gate. NO-GO stops pipeline (user can override); CAUTION findings feed into Risk Assessment
@@ -97,10 +98,8 @@ Goal → Discovery → Feasibility → Approach (conditional) → Analysis → D
 
 **Skip condition:** If `--skip-validation` flag is set, skip to Phase 2 (report skipped) — action 9 still runs.
 
-**Output:**
+**Output:** `launch-pad-phase.sh 1 <N blockers, N warnings>`, then:
 ```markdown
-## Phase 1: VALIDATE
-
 | Check | Status | Detail |
 |-------|--------|--------|
 | CLAUDE.md | ✓ Found / ⚠ Stale / ✗ Missing | {path} |
@@ -131,10 +130,8 @@ Goal → Discovery → Feasibility → Approach (conditional) → Analysis → D
 4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
 5. If `--discovery` flag is set: force full product discovery even if goal seems clear
 
-**Output:**
+**Output:** `launch-pad-phase.sh 2 <N criteria>`, then:
 ```markdown
-## Phase 2: DISCOVER
-
 **Goal:** {refined goal statement}
 
 **Problem Statement:**
@@ -195,10 +192,8 @@ Goal → Discovery → Feasibility → Approach (conditional) → Analysis → D
 
 **Fallback:** If CLAUDE.md is sparse/missing tech stack info, checks 1-3 default to CAUTION (not NO-GO) with "insufficient project context" note.
 
-**Output:**
+**Output:** `launch-pad-phase.sh 2.5 <GO|CAUTION|NO-GO>`, then:
 ```markdown
-## Phase 2.5: FEASIBILITY
-
 | # | Check | Verdict | Detail |
 |---|-------|---------|--------|
 | 1 | Tech Stack Compatibility | {GO/CAUTION/NO-GO} | {explanation} |
@@ -222,11 +217,11 @@ Goal → Discovery → Feasibility → Approach (conditional) → Analysis → D
 
 **Triggers** (closed list T1–T5): T1 a Phase 2.5 check 1/2 CAUTION row naming a new dependency; T2 a File Impact Map CREATE script or module, not a test, fixture, doc or evidence file (re-checked after Phase 3 action 13); T3–T5 the goal or `## Task` names a new external integration, a cross-cutting mechanism, or hand-rolls what the manifest, harness or a stackpack skill provides. Bug fixes, docs, prompt-only edits and small changes never trigger.
 
-1. No trigger → print `## Phase 2.7: APPROACH — no trigger`, read nothing, emit no section.
+1. No trigger → run `launch-pad-phase.sh 2.7 no trigger`, read nothing, emit no section.
 2. A trigger → `Read(${CLAUDE_PLUGIN_ROOT}/skills/supervisor-readiness/design-decisions.md)` and follow it: candidates ("already in the repo" first), five axes, evidence, one `- decision:` entry per trigger.
 3. Only on an axes tie or a T1 dependency, ask once per entry with the ask tool, `header: "LP-APPROACH"`, options `Keep <chosen>` · `Switch to <runner-up>` · `Decide later`. Cannot ask (Can't-ask rule) → record the default pick `status: unconfirmed`; never ask, never abort.
 
-**Output:** `## Phase 2.7: APPROACH` and its entries; Phase 5 action 5a emits them.
+**Output:** `launch-pad-phase.sh 2.7 <N decisions>`, then entries; Phase 5 action 5a emits them.
 
 ---
 
@@ -311,10 +306,8 @@ Goal → Discovery → Feasibility → Approach (conditional) → Analysis → D
 12. **Closed enumerations and pin mutations (conditional):** when the change adds an enum, status, reason, category or decision value, `grep -rnF` an existing sibling value of the same kind repo-wide and keep the command and every hit; each closed list among the hits (one that must name every value) joins the File Impact Map. When it adds or changes test pins, write per pin the one-line mutation of the code it protects (delete line X / flip value Y) that must turn it red. Format: `skills/supervisor-readiness/SKILL.md` §"Closed enumerations touched" and §"Pin mutations"; Phase 5 emits them; Plan Reviewer Criterion 19 flags a brief that needs them and lacks them. Neither applies → skip silently and emit neither section.
 13. **Module layout (every File Impact Map):** record each MODIFY path's line count at the base commit (`wc -l`), and give every new responsibility the goal adds one home — a CREATE module, the existing shared module to reuse, or a one-line reason for appending — plus an extract row for a helper 2+ sibling files already copy. Test files count like source. The threshold, the row forms and the house-rule override (read from action 0c's `applicable_rules`) are `skills/supervisor-readiness/SKILL.md` §"Module layout" (reference it, do not restate it); Plan Reviewer Criterion 21 checks it. Then re-check Phase 2.7's T2.
 
-**Output:**
+**Output:** `launch-pad-phase.sh 3 <N modify, N create>`, then:
 ```markdown
-## Phase 3: ANALYZE
-
 **Tech Stack:** {from CLAUDE.md}
 **Architecture:** {pattern detected}
 
@@ -423,10 +416,8 @@ external_requires:
 - A subtask with non-empty `requires` is BLOCKED. The parallelism analysis MUST show it as blocked by the producing subtask(s) listed in its `requires.from` set, never as LAUNCHABLE
 - Every subtask MUST also declare `lanes:` (non-empty, same `[]`-with-justification exception as `provides`)
 
-**Output:**
+**Output:** `launch-pad-phase.sh 4 <N subtasks>`, then:
 ```markdown
-## Phase 4: DECOMPOSE
-
 ### Subtask Structure
 
 | # | Title | Criteria | Est. Files | Skills | Status |
@@ -528,7 +519,7 @@ Subtask 2 (independent)
    - Invoke `bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-context-digest.sh" --brief <scratch-file> --out .supervisor/jobs/context-digests/{date}-{slug}.md` (artifact contract: `docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST").
    - Every spawned worker later gets this digest as a **pointer** (`docs/POINTER_AUDIT.md` §"Context digest"). The builder is fail-safe (always exits 0); if it reports a write failure, proceed with brief assembly regardless — a missing digest never blocks Plan Review or save.
 
-**Output:** The full Supervisor-Ready Brief (see `skills/supervisor-readiness/SKILL.md` for template).
+**Output:** `launch-pad-phase.sh 5 <N subtasks, N files>`, then the full Supervisor-Ready Brief (see `skills/supervisor-readiness/SKILL.md` for template).
 
 ---
 
@@ -649,10 +640,8 @@ Check every review criterion. Output a PLAN_REVIEW_RESULT block.",
 )
 ```
 
-**Output:**
+**Output:** `launch-pad-phase.sh 5.5 <decision> (attempt N/3)`, then:
 ```markdown
-## Phase 5.5: PLAN REVIEW
-
 **Reviewer decision:** {PASS | FAIL (attempt N/3) | NEEDS_HUMAN}
 **Requirement fit:** {the reviewer's `requirement_fit`: fulfils | under | over | skipped}
 **Issues found:** {count} ({blocking} blocking, {high} high, {medium} medium, {low} low)
@@ -760,10 +749,8 @@ Check every review criterion. Output a PLAN_REVIEW_RESULT block.",
 - Slug derived from goal (lowercase, hyphens, max 40 chars)
 - Date in ISO format (YYYY-MM-DD)
 
-**Output:**
+**Output:** `launch-pad-phase.sh 6 <saved PATH | outcome>`, then:
 ```markdown
-## Phase 6: SAVE
-
 **Plan Review:** {PASS | PASS (user override on NEEDS_HUMAN)}
 **Attempts:** {N}/3
 
@@ -801,7 +788,7 @@ Check every review criterion. Output a PLAN_REVIEW_RESULT block.",
 
 4. **Compute the additive `cmd_bullets_stripped_non_interactive` field (OPTIONAL — `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT"):** `true` when Phase 6 action 2a's non-interactive auto-strip branch actually removed ≥1 `cmd:`/bare bullet during this run; **omit the field entirely** (never emit `false`) in every other case — including the interactive path, a run with no Executable Acceptance section, and a stamped/already-clean brief.
 
-5. Emit the YAML block verbatim as the **last** structured output of the run. Consumers read the **last** `LAUNCH_PAD_RESULT` block in the transcript when Launch Pad runs inline via the `/launch-pad` slash command; the SubagentStop hook validates the same block when Launch Pad runs via `claude --agent loomwright:launch-pad-runner`.
+5. Run `launch-pad-phase.sh 7 <status>`. Emit the YAML block verbatim as the **last** structured output of the run. Consumers read the **last** `LAUNCH_PAD_RESULT` block in the transcript when Launch Pad runs inline via the `/launch-pad` slash command; the SubagentStop hook validates the same block when Launch Pad runs via `claude --agent loomwright:launch-pad-runner`.
 
 **Emission format (verbatim, including the leading fenced block):**
 

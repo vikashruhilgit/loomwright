@@ -43,27 +43,26 @@
 ```
 $ /launch-pad goal: "add JWT authentication"
 
-## Phase 1: VALIDATE
+## Phase 1: VALIDATE — 0 blockers, 0 warnings
 - CLAUDE.md: ✓ Found (fresh)
 - Git: clean, branch: main
 
-## Phase 2.5: FEASIBILITY
+## Phase 2.5: FEASIBILITY — GO
 - Verdict: GO (5/5 checks passed)
 
-## Phase 5: PACKAGE
+## Phase 5: PACKAGE — 4 subtasks, 9 files
 # Supervisor Job: Add JWT Authentication
 - Subtasks: 4 (2 LAUNCHABLE, 2 BLOCKED)
 - Recommended workers: 2
 
-## Phase 5.5: PLAN REVIEW
+## Phase 5.5: PLAN REVIEW — PASS (attempt 1/3)
 - Reviewer decision: PASS
 - Issues found: 0
 - Attempts: 1/3
 
-## Phase 6: SAVE
-Brief saved: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
+## Phase 6: SAVE — saved .supervisor/jobs/pending/<date>-jwt-auth.md
 
-To execute: /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
+To execute: /supervisor job: .supervisor/jobs/pending/<date>-jwt-auth.md
 ```
 
 **When to Use:**

@@ -34,6 +34,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-019 | agents/launch-pad.md | q: Each named status rides in `LAUNCH_PAD_RESULT.summary` as its leading token | a can't-ask status is emitted | put it as the summary's leading token, never a new key (the key set is closed; the validator blocks unknown keys) | deterministic | prose | script:validate-launch-pad-result.py | GAP |
 | LP-020 | agents/launch-pad.md | q: **Mandatory plan review** — Phase 5.5 is non-skippable | Plan Review verdict | PASS enables save; NEEDS_HUMAN only with explicit user override; FAIL never | deterministic | prose | - | GAP |
 | LP-021 | agents/launch-pad.md | q: **Feasibility gate (Phase 2.5)** — soft gate | feasibility verdict | NO-GO stops the pipeline (user may override); CAUTION feeds Risk Assessment | deterministic | prose | - | GAP |
+| LP-542 | agents/launch-pad.md | q: **Phase lines:** every phase ends by running | every phase ends (a skipped phase included) | run launch-pad-phase.sh <id> <verdict>; its stdout is the phase line, never typed by hand | rule | global | script:launch-pad-phase.sh | test-launch-pad-phase.sh |
 | LP-022 | agents/launch-pad.md | h: ### Phase 1: VALIDATE (Environment Readiness) | start of run (unless --skip-validation) | run the environment checks and report blockers vs warnings | deterministic | prose | - | GAP |
 | LP-023 | agents/launch-pad.md | q: **BLOCKER** (must fix before proceeding): Dirty git state with conflicts, missing CLAUDE.md | conflicted dirty tree or missing CLAUDE.md | classify as BLOCKER; must fix before proceeding | deterministic | prose | - | GAP |
 | LP-024 | agents/launch-pad.md | q: **WARNING** (can proceed): Dirty git state (uncommitted changes) | uncommitted changes / no gh auth / orphaned worktrees / stale CLAUDE.md | classify as WARNING; proceed | deterministic | prose | - | GAP |
@@ -254,6 +255,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-235 | commands/launch-pad.md | q: **If environment has blockers:** output fix instructions | BLOCKERS | fix instructions, no save | deterministic | prose | - | GAP |
 | LP-236 | commands/launch-pad.md | q: **Can't-ask rule:** this run cannot ask when | flag set or running as a subagent | named can't-ask branches; must stay byte-identical to the agent's rule | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-237 | commands/launch-pad.md | q: **Never invent files/APIs/paths** — ask if unsure | unsure about a file/API/path | ask; never invent | rule | global | - | GAP |
+| LP-543 | commands/launch-pad.md | q: **Phase lines:** every phase ends with | every phase ends (command mirror) | run launch-pad-phase.sh <id> <verdict>; Phase 7 runs it before LAUNCH_PAD_RESULT | rule | global | script:launch-pad-phase.sh | test-launch-pad-phase.sh |
 | LP-238 | commands/launch-pad.md | q: **Feasibility gate (Phase 2.5)** — soft gate | NO-GO / CAUTION | stop (overridable) / feed Risk Assessment | deterministic | prose | - | GAP |
 | LP-239 | commands/launch-pad.md | h: ### Phase 1: VALIDATE (Environment Readiness) | start (command mirror) | environment checks | deterministic | prose | - | GAP |
 | LP-240 | commands/launch-pad.md | q: Report blockers (must fix) vs warnings (can proceed) | a check fails | BLOCKER must be fixed; WARNING may proceed | deterministic | prose | - | GAP |
@@ -998,9 +1000,9 @@ This file lists every branch (condition → action) and every standing rule stat
 
 ## Counts
 
-- rows: 541
+- rows: 543
 - deterministic: 343
 - judgment: 48
-- rule: 125
+- rule: 127
 - story: 25
 - GAP: 438

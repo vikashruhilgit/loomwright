@@ -159,7 +159,7 @@ in_order "$P25" "$P27" "$P3" && ok "### Phase 2.7: APPROACH between Phase 2.5 an
 PH="$(block "$LP" '^### Phase 2\.7: APPROACH' '^### Phase [^2]|^### Phase 2\.[^7]')"
 bhas "$PH" "A trigger → \`Read($DD_RUNTIME)\`" \
   && ok "trigger-gated Read( of design-decisions.md through the install root" || no "trigger-gated Read( of design-decisions.md through the install root"
-bhas "$PH" 'No trigger → print `## Phase 2.7: APPROACH — no trigger`, read nothing' && ok "the no-trigger literal" || no "the no-trigger literal"
+bhas "$PH" 'No trigger → run `launch-pad-phase.sh 2.7 no trigger`, read nothing' && ok "the no-trigger literal" || no "the no-trigger literal"
 bhas "$PH" 'header: "LP-APPROACH"' && bhas "$PH" '`Keep <chosen>` · `Switch to <runner-up>` · `Decide later`' \
   && ok "LP-APPROACH ask with its three options" || no "LP-APPROACH ask in the phase block"
 bhas "$PH" 'not a test, fixture, doc or evidence file' && bhas "$PH" 'ug fixes, docs, prompt-only edits and small changes never trigger' && ok "Phase 2.7 trigger list carries the T2 exclusion and the never-trigger rule" \

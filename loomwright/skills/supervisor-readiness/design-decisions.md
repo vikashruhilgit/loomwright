@@ -4,7 +4,7 @@ Read on demand by Launch Pad Phase 2.7 only when a trigger fires: it records the
 
 ## Triggers (closed list)
 
-Detect each from the named source only. No trigger ⇒ print `## Phase 2.7: APPROACH — no trigger` and emit no `## Design decisions` section.
+Detect each from the named source only. No trigger ⇒ run `launch-pad-phase.sh 2.7 no trigger` (prints `## Phase 2.7: APPROACH — no trigger`) and emit no `## Design decisions` section.
 
 | Trigger | Fires when | Detected from |
 |---|---|---|
