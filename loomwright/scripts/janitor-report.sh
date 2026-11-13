@@ -1012,10 +1012,10 @@ _jr_act_wave() {
   done
   if rmdir "$w" 2>/dev/null; then
     rmdir "$JR_PRIMARY-lanes" 2>/dev/null   # only when no other wave is left
-    echo "janitor: act $1 — wave-prune: ${out}deleted $n log file(s); removed $w"
+    echo "janitor: act $1 — wave-prune: ${out}deleted $n lane file(s) (stream logs and stdin files); removed $w"
   else
     left="$(cd "$w" 2>/dev/null && ls -A 2>/dev/null | tr '\n' ' ')"
-    echo "janitor: act $1 — wave-prune: ${out}deleted $n log file(s); $w kept — it still holds: ${left:-?}"
+    echo "janitor: act $1 — wave-prune: ${out}deleted $n lane file(s) (stream logs and stdin files); $w kept — it still holds: ${left:-?}"
   fi
   return 0
 }

@@ -64,7 +64,8 @@
 #        under a running run, with an extra entry, or with no lane table is none (each reason names why); a
 #        wave that still has a lane clone makes no wave row. `act --confirm` moves salvage/ to the archive,
 #        deletes the logs and removes the folder; an archive that already holds that wave's salvage is
-#        refused with nothing moved or deleted.
+#        refused with nothing moved or deleted; a lane table lane-status cannot read (no jq) leaves a done
+#        wave's folder report-only.
 #   leg_worktree_prune  a worktree record whose folder is gone is ONE wtp row (action worktree-prune, no
 #        sweep `kept other` row for it); `act --confirm` drops the record and keeps its branch.
 #   leg_siblings  a hand-made clone and a file named `<primary>-*` beside the primary are sib rows, action
@@ -85,7 +86,7 @@
 #   config-backup unjudgeable-lock fail-closed dropped (leg_cfg_unjudged), the mpf row's helper read dropped
 #   and its none action flipped to stop-unregistered (leg_meta_push_failed), act's empty-id arm deleted
 #   (leg_empty_id), the wave row's lane-clone guard, run-done check, extra-entry check and archive-exists
-#   refusal each dropped (leg_wave_residue), the wtp row no longer replacing the sweep row (leg_worktree_prune),
+#   refusal and unreadable-lane-status fail-closed each dropped (leg_wave_residue), the wtp row no longer replacing the sweep row (leg_worktree_prune),
 #   the sibling scan's registered-worktree exclusion dropped (leg_siblings).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -762,9 +763,13 @@ leg_wave_residue() {
   check "leg_wave_residue a wave that still has a lane clone makes no wave row" eq "$(nrows "$js" '.what == "wave folder fx-wave"')" 0
   out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
   check "leg_wave_residue act --confirm archives salvage/, deletes the logs and removes the folder" \
-    eval 'has "$out" "janitor: act $id — wave-prune: archived salvage/ to $arch/w-done/salvage; deleted 4 log file(s); removed $P-lanes/w-done" && [ ! -e "$P-lanes/w-done" ] && [ -f "$arch/w-done/salvage/L1-removed-x/run.md" ]'
+    eval 'has "$out" "janitor: act $id — wave-prune: archived salvage/ to $arch/w-done/salvage; deleted 4 lane file(s) (stream logs and stdin files); removed $P-lanes/w-done" && [ ! -e "$P-lanes/w-done" ] && [ -f "$arch/w-done/salvage/L1-removed-x/run.md" ]'
   check "leg_wave_residue ... and leaves every other wave folder as it was" \
     eval '[ -f "$P-lanes/w-run/L1.stream.log" ] && [ -f "$P-lanes/w-odd/notes.txt" ] && [ -d "$P-lanes/fx-wave/L1" ] && [ -f "$P-lanes/w-notable/L1.stream.log" ]'
+  # fail CLOSED: with lane-status unreadable (no jq) a done wave's folder is none, never wave-prune
+  out="$(env LOOMWRIGHT_JQ_BIN="$WORK/no-such-jq" LOOMWRIGHT_PROC_PS_SNAPSHOT="$SNAP" CI= bash "$S" --root "$P" 2>/dev/null)"
+  check "leg_wave_residue a lane table lane-status cannot read leaves the wave report-only (none, 'could not be read')" \
+    eval 'has "$(grep -A4 "| wave folder w-dup\$" <<<"$out")" "action: none — report only — \`lane-status w-dup.md\` could not be read" && ! has "$out" "wave-prune — every lane is removed"'
   did="$(row_id "$js" '.what == "wave folder w-dup" and .action == "wave-prune"')"
   out="$(jr act --confirm --root "$P" "$did" 2>/dev/null)"
   check "leg_wave_residue an archive already holding that wave's salvage refuses: nothing moved or deleted" \
@@ -931,6 +936,8 @@ mk_mutant waveodd sub 'elif [ -n "$odd" ]; then' 'elif false; then'
 run_mutant "the wave row's extra-entry check dropped (a folder with unknown files offered for wave-prune)" leg_wave_residue
 mk_mutant wavearch del '[ ! -e "$dest/salvage" ] || { echo "janitor: refused $1'
 run_mutant "wave-prune's archive-exists refusal dropped (salvage nested into an older archive)" leg_wave_residue
+mk_mutant waveunread sub 'elif case "$closed" in *" $parent "*) false ;; *) true ;; esac; then' 'elif false; then'
+run_mutant "the wave row's fail-closed on an unreadable lane-status dropped (wave-prune offered unjudged)" leg_wave_residue
 mk_mutant wtpdup sub 'case "$NL$pset$NL" in *"$NL$subj$NL"*) continue ;; esac' ':'
 run_mutant "the wtp row no longer replaces the sweep's row (a prunable record listed twice)" leg_worktree_prune
 mk_mutant sibwt sub 'case "$NL$wts$NL" in *"$NL$f$NL"*) continue ;; esac' ':'
