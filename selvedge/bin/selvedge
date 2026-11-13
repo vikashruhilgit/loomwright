@@ -71,6 +71,9 @@ cmd_install_cli() {
     printf 'selvedge: linked %s -> %s\n' "$dest" "$SELF"
     [ -z "$old" ] || printf 'selvedge: replaced the previous link (it pointed to %s)\n' "$old"
   fi
+  # The target sits in a per-release plugin folder; an update installs a new folder, so the link
+  # keeps running the old copy until it is re-pointed.
+  printf 'selvedge: note: re-run `selvedge install-cli` after each plugin update (the link points at this installed copy)\n'
   case ":${PATH:-}:" in
     *":$dest_dir:"*) ;;
     *) printf 'selvedge: note: %s is not on your PATH; add it to run `selvedge` by name\n' "$dest_dir" ;;

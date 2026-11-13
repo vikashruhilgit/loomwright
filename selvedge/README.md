@@ -28,12 +28,18 @@ measured. Evidence and the owner-runnable check: [`docs/cli-discovery.md`](docs/
 `$HOME/.local/bin/selvedge` (move that file aside first). If `$HOME/.local/bin` is not on your
 `PATH`, it says so.
 
+**Re-run `selvedge install-cli` after every `/plugin update`.** The link points at the installed
+copy's real path, which sits in a per-release folder of the plugin cache. An update installs a new
+folder, so until you re-run it the link keeps running the old CLI (`selvedge --version` shows the
+old version), and it breaks once the old folder is cleaned up. `install-cli` prints this reminder
+each time it runs.
+
 ## CLI
 
 ```
 selvedge                 # version and the command list
 selvedge --version       # selvedge <version>, read from .claude-plugin/plugin.json at run time
-selvedge install-cli     # link the CLI into $HOME/.local/bin
+selvedge install-cli     # link the CLI into $HOME/.local/bin (re-run after each plugin update)
 ```
 
 The CLI needs only bash and standard userland tools (no `jq`); it resolves its own real path

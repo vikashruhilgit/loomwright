@@ -56,9 +56,12 @@ out="$(bash "$CLI" install-cli 2>&1)"; rc=$?
   && ok "install-cli creates $HOME/.local/bin/selvedge -> bin/selvedge" || ko "install-cli: rc=$rc link='$(readlink "$dest" 2>/dev/null)' out='$out'"
 grep -qF "$dest" <<<"$out" && ok "install-cli prints what it did" || ko "install-cli output does not name $dest: '$out'"
 grep -qF "is not on your PATH" <<<"$out" && ok "install-cli says when \$HOME/.local/bin is not on PATH" || ko "no PATH note: '$out'"
+rerun_note='re-run `selvedge install-cli` after each plugin update'
+grep -qF "$rerun_note" <<<"$out" && ok "install-cli (link created) says to re-run it after a plugin update" || ko "no re-run note on create: '$out'"
 out="$(PATH="$HOME/.local/bin:$PATH" bash "$CLI" install-cli 2>&1)"; rc=$?
 { [ "$rc" -eq 0 ] && [ -L "$dest" ] && grep -qF "already links" <<<"$out"; } \
   && ok "a second install-cli run succeeds and says it had nothing to do" || ko "second install-cli: rc=$rc out='$out'"
+grep -qF "$rerun_note" <<<"$out" && ok "install-cli (already linked) says to re-run it after a plugin update" || ko "no re-run note on re-run: '$out'"
 grep -qF "is not on your PATH" <<<"$out" && ko "PATH note printed although \$HOME/.local/bin is on PATH: '$out'" || ok "no PATH note when \$HOME/.local/bin is on PATH"
 
 # Through the symlink: the CLI resolves its real path, so the manifest is still found.

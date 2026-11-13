@@ -13,6 +13,12 @@ Measured 2026-11-13 on macOS with Claude Code `2.1.319`, from the qa-split/01 wo
 **`install-cli` is REQUIRED**, not optional: it is optional only when both cases are measured
 `yes`, and the installed-CLI case is not measured. The README says so.
 
+The `install-cli` link points at one installed copy's real path, in a per-release folder of the
+plugin cache, so it must be re-run after every plugin update: otherwise it keeps running the old
+CLI and breaks once that folder is cleaned up. Because `~/.local/bin` usually comes before the
+plugin's own `bin/` on `PATH` (Case 1 below), a stale link also shadows the updated plugin's CLI.
+`install-cli` prints this reminder each time it runs, and the README says so.
+
 Background (project memory `desktop-vs-cli-plugin-install-location`): the desktop app loads a
 plugin by passing an explicit `--plugin-dir <cache path>` on its own command line, while a bare CLI
 session loads installed plugins implicitly from user-scope `enabledPlugins`. They are different
