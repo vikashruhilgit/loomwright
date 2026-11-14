@@ -11,6 +11,7 @@
 //   /redirect?to=U    302 to U
 //   /form307?to=U     a page that auto-submits a form POST to /r307?to=U
 //   /r307?to=U        307 to U (the browser re-sends the POST)
+//   /r301, /r302, /r303, /r308 ?to=U   that status to U
 //   /sw.js            a service worker script
 //   anything else     200 text naming the server, method and path
 // A WebSocket upgrade is recorded and then refused (the socket is destroyed).
@@ -47,9 +48,10 @@ export async function startServer(name, logDir) {
       res.end('redirect\n');
       return;
     }
-    if (url.pathname === '/r307' && to) {
-      res.writeHead(307, { location: to, 'content-type': 'text/plain' });
-      res.end('redirect 307\n');
+    const rcode = /^\/r(30[12378])$/.exec(url.pathname);
+    if (rcode && to) {
+      res.writeHead(Number(rcode[1]), { location: to, 'content-type': 'text/plain' });
+      res.end(`redirect ${rcode[1]}\n`);
       return;
     }
     if (url.pathname === '/form307' && to) {

@@ -113,6 +113,8 @@ if run_driver nobrowser "$TMP/logs-nb" "$NB"; then
     'R.check_request.remote_post_allowed === "allow" && R.check_request.local_post === "allow"' 'R.check_request'
   check "$NB" "route layer: a listed remote without allow_remote is refused; data: is allowed; ftp: is refused" \
     'R.check_request.remote_without_allow_remote.startsWith("host_not_allowed") && R.check_request.data_url === "allow" && R.check_request.ftp_url.startsWith("host_not_allowed")' 'R.check_request'
+  check "$NB" "route layer: the redirect method rule matches Chromium — 307/308 keep the method; 301/302 keep it except POST → GET; 303 makes all but HEAD a GET; other statuses are not followed" \
+    'const m = R.next_method; m["307 POST"] === "POST" && m["308 PUT"] === "PUT" && m["307 DELETE"] === "DELETE" && m["301 POST"] === "GET" && m["302 POST"] === "GET" && m["301 PUT"] === "PUT" && m["302 PUT"] === "PUT" && m["301 DELETE"] === "DELETE" && m["302 PATCH"] === "PATCH" && m["302 PROPFIND"] === "PROPFIND" && m["302 GET"] === "GET" && m["303 POST"] === "GET" && m["303 PUT"] === "GET" && m["303 DELETE"] === "GET" && m["303 HEAD"] === "HEAD" && m["303 GET"] === "GET" && m["300 PUT"] === null && m["304 PUT"] === null && m["200 PUT"] === null' 'R.next_method'
   check "$NB" "AC17 ERR_PROXY_CONNECTION_FAILED maps to proxy_unavailable; other net errors map to nothing" \
     'R.failure_reasons.proxy_failed === R.reason_values.proxy_unavailable && R.failure_reasons.other === null' 'R.failure_reasons'
 fi
@@ -180,6 +182,9 @@ check "$B" "AC17 a listed page loads, the proxy is killed, then a LISTED navigat
 check "$B" "AC17 after the kill nothing goes direct: A served only the first load, the unlisted U records zero connections" \
   'const s = R.ac17_kill; events(s.logs.A).filter((e) => e.event === "request").length === 1 && s.fetchU.startsWith("err:") && zero(s.logs.U)' 'R.ac17_kill'
 
+check "$B" "AC17 with a listed remote (the route layer sends a POST itself): after the kill a listed POST fails and is BLOCKED proxy_unavailable at layer proxy exactly once; a GET in the same run is too; A served only the first load" \
+  'const s = R.ac17_kill_post; const A = "localhost:" + s.ports.A; const pu = (suffix) => s.blocks.filter((b) => b.reason === "proxy_unavailable" && b.layer === "proxy" && b.host === A && b.url.endsWith(suffix)); s.before.status === 200 && s.post.startsWith("err:") && pu("/x-post").length === 1 && pu("/x-post")[0].method === "POST" && s.after.ok === false && pu("/again").length === 1 && s.blocks.length === 2 && events(s.logs.A).filter((e) => e.event === "request").length === 1' 'R.ac17_kill_post'
+
 echo "-- AC18 ?next=localhost is not localhost"
 check "$B" "AC18 route layer: https://shop.example.com/?next=localhost is BLOCKED host_not_allowed naming shop.example.com at layer route; the proxy logged nothing" \
   "$P"' const s = R.ac18_route; s.nav.ok === false && at(s, "route", "host_not_allowed", "shop.example.com:443").length === 1 && proxyFor(s, "shop.example.com:443").length === 0 && s.proxyBlocks.length === 0' 'R.ac18_route'
@@ -199,6 +204,14 @@ check "$B" "AC19 ac19_redirect_direct: A received the POST to /r307 exactly once
   'const s = R.ac19_redirect_direct; events(s.logs.A).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1' 'R.ac19_redirect_direct'
 check "$B" "AC19 ac19_redirect_chain: each local hop (A /r307, B /r307) received the POST exactly once before the remote hop was refused" \
   'const s = R.ac19_redirect_chain; events(s.logs.A).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1 && events(s.logs.B).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1' 'R.ac19_redirect_chain'
+for name in ac19_redirect_direct_301_302 ac19_redirect_chain_301_302; do
+  check "$B" "AC19 $name: a PUT, DELETE or PATCH 301/302-redirected to a listed HTTPS remote is refused remote_mutation_refused at layer route before the hop is sent; the proxy saw no CONNECT to the remote" \
+    "const s = R.$name; s.first.status === 200 && s.arms.length === 4 && s.arms.every((a) => a.out.startsWith('err:') && s.blocks.filter((b) => b.layer === 'route' && b.reason === 'remote_mutation_refused' && b.method === a.method && b.host === s.remote && b.url === a.target).length === 1) && !s.proxyBlocks.some((b) => b.host === s.remote) && !s.proxyLog.some((e) => e.origin.includes('remote.selvedge.test')) && !s.seen.some((x) => x.url.startsWith('https://remote.selvedge.test'))" "R.$name"
+done
+check "$B" "AC19 ac19_redirect_chain_301_302: each local hop (A /r30x, B /r30y) received its request exactly once, with the method kept" \
+  'const s = R.ac19_redirect_chain_301_302; const one = (f, m, code) => events(f).filter((e) => e.method === m && e.path.startsWith("/r" + code + "?")).length === 1; s.arms.every((a) => one(s.logs.A, a.method, a.s1) && one(s.logs.B, a.method, a.s2))' 'R.ac19_redirect_chain_301_302'
+check "$B" "AC19 a local-only same-origin 302 → 301 PUT chain completes: the page gets A's PUT /landing response, every hop sent once with PUT, nothing blocked" \
+  'const s = R.ac19_redirect_local_301_302; const a = events(s.logs.A); s.put === "ok:200:fixture A PUT /landing" && a.filter((e) => e.method === "PUT" && e.path.startsWith("/r302")).length === 1 && a.filter((e) => e.method === "PUT" && e.path.startsWith("/r301")).length === 1 && a.filter((e) => e.method === "PUT" && e.path === "/landing").length === 1 && s.blocks.length === 0' 'R.ac19_redirect_local_301_302'
 check "$B" "AC19 a local-only 307 chain (A → B → A) under the same config completes: the page gets A's /landing response, every hop sent once, nothing blocked; a GET is continued as before" \
   'const s = R.ac19_redirect_local; s.final.status === 200 && String(s.final.body).includes("fixture A POST /landing") && events(s.logs.A).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1 && events(s.logs.B).filter((e) => e.method === "POST").length === 1 && events(s.logs.A).filter((e) => e.method === "POST" && e.path === "/landing").length === 1 && s.blocks.length === 0 && s.get === "ok:200" && events(s.logs.A).filter((e) => e.path === "/plain-get").length === 1' 'R.ac19_redirect_local'
 check "$B" "AC19 service workers are blocked: register() never yields a ready worker, /sw.js is never fetched, nothing controls the page" \

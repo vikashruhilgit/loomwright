@@ -13,20 +13,24 @@
 //          including over https, where the proxy sees host and port only.
 //
 // Redirects: Chromium follows a redirect without showing the next hop to `context.route`, and over
-// https the proxy sees only CONNECT host:port, so neither layer would see the method of a 307/308
-// hop (which re-sends the body with the same method). So when a remote origin is listed and
-// allow_remote_mutation is off, a non-read request the route layer allows is not continued: the
-// route layer sends it itself (`route.fetch({ maxRedirects: 0 })`, through the same proxy), checks
-// every 307/308 Location with checkRequest before sending the next hop, and fulfills the page with
-// the final response. A hop to a remote origin is refused remote_mutation_refused (layer 'route')
-// before it is sent. Cost of that path: the page sees the final response under the URL it asked
-// for (not the redirect target). Every other request is continued untouched (sent once, by Chromium).
+// https the proxy sees only CONNECT host:port, so neither layer would see the method of a redirect
+// hop. Chromium keeps the method and body on 307/308, and on 301/302 for every method but POST
+// (POST becomes GET); 303 makes every method but HEAD a GET (nextRedirectMethod). So when a remote
+// origin is listed and allow_remote_mutation is off, a non-read request the route layer allows is
+// not continued: the route layer sends it itself (`route.fetch({ maxRedirects: 0 })`, through the
+// same proxy), checks every 3xx Location whose next method is not GET, HEAD or OPTIONS with
+// checkRequest before sending that hop, and fulfills the page with the final response. A hop to a
+// remote origin is refused remote_mutation_refused (layer 'route') before it is sent. A redirect
+// whose next hop is a read is fulfilled to the page and Chromium follows it (the proxy checks its
+// host). Cost of that path: the page sees the final response under the URL it asked for (not the
+// redirect target). Every other request is continued untouched (sent once, by Chromium).
 // Service workers are blocked (`serviceWorkers: 'block'`), so no worker can answer or issue
 // requests outside the route layer.
 //
 // Each refusal is recorded as { reason, origin, host, layer: 'route' | 'proxy', … } in the guard's
-// `blocks`. A request that fails because the proxy is gone (ERR_PROXY_CONNECTION_FAILED) is recorded
-// as proxy_unavailable: the browser fails closed, it never falls back to a direct connection.
+// `blocks`. A request that fails because the proxy is gone (ERR_PROXY_CONNECTION_FAILED, or a
+// route.fetch that cannot reach the closed proxy) is recorded as proxy_unavailable (layer 'proxy'):
+// the browser fails closed, it never falls back to a direct connection.
 //
 // Playwright is injected: the caller passes its own `chromium` (openGuardedContext({ chromium, … })).
 // This module never imports `playwright`, so the runner decides how it is packaged.
@@ -41,11 +45,20 @@ export const LOOPBACK_ENV = 'PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK
 // these methods and no other (proxy.mjs keeps its own; the layers are independent).
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-// Redirect statuses that re-send the method and body unchanged (301/302/303 turn a write into GET).
-const METHOD_PRESERVING_REDIRECTS = new Set([307, 308]);
-
-// The most 307/308 hops the route layer follows for one request (Chromium's own limit is 20).
+// The most redirect hops the route layer follows for one request (Chromium's own limit is 20).
 const MAX_REDIRECT_HOPS = 20;
+
+// The method Chromium sends on the hop after a redirect with this status (the Fetch spec rule), or
+// null when Chromium does not follow the status. 307/308 keep the method and body; 301/302 keep
+// them unless the method is POST (then GET, no body); 303 turns every method but HEAD into GET.
+// The result is upper-cased for the route layer's checks.
+export function nextRedirectMethod(status, method) {
+  const m = String(method).toUpperCase();
+  if (status === 307 || status === 308) return m;
+  if (status === 301 || status === 302) return m === 'POST' ? 'GET' : m;
+  if (status === 303) return m === 'HEAD' ? 'HEAD' : 'GET';
+  return null;
+}
 
 // URL schemes that never open a network connection; the route layer lets them through.
 const NO_NETWORK_SCHEMES = new Set(['data:', 'blob:', 'about:']);
@@ -114,9 +127,9 @@ export function checkRequest(config, url, method) {
   return { allow: true };
 }
 
-// True when a request that the route layer allowed could be redirected (307/308, same method and
-// body) to a remote origin that refuses mutations: a remote origin is listed and allowed, mutations
-// to it are not, and the method is not read-only.
+// True when a request that the route layer allowed could be redirected, with its method kept
+// (nextRedirectMethod), to a remote origin that refuses mutations: a remote origin is listed and
+// allowed, mutations to it are not, and the method is not read-only.
 export function needsRedirectCheck(config, method) {
   if (SAFE_METHODS.has(String(method).toUpperCase())) return false;
   if (config.allow_remote_mutation === true || config.allow_remote !== true) return false;
@@ -124,6 +137,14 @@ export function needsRedirectCheck(config, method) {
     const t = parseOrigin(o);
     return t !== null && !isLocalOrigin(t);
   });
+}
+
+// True when a route.fetch failed because the guard's proxy is gone: it was closed, or the connection
+// to its port was refused. Any other failure (a closed page, a refused CONNECT) is not proxy_unavailable.
+function proxyUnreachable(proxy, err) {
+  if (proxy.closed === true) return true;
+  const text = String(err && err.message ? err.message : err);
+  return text.includes('ECONNREFUSED') && new RegExp(`127\\.0\\.0\\.1:${proxy.port}(?!\\d)`).test(text);
 }
 
 function originAndHost(url) {
@@ -177,6 +198,8 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
       const method = request.method();
       seen.push(Object.freeze({ url, method, layer: 'route' }));
       const decision = routeLayer === false ? { allow: true } : checkRequest(config, url, method);
+      let hopUrl = url;
+      let fetching = false;
       try {
         if (!decision.allow) {
           blocks.push(Object.freeze({ reason: decision.reason, origin: decision.origin, host: decision.host, layer: 'route', method, url }));
@@ -187,13 +210,20 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
           await route.continue();
           return;
         }
-        // Send it ourselves, one hop at a time, so no 307/308 hop leaves unchecked. Each hop is sent
-        // exactly once; the request is never also continued.
-        let hopUrl = url;
+        // Send it ourselves, one hop at a time, so no hop that keeps a non-read method leaves
+        // unchecked. Each hop is sent exactly once; the request is never also continued. A hop is
+        // followed here only when its next method is not a read, and nextRedirectMethod changes a
+        // method only into a read, so every followed hop re-sends the original method and body
+        // (route.fetch's default).
+        let hopMethod = String(method).toUpperCase();
         for (let hop = 0; ; hop += 1) {
+          fetching = true;
           const response = await route.fetch(hop === 0 ? { maxRedirects: 0 } : { url: hopUrl, maxRedirects: 0 });
+          fetching = false;
           const location = response.headers().location;
-          if (!METHOD_PRESERVING_REDIRECTS.has(response.status()) || !location) {
+          const nextMethod = location ? nextRedirectMethod(response.status(), hopMethod) : null;
+          if (nextMethod === null || SAFE_METHODS.has(nextMethod)) {
+            // not a redirect Chromium follows, or one whose next hop is a read: hand it to the page
             await route.fulfill({ response });
             return;
           }
@@ -203,9 +233,9 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
           } catch {
             next = location;
           }
-          const hopDecision = checkRequest(config, next, method);
+          const hopDecision = checkRequest(config, next, nextMethod);
           if (!hopDecision.allow) {
-            blocks.push(Object.freeze({ reason: hopDecision.reason, origin: hopDecision.origin, host: hopDecision.host, layer: 'route', method, url: next, redirectedFrom: hopUrl }));
+            blocks.push(Object.freeze({ reason: hopDecision.reason, origin: hopDecision.origin, host: hopDecision.host, layer: 'route', method: nextMethod, url: next, redirectedFrom: hopUrl }));
             await route.abort('blockedbyclient');
             return;
           }
@@ -213,12 +243,20 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
             await route.abort('failed');
             return;
           }
-          seen.push(Object.freeze({ url: next, method, layer: 'route', redirectedFrom: hopUrl }));
+          seen.push(Object.freeze({ url: next, method: nextMethod, layer: 'route', redirectedFrom: hopUrl }));
           hopUrl = next;
+          hopMethod = nextMethod;
         }
-      } catch {
+      } catch (err) {
         // the page or context closed while the request was in flight, or a hop could not be sent:
-        // fail the request (never continue it, which would send it a second time)
+        // fail the request (never continue it, which would send it a second time). A hop that could
+        // not be sent because the proxy is gone is labelled proxy_unavailable, as the browser's own
+        // ERR_PROXY_CONNECTION_FAILED is; the abort below reports net::ERR_FAILED, which the
+        // requestfailed listener maps to nothing, so it is recorded once.
+        if (fetching && proxyUnreachable(proxy, err)) {
+          const { origin, host } = originAndHost(hopUrl);
+          blocks.push(Object.freeze({ reason: REASONS.proxy_unavailable, origin, host, layer: 'proxy', method, url: hopUrl }));
+        }
         try {
           await route.abort('failed');
         } catch {

@@ -150,12 +150,16 @@ refusal names its layer:
    blocked.
 
    **Redirects.** Chromium follows a redirect without showing the next hop to the route layer, and
-   over https the proxy sees only the CONNECT, so neither would see the method of a 307/308 hop
-   (which re-sends the body with the same method). So when a remote origin is listed and
-   `allow_remote_mutation` is off, the route layer sends a non-read request itself, one hop at a
-   time through the same proxy, checks each 307/308 target before sending it, and refuses a hop to
-   a remote origin (`remote_mutation_refused`, layer `route`). The cost: on that path the page gets
-   the final response under the URL it asked for, not the redirect target's URL. Every other
+   over https the proxy sees only the CONNECT, so neither would see the method of a redirect hop.
+   Chromium keeps the method and body on a 307 or 308, and on a 301 or 302 for every method except
+   POST (which becomes GET); a 303 turns every method except HEAD into GET. So when a remote origin
+   is listed and `allow_remote_mutation` is off, the route layer sends a non-read request itself,
+   one hop at a time through the same proxy, checks the target of every redirect whose next hop
+   keeps a method other than GET, HEAD or OPTIONS before sending it, and refuses such a hop to a
+   remote origin (`remote_mutation_refused`, layer `route`). A redirect whose next hop is a read is
+   handed to the page and Chromium follows it through the proxy. If the proxy is gone, a request
+   the route layer sends fails `proxy_unavailable` like any other. The cost: on that path the page
+   gets the final response under the URL it asked for, not the redirect target's URL. Every other
    request is passed on untouched.
 
 Playwright sends localhost through the proxy only while
@@ -169,8 +173,8 @@ What the guard does **not** cover:
   remote.
 - **HTTPS and WSS are checked by host and port only.** They are tunnelled (CONNECT), so the proxy
   never sees the path or method; there is no TLS interception. The route layer adds the method
-  check for https requests the page makes, including the 307/308 hops of a non-read request
-  (above).
+  check for https requests the page makes, including the redirect hops that keep a non-read
+  method (above).
 
 ## BLOCKED and config reasons
 
@@ -181,7 +185,7 @@ and usage reasons print on stderr. Both exit 2.
 |---|---|---|
 | `host_not_allowed` | BLOCKED | the browser asked for an origin not in `origins` (exact scheme, host and port) |
 | `remote_resolves_private` | BLOCKED | a listed remote host resolved to a private, loopback, link-local or unspecified address |
-| `remote_mutation_refused` | BLOCKED | a method other than GET, HEAD or OPTIONS to a remote origin (directly or as a 307/308 hop) without `allow_remote_mutation` |
+| `remote_mutation_refused` | BLOCKED | a method other than GET, HEAD or OPTIONS to a remote origin (directly or as a redirect hop that keeps the method: 307/308, or 301/302 for any method but POST) without `allow_remote_mutation` |
 | `proxy_loopback_disabled` | BLOCKED | `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set, so localhost would skip the proxy |
 | `proxy_unavailable` | BLOCKED | the guard's proxy is gone; the request failed instead of going direct |
 | `env_hooks_unapproved` | BLOCKED | the hooks have no approval matching their current sha256 for this repo; run `selvedge env approve` |

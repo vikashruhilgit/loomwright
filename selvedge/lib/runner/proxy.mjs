@@ -186,12 +186,12 @@ function filterHeaders(headers) {
 }
 
 // startProxy({ config, lookup?, dial?, host?, port?, onBlock? }) → Promise<{ port, url, blocks, log,
-// lookups, close() }>.
+// lookups, closed, close() }>.
 //   config  a loaded selvedge config ({ origins, allow_remote, allow_remote_mutation })
 //   lookup  dns.promises.lookup-compatible; injected by tests only (default node:dns/promises)
 //   dial    (address, port) → net.Socket; injected by tests only (default net.connect)
 // `blocks` holds every refusal, `log` every request the proxy received, `lookups` the number of
-// lookups it ran. close() stops listening and destroys every open socket (the browser then sees
+// lookups it ran, `closed` whether close() was called. close() stops listening and destroys every open socket (the browser then sees
 // ERR_PROXY_CONNECTION_FAILED, never a direct connection).
 export async function startProxy({ config, lookup = dnsLookup, dial = defaultDial, host = '127.0.0.1', port = 0, onBlock } = {}) {
   if (!config || !Array.isArray(config.origins)) throw new TypeError('startProxy needs a loaded config with an origins list');
@@ -463,6 +463,9 @@ export async function startProxy({ config, lookup = dnsLookup, dial = defaultDia
     log,
     get lookups() {
       return state.lookups;
+    },
+    get closed() {
+      return state.closed;
     },
     close,
   };

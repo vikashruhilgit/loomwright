@@ -112,6 +112,15 @@ if (mode === 'nobrowser') {
     post_mutation_allowed: G.needsRedirectCheck({ ...remote, allow_remote_mutation: true }, 'POST'),
     post_without_allow_remote: G.needsRedirectCheck({ origins: remote.origins }, 'POST'),
   };
+  // Chromium's redirect method rule, as a table: [status, method] → the next hop's method.
+  results.next_method = Object.fromEntries(
+    [
+      [307, 'POST'], [308, 'PUT'], [307, 'DELETE'],
+      [301, 'POST'], [302, 'POST'], [301, 'PUT'], [302, 'PUT'], [301, 'DELETE'], [302, 'PATCH'], [302, 'PROPFIND'], [302, 'GET'],
+      [303, 'POST'], [303, 'PUT'], [303, 'DELETE'], [303, 'HEAD'], [303, 'GET'],
+      [300, 'PUT'], [304, 'PUT'], [200, 'PUT'],
+    ].map(([status, method]) => [`${status} ${method}`, G.nextRedirectMethod(status, method)]),
+  );
   results.failure_reasons = {
     proxy_failed: G.reasonForFailure('net::ERR_PROXY_CONNECTION_FAILED'),
     other: G.reasonForFailure('net::ERR_CONNECTION_REFUSED'),
@@ -232,6 +241,23 @@ if (mode === 'nobrowser') {
     const after = await nav(guard.page, `${A.origin}/again`);
     return { before, fetchU, after };
   });
+  // … and under a config with a listed remote and no allow_remote_mutation, where a POST is sent by
+  // the route layer itself (route.fetch), not by Chromium: that POST is labelled proxy_unavailable
+  // too, once, and so is a GET in the same run.
+  await scenario(
+    'ac17_kill_post',
+    {
+      config: ({ A }) => ({ origins: [A.origin, 'https://remote.selvedge.test:8443'], allow_remote: true, allow_remote_mutation: false }),
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    },
+    async (guard, { A }) => {
+      const before = await nav(guard.page, `${A.origin}/`);
+      await guard.proxy.close();
+      const post = await fetchIn(guard.page, `${A.origin}/x-post`, { method: 'POST', body: 'k=v' });
+      const after = await nav(guard.page, `${A.origin}/again`);
+      return { before, post, after };
+    },
+  );
 
   // AC18 — `?next=localhost` does not make shop.example.com local: the route layer refuses it.
   await scenario('ac18_route', { config: onlyA }, async ({ page }) => ({ nav: await nav(page, 'https://shop.example.com/?next=localhost') }));
@@ -284,6 +310,56 @@ if (mode === 'nobrowser') {
       },
     );
   }
+  // 301/302 keep every method but POST, so a PUT, DELETE or PATCH 301/302-redirected to the listed
+  // HTTPS remote is a remote mutation too: the route layer refuses that hop before it is sent.
+  // `direct` = A /r30x → remote; `chain` = A /r30x → listed local B /r30y → remote.
+  const ARMS_301_302 = [['PUT', 302, 301], ['DELETE', 301, 302], ['PATCH', 302, 302], ['PUT', 301, 302]];
+  for (const [name, viaB] of [['ac19_redirect_direct_301_302', false], ['ac19_redirect_chain_301_302', true]]) {
+    await scenario(
+      name,
+      {
+        names: ['A', 'B'],
+        config: ({ A, B }) => ({ origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
+        lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      },
+      async ({ page }, { A, B }) => {
+        const first = await nav(page, `${A.origin}/`);
+        const arms = [];
+        for (const [method, s1, s2] of ARMS_301_302) {
+          const target = `${REMOTE_TLS}/api/${method.toLowerCase()}-${s1}`;
+          const to = viaB ? `${B.origin}/r${s2}?to=${encodeURIComponent(target)}` : target;
+          const out = await fetchIn(page, `${A.origin}/r${s1}?to=${encodeURIComponent(to)}`, { method, body: 'k=v' });
+          arms.push({ method, s1, s2, target, out });
+        }
+        return { first, arms, remote: 'remote.selvedge.test:8443' };
+      },
+    );
+  }
+  // … a local-only same-origin 302 → 301 PUT chain under the same config completes: every hop sent
+  // once with the method kept, the page gets the final response.
+  await scenario(
+    'ac19_redirect_local_301_302',
+    {
+      names: ['A', 'B'],
+      config: ({ A, B }) => ({ origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    },
+    async ({ page }, { A }) => {
+      const first = await nav(page, `${A.origin}/`);
+      const to = `${A.origin}/r301?to=${encodeURIComponent(`${A.origin}/landing`)}`;
+      const put = await page
+        .evaluate(async (u) => {
+          try {
+            const r = await fetch(u, { method: 'PUT', body: 'k=v' });
+            return `ok:${r.status}:${(await r.text()).trim()}`;
+          } catch (e) {
+            return `err:${e && e.name}`;
+          }
+        }, `${A.origin}/r302?to=${encodeURIComponent(to)}`)
+        .catch((e) => `evalerr:${errText(e)}`);
+      return { first, put };
+    },
+  );
   // … and a local-only 307 chain (A → B → A) under the same config still completes, each hop sent
   // exactly once (no double send), and the page gets the final response.
   await scenario(

@@ -23,8 +23,9 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   one DNS lookup per remote connection with private/loopback/link-local results refused, including
   NAT64 and 6to4 addresses that embed a private IPv4, the validated address dialled) and a
   `context.route` second layer (`lib/runner/route-guard.mjs`, service workers blocked, Playwright
-  injected by the caller) that also checks each 307/308 hop of a non-read request when a remote
-  origin is listed without `allow_remote_mutation`. Every refusal is a named BLOCKED
+  injected by the caller) that also checks each redirect hop that keeps a non-read method (307/308,
+  and 301/302 for any method but POST) when a remote origin is listed without
+  `allow_remote_mutation`; a request it sends after the proxy is gone is `proxy_unavailable`. Every refusal is a named BLOCKED
   reason; the README's reasons table is checked against the code's list.
 - Tests: `test-env.sh`, `test-proxy.sh` and `test-route-guard.sh`, the last against real Chromium
   from a pinned Playwright installed into a selvedge-owned cache (`tests/lib/playwright-cache.sh`).
