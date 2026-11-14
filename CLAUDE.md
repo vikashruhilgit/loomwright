@@ -20,7 +20,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Plugin Layout
 
-The repo is a **marketplace wrapper** containing four sibling plugins (loomwright, stackpack, mysql-mcp, loomwright-lanes):
+The repo is a **marketplace wrapper** containing sibling plugins — loomwright, stackpack, mysql-mcp, loomwright-lanes and selvedge (the authoritative list is `.claude-plugin/marketplace.json`'s `plugins`):
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
 - Plugin manifest: `loomwright/.claude-plugin/plugin.json`
@@ -29,7 +29,7 @@ The repo is a **marketplace wrapper** containing four sibling plugins (loomwrigh
 - Skills: `loomwright/skills/` (42 skills, see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`
-- Sibling plugins: `stackpack/` (18 tech-stack reference skills), `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, pinned to an exact version) and `loomwright-lanes/` (optional `/lanes` pane over `/automate --parallel` lanes — a Claude Code mod that reaches Loomwright only through `lane-status` / `lane-feed` / `lane-answer`; nothing in `loomwright/` depends on it, `scripts/test-lanes-addon.sh`) — versions in each plugin's own `plugin.json`
+- Sibling plugins: `stackpack/` (18 tech-stack reference skills), `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, pinned to an exact version) and `loomwright-lanes/` (optional `/lanes` pane over `/automate --parallel` lanes — a Claude Code mod that reaches Loomwright only through `lane-status` / `lane-feed` / `lane-answer`; nothing in `loomwright/` depends on it, `scripts/test-lanes-addon.sh`) and `selvedge/` (evidenced PASS/FAIL per acceptance criterion; **releases on its own** — it bumps its own `plugin.json`, marketplace entry and `selvedge/CHANGELOG.md`, never a `changelog.d/` fragment, imports nothing from `loomwright/`, and its own gate `selvedge/tests/run.sh` runs in CI's `static` job) — versions in each plugin's own `plugin.json`
 
 > **Repo path vs. runtime path:** `loomwright/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `loomwright/...` paths from the user-project root; they only resolve for the plugin maintainer.
 

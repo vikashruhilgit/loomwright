@@ -3,7 +3,13 @@
 A feature PR does **not** edit `loomwright/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` or
 `CHANGELOG.md`. It adds one fragment here instead. Distinct fragment files never conflict, so two open PRs can no
 longer collide on the version number or on the CHANGELOG's top line. `bash scripts/bump-version.sh` turns the
-pending fragments into the bump.
+pending fragments into the bump. The one exception is a selvedge-only PR (below): it adds **no** fragment here.
+
+**A selvedge-only PR releases selvedge, never loomwright (decision D19).** `selvedge/` is a self-releasing sibling
+plugin. A branch whose changes, outside the files the bump owns, all sit under `selvedge/` adds no fragment here
+and does not bump loomwright. It releases selvedge by bumping `selvedge/.claude-plugin/plugin.json`, selvedge's
+entry in `.claude-plugin/marketplace.json` and `selvedge/CHANGELOG.md` together. A branch that also changes any
+other path follows the rules below unchanged.
 
 ## Fragment format
 
@@ -41,7 +47,8 @@ restores every file and exits 1. Preview with `--dry-run`.
 - **An unfolded fragment merged without a bump is legal.** The next bump folds it.
 
 **The rule is about content, not commit position.** At every commit, compared with `git merge-base HEAD origin/main`,
-a branch is in one of two states:
+a branch is in one of two states (a selvedge-only branch may only be in the first, and with no fragment of its
+own):
 
 - **Not bumped.** The versions in `plugin.json`, `marketplace.json` and `capabilities.json` and the whole of
   `CHANGELOG.md` equal the merge base's. Every fragment the merge base had is still present.
@@ -52,7 +59,12 @@ a branch is in one of two states:
 `bash scripts/check-version-bump.sh` checks this. It is a thin wrapper over `bash scripts/bump-version.sh --check`,
 and CI runs it on every PR with a deepened checkout. It reads the folded fragments back from the branch's history.
 Exit 1 means the rule is broken. Exit 2 means it cannot check (no base ref, or a shallow clone), and CI treats that
-as a failure.
+as a failure. On a selvedge-only branch it also fails on a fragment the merge base did not have, or on any
+loomwright version change. Only committed paths can make a branch more than selvedge-only, so an uncommitted or
+untracked file elsewhere never makes a local check pass where CI's would fail. A fragment the merge base already had
+stays legal there, unedited: the next loomwright bump folds it. Editing it fails, because that changes loomwright's
+next release; deleting it fails as in any not-bumped branch. Fragments are read from the working tree, as in every
+rule here.
 
 **A fragment added after the bump** (for example, by a heal fix) is folded by **re-running**
 `bash scripts/bump-version.sh`. On a branch that already carries a bump, the script **re-folds**:

@@ -21,7 +21,8 @@
 #              refuse it (a contract already stale before the bump).
 #   --refold   re-fold ONLY: no-op (exit 0) unless this branch already carries a bump AND a fragment
 #              is pending; then it folds every fragment into that ONE bump (see RE-FOLD below).
-#   --check    read-only content gate (see CHECK below); exit 0 consistent, 1 violated, 2 cannot check.
+#   --check    read-only content gate (see CHECK and SCOPE below); exit 0 consistent, 1 violated,
+#              2 cannot check.
 #   --base     the ref whose merge base with HEAD is "the base" (default $BUMP_VERSION_BASE, else
 #              origin/main). CI passes a dedicated fetched ref.
 #
@@ -42,6 +43,21 @@
 # commit in B..HEAD, then searches for the subset (in filename order, at most one blob per name)
 # whose fold is the CHANGELOG's new entry. Exit 2 (fail CLOSED) when B is unresolvable or the
 # clone is shallow (the blobs may be missing) — CI deepens its checkout and passes --base.
+#
+# SCOPE (--check only; the plain bump and --refold never apply it): a sibling plugin named in
+# SELF_RELEASING_PLUGINS releases on its own (its own .claude-plugin/plugin.json version and its
+# own CHANGELOG.md, D19), so its changes must never move loomwright's version. The branch's changed
+# paths against B (renames split into both sides), minus the bump-owned paths (plugin.json,
+# marketplace.json, CHANGELOG.md, capabilities.json, changelog.d/*), are classified: when at least
+# one is under a self-releasing plugin dir and no COMMITTED one is outside one, the branch is
+# selvedge-only (uncommitted and untracked paths count only toward the self-releasing side, so an
+# uncommitted path never makes the branch look mixed locally; fragments and version files are still
+# read from the working tree, as in every --check rule), and then a pending fragment absent from B,
+# a fragment B had whose content changed, or a loomwright version different from B's, is a
+# violation (exit 1, one finding per kind, naming the plugin-side fix). A branch that also changes
+# any other path is checked exactly as before. A fragment B already had stays legal, unedited, on a
+# selvedge-only branch (main's pending fragment; the next loomwright bump folds it); deleting one is
+# the not-bumped rule's finding (or the bump's), never a second scope finding.
 #
 # RE-FOLD (--refold, and a plain run on a branch that already carries a bump): a fragment added
 # after the bump (a heal or drain fix) used to need the bump commit dropped or reverted by hand —
@@ -118,6 +134,9 @@ CAPS_JSON="loomwright/capabilities.json"
 CAPS_GEN="loomwright/scripts/build-capabilities.sh"
 CAP_BASELINE="loomwright/docs/CAPABILITY_BASELINE.json"   # read-only: the scan reminder's source
 FRAG_DIR="changelog.d"
+# Sibling plugin dirs that release on their own (own plugin.json version + own CHANGELOG.md, D19):
+# --check's SCOPE rule (header) keeps a branch touching only these out of loomwright's release.
+SELF_RELEASING_PLUGINS="selvedge"
 VALIDATORS="${BUMP_VERSION_VALIDATORS:-scripts/validate-version.sh:scripts/check-doc-currency.sh}"
 # The CHANGELOG entry shape: `**vX.Y.Z — <headline>:** <body>` (the dash is U+2014).
 ENTRY_RE='^\*\*v[0-9]+\.[0-9]+\.[0-9]+ — '
@@ -481,6 +500,61 @@ verify_bump_content() {
 
 fold_names() { local i s=""; for i in ${FOLD_IDX[@]+"${FOLD_IDX[@]}"}; do s="$s ${POOL_PATH[$i]#"$FRAG_DIR"/}"; done; printf '%s' "${s# }"; }
 
+# check_scope — SCOPE in the header. Classifies the branch's changed paths against the merge base
+# with the bump-owned paths ignored (renames split, so both sides count). A branch whose remaining
+# paths all sit under a SELF_RELEASING_PLUGINS dir (and at least one does) releases through that
+# plugin's own manifest + CHANGELOG, so a pending fragment new on this branch, an edit to a fragment
+# the merge base had, or a loomwright version change is a violation (CHK[]). Any other branch is
+# untouched. Two path sources, deliberately asymmetric so an uncommitted path never makes the branch
+# look mixed locally (CI checks a clean checkout of the pushed HEAD); fragments and version files are
+# still read from the working tree, as in every --check rule:
+#   committed — HEAD vs BASE_SHA: what CI and a push see; counts on both sides.
+#   local     — uncommitted work (working tree vs BASE_SHA, plus untracked files): counts ONLY toward
+#               the self-releasing side. An uncommitted path elsewhere (a stray reports/ dir, an
+#               unstaged edit) never reaches CI, so it must not turn a selvedge-only branch "mixed"
+#               here; commit it and it counts.
+# Needs resolve_base, read_wt and CW; exits 2 when the paths cannot be listed.
+check_scope() {
+  local p d hit src base_list blob scope_sv=0 scope_other=0 sv_new_frags=0 sv_frag_names="" sv_dirs="" fix="" sv_edited=""
+  { git diff --no-renames --name-only -z "$BASE_SHA" HEAD -- > "$CW/scope.committed" \
+      && { git diff --no-renames --name-only -z "$BASE_SHA" -- && git ls-files -z --others --exclude-standard; } > "$CW/scope.local"; } 2>/dev/null \
+    || { echo "bump-version: check CANNOT RUN — cannot list this branch's changed paths against the merge base ${BASE_SHA:0:12}"; exit 2; }
+  for src in committed local; do
+    while IFS= read -r -d '' p; do
+      case "$p" in
+        "$PLUGIN_JSON"|"$MARKETPLACE_JSON"|"$CHANGELOG"|"$CAPS_JSON"|"$FRAG_DIR"/*) continue ;;
+      esac
+      hit=""
+      for d in $SELF_RELEASING_PLUGINS; do
+        case "$p" in "$d"/*) hit="$d" ;; esac
+      done
+      [ -n "$hit" ] || [ "$src" = local ] || scope_other=1
+      [ -z "$hit" ] && continue
+      scope_sv=1
+      case " $sv_dirs " in *" $hit "*) ;; *) sv_dirs="${sv_dirs:+$sv_dirs }$hit" ;; esac
+    done < "$CW/scope.$src"
+  done
+  [ "$scope_sv" -eq 1 ] && [ "$scope_other" -eq 0 ] || return 0
+  tree_frags "$BASE_SHA" > "$CW/scope.base.frags"
+  base_list=" "
+  while IFS="$(printf '\t')" read -r p blob; do
+    base_list="$base_list$p "
+    # Still present but not the merge base's blob: an edit to main's pending fragment changes
+    # loomwright's next release. A deleted one is left to the not-bumped rule (or the bump finding).
+    [ -f "$p" ] || continue
+    [ "$(git hash-object -- "$p" 2>/dev/null)" = "$blob" ] || sv_edited="${sv_edited:+$sv_edited }$p"
+  done < "$CW/scope.base.frags"
+  for p in ${frags[@]+"${frags[@]}"}; do
+    case "$base_list" in *" $p "*) continue ;; esac   # on the merge base already: main's pending fragment, legal
+    sv_new_frags=$((sv_new_frags + 1)); sv_frag_names="${sv_frag_names:+$sv_frag_names }$p"
+  done
+  for d in $sv_dirs; do fix="${fix:+$fix; }bump $d/.claude-plugin/plugin.json and add the release to $d/CHANGELOG.md"; done
+  [ "$sv_new_frags" -gt 0 ] && chk "selvedge-only change carries a changelog.d fragment ($sv_frag_names): a $FRAG_DIR/ fragment releases loomwright, but this branch changes only self-releasing plugin(s) ($sv_dirs) — delete the fragment and release the plugin itself instead: $fix (D19)"
+  [ -n "$sv_edited" ] && chk "selvedge-only change edits a changelog.d fragment main already has ($sv_edited): that changes loomwright's next release, but this branch changes only self-releasing plugin(s) ($sv_dirs) — restore it with git checkout ${BASE_SHA:0:12} -- <path> and release the plugin itself instead: $fix (D19)"
+  [ "$W_VER" != "$BASE_VER" ] && chk "selvedge-only change carries a loomwright bump ($BASE_VER -> ${W_VER:-<none>}): this branch changes only self-releasing plugin(s) ($sv_dirs), so it must not move loomwright's version — revert the bump (and its fragment) and release the plugin itself instead: $fix (D19)"
+  return 0
+}
+
 # ---- --check: the content gate (read-only) -------------------------------------------------------
 run_check() {
   local f p state
@@ -496,6 +570,7 @@ run_check() {
   for f in ${frags[@]+"${frags[@]}"}; do
     parse_fragment "$f" || chk "pending fragment is malformed, so the next bump would refuse it: $PF_ERR"
   done
+  check_scope
   if [ "$W_VER" = "$BASE_VER" ]; then
     [ "$W_MKT" = "$BASE_VER" ] || chk "$MARKETPLACE_JSON loomwright version $W_MKT differs from the merge base's $BASE_VER while $PLUGIN_JSON did not change — a hand edit"
     if [ "$W_CAPS_PRESENT" -eq 1 ] && [ "$W_CAPS" != "$BASE_VER" ]; then

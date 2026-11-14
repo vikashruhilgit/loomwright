@@ -1,0 +1,15 @@
+{
+  "name": "selvedge",
+  "version": "0.1.0",
+  "description": "Selvedge checks finished work against its brief and reports an evidenced PASS/FAIL per acceptance criterion. Scaffold release: the selvedge CLI (version, install-cli) and the plugin's own release gate; checking arrives in later releases.",
+  "author": {
+    "name": "vikash ruhil"
+  },
+  "license": "LicenseRef-PolyForm-Shield-1.0.0",
+  "keywords": [
+    "qa",
+    "acceptance-criteria",
+    "verification",
+    "evidence"
+  ]
+}

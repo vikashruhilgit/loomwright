@@ -573,6 +573,100 @@ mutant "$TMP/m4" '{ sub(/if \[ "\$old_ver" != "\$BASE_VER" \]; then/, "if false;
 run_bump "$TMP/m4"; [ "$(entries "$TMP/m4")" = "4" ] && [ "$(ver_of "$TMP/m4")" = "1.2.5 1.2.5 1.2.5" ]
 check $? "mutation control: without the re-fold dispatch, a re-run double-bumps (1.2.5, two new entries) — the old behaviour"
 
+# ---- 9e2. --check SCOPE: a selvedge-only branch releases selvedge, never loomwright (D19) ----------
+# selvedge/ is a self-releasing sibling plugin (bump-version.sh's SELF_RELEASING_PLUGINS): a branch
+# whose only non-release changes sit under it must carry no new changelog.d/ fragment and no
+# loomwright bump. A branch that also changes any other path keeps the content rule above unchanged.
+echo "# bump-version.sh --check SCOPE (self-releasing plugins)"
+sv_files() { # sv_files <dir> — a minimal synthetic selvedge plugin in the fixture (never the real one)
+  mkdir -p "$1/selvedge/.claude-plugin" "$1/selvedge/bin"
+  echo '{"name":"selvedge","version":"0.1.0"}' > "$1/selvedge/.claude-plugin/plugin.json"
+  printf '# Changelog\n\n## 0.1.0 — 2026-11-13\n\n- first release\n' > "$1/selvedge/CHANGELOG.md"
+  printf '#!/usr/bin/env bash\necho selvedge\n' > "$1/selvedge/bin/selvedge"
+}
+# make_sv_branch <dir> — fixture + origin/main at the base + a feature branch changing ONLY selvedge/.
+make_sv_branch() {
+  make_fixture "$1"
+  g "$1" update-ref refs/remotes/origin/main HEAD
+  g "$1" checkout -q -b feature
+  sv_files "$1"; g "$1" add -A && g "$1" commit -q -m "selvedge only"
+}
+expect_ok() { # expect_ok <dir> <fixed message> <label>
+  run_check "$1"; local rc=$?
+  [ "$rc" -eq 0 ] && grep -qF -- "$2" "$TMP/last.out" && ! grep -qF 'selvedge-only change carries' "$TMP/last.out"
+  check $? "$3 (exit 0, names: $2)"
+}
+
+D="$TMP/v1"; make_sv_branch "$D"
+expect_ok "$D" "check OK — not bumped (version 1.2.3" "scope: a selvedge-only branch with no fragment and no bump passes"
+D="$TMP/v1b"; make_sv_branch "$D"
+jq '.plugins += [{"name": "selvedge", "source": "./selvedge", "description": "Fixture selvedge card.", "version": "0.1.0"}]' "$D/$MJ" > "$D/mj.tmp" && mv "$D/mj.tmp" "$D/$MJ"
+g "$D" commit -q -am "marketplace: the selvedge entry"
+[ "$(jq -r '.plugins[] | select(.name == "selvedge") | .version' "$D/$MJ")" = "0.1.0" ]; check $? "scope precondition: the branch added marketplace.json's selvedge entry"
+expect_ok "$D" "check OK — not bumped (version 1.2.3" "scope: a selvedge-only branch that also edits marketplace.json's selvedge entry passes"
+
+D="$TMP/v2"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + a fragment"
+expect_fail "$D" "selvedge-only change carries a changelog.d fragment (changelog.d/sv.md)" "scope: a selvedge-only branch carrying a changelog.d fragment FAILS"
+grep -qF 'bump selvedge/.claude-plugin/plugin.json and add the release to selvedge/CHANGELOG.md' "$TMP/last.out" \
+  && [ "$(grep -v '^$' "$TMP/last.out" | tail -n 1)" = "  (the invariant: changelog.d/README.md, decision P7)" ]
+check $? "scope: the finding names the selvedge-side fix, and the P7 footer stays the last line"
+D="$TMP/v2b"; make_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
+sv_files "$D"; frag "$D" sv.md 'Selvedge headline\n'   # nothing committed: untracked selvedge files + fragment
+expect_fail "$D" "selvedge-only change carries a changelog.d fragment" "scope: an uncommitted (untracked) selvedge-only change with a fragment FAILS"
+# Uncommitted paths outside selvedge/ never reach CI's clean checkout, so they must not rescue a
+# selvedge-only branch locally (an uncommitted path never makes the branch look mixed).
+D="$TMP/v2c"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + a fragment"
+mkdir -p "$D/reports"; echo "scratch" > "$D/reports/notes.txt"   # untracked, unrelated
+expect_fail "$D" "selvedge-only change carries a changelog.d fragment (changelog.d/sv.md)" "scope: an unrelated untracked file outside selvedge/ does not rescue a selvedge-only branch with a fragment"
+D="$TMP/v2d"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + a fragment"
+echo '{"name":"stackpack","version":"9.9.9"}' > "$D/stackpack/.claude-plugin/plugin.json"   # tracked, uncommitted
+expect_fail "$D" "selvedge-only change carries a changelog.d fragment (changelog.d/sv.md)" "scope: an uncommitted edit to a tracked file outside selvedge/ does not rescue a selvedge-only branch with a fragment"
+g "$D" commit -q -am "stackpack too"
+expect_ok "$D" "check OK — not bumped (version 1.2.3, the merge base's); 1 fragment(s) pending" "scope: the same edit once committed makes the branch mixed (passes with its fragment)"
+
+D="$TMP/v3"; make_sv_branch "$D"; frag "$D" sv.md 'Selvedge headline\n'; g "$D" add -A && g "$D" commit -q -m frag; bump_commit "$D"
+[ "$(ver_of "$D")" = "1.2.4 1.2.4 1.2.4" ] && [ ! -e "$D/changelog.d/sv.md" ]; check $? "scope precondition: a scripted loomwright bump folded the fragment (1.2.4, none pending)"
+expect_fail "$D" "selvedge-only change carries a loomwright bump (1.2.3 -> 1.2.4)" "scope: a selvedge-only branch carrying a loomwright bump FAILS"
+! grep -qF 'carries a changelog.d fragment' "$TMP/last.out"; check $? "scope: a folded fragment is not reported as pending (one finding per kind)"
+
+# A mixed branch (selvedge/ AND another path) keeps today's behaviour exactly.
+D="$TMP/v4"; make_branch "$D"; sv_files "$D"; g "$D" add -A && g "$D" commit -q -m "selvedge too"
+expect_ok "$D" "check OK — not bumped (version 1.2.3, the merge base's); 1 fragment(s) pending" "scope: a mixed branch (selvedge/ + another path) with a fragment passes"
+bump_commit "$D"
+expect_ok "$D" "check OK — bumped 1.2.3 -> 1.2.4 (patch); the entry is the fold of: a.md" "scope: a mixed branch with a scripted bump passes"
+# A path moved out of loomwright into selvedge/ changes both sides (renames are split, never only the new name).
+D="$TMP/v5"; make_fixture "$D"; echo "moved" > "$D/other.txt"; g "$D" add -A && g "$D" commit -q -m other
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
+mkdir -p "$D/selvedge"; g "$D" mv other.txt selvedge/other.txt; frag "$D" a.md 'Alpha headline\n'; g "$D" add -A && g "$D" commit -q -m "move into selvedge"
+expect_ok "$D" "check OK — not bumped" "scope: a rename from another path into selvedge/ is a mixed branch (passes with its fragment)"
+# A fragment the merge base already had (main's pending fragment) stays legal on a selvedge-only branch.
+D="$TMP/v6"; make_fixture "$D"; frag "$D" onmain.md 'Merged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; sv_files "$D"; g "$D" add -A && g "$D" commit -q -m "selvedge only"
+expect_ok "$D" "1 fragment(s) pending" "scope: main's pending fragment on a selvedge-only branch passes (it is not this branch's)"
+# ...but editing it changes loomwright's next release, so it FAILS — committed or not (the working tree is read).
+D="$TMP/v6b"; make_fixture "$D"; frag "$D" onmain.md '<!-- bump: patch -->\nMerged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; sv_files "$D"
+frag "$D" onmain.md '<!-- bump: major -->\nMerged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "selvedge + rewrite main's fragment"
+expect_fail "$D" "selvedge-only change edits a changelog.d fragment main already has (changelog.d/onmain.md)" "scope: a selvedge-only branch editing main's pending fragment FAILS"
+D="$TMP/v6c"; make_fixture "$D"; frag "$D" onmain.md 'Merged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; sv_files "$D"; g "$D" add -A && g "$D" commit -q -m "selvedge only"
+frag "$D" onmain.md 'Rewritten, not committed\n'
+expect_fail "$D" "selvedge-only change edits a changelog.d fragment main already has (changelog.d/onmain.md)" "scope: an uncommitted edit to main's pending fragment on a selvedge-only branch FAILS"
+# Deleting main's fragment is the not-bumped rule's single finding, not a second scope finding.
+g "$D" checkout -q -- changelog.d/onmain.md; rm "$D/changelog.d/onmain.md"
+expect_fail "$D" "changelog.d/onmain.md (on the merge base) was deleted without a bump" "scope: deleting main's pending fragment on a selvedge-only branch FAILS via the not-bumped rule"
+! grep -qF 'selvedge-only change' "$TMP/last.out"; check $? "scope: a deleted base fragment raises no scope finding (one finding per cause)"
+# check_scope fails CLOSED (exit 2) when it cannot list the branch's changed paths: a corrupt index
+# makes the working-tree listing fail while the merge base and HEAD still resolve.
+D="$TMP/v8"; make_sv_branch "$D"; printf 'garbage' > "$D/.git/index"
+run_check "$D"; rc=$?
+[ "$rc" -eq 2 ] && grep -qF "bump-version: check CANNOT RUN — cannot list this branch's changed paths against the merge base" "$TMP/last.out"
+check $? "scope: an unlistable changed-path set exits 2 (CANNOT RUN), never 0 or 1"
+# No path outside the bump-owned set changed: not selvedge-only, checked as before.
+D="$TMP/v7"; make_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
+frag "$D" a.md 'Alpha headline\n'; g "$D" add -A && g "$D" commit -q -m "fragment only"
+expect_ok "$D" "check OK — not bumped" "scope: a fragment-only branch (no selvedge/ change) passes as before"
+
 # ---- 9f. the capability-scan reminder on a minor / major bump --------------------------------------
 # The reminder reads plugin_version_at_last_scan live from the baseline. make_fixture carries NO
 # baseline, so every case above is also the missing-baseline shape; with_baseline adds one.
