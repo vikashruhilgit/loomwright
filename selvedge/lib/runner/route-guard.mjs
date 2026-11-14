@@ -36,6 +36,9 @@
 // Costs of the follow path: the page gets the final response under the URL it asked for (not the
 // redirect target), and cookies on a followed hop are the context's for that URL (SameSite is not
 // applied). Every other request is continued untouched (sent once, by Chromium).
+// CORS preflights: while a context is routed, Playwright answers a CORS preflight itself, so a
+// cross-origin non-simple request (continued or sent with route.fetch) sends no OPTIONS to the
+// server and is sent whatever the server's CORS policy (test-route-guard.sh, cors_preflight_*).
 // Service workers are blocked (`serviceWorkers: 'block'`), so no worker can answer or issue
 // requests outside the route layer.
 //

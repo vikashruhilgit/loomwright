@@ -176,8 +176,11 @@ refusal names its layer:
    If the proxy is gone, a request the route layer sends fails `proxy_unavailable` like any other.
    The costs of the follow path: the page gets the final response under the URL it asked for, not
    the redirect target's URL; and cookies on a followed hop are the browser context's for that
-   URL, without SameSite applied. (No CORS preflight reaches a server for any request
-   while Playwright routes the context: Playwright answers preflights itself.) Every request is
+   URL, without SameSite applied. (While Playwright routes the context, it answers a
+   CORS preflight itself: a cross-origin `fetch` that needs one, such as a PUT or a custom header,
+   sends no OPTIONS to the server, and the request goes out whatever the server would have
+   allowed. `test-route-guard.sh` checks this for a request the route layer passes on and for one
+   it sends itself, against a control without routing in which Chromium sends the OPTIONS.) Every request is
    still checked against the allowlist. Every other request is passed on untouched.
 
 Playwright sends localhost through the proxy only while

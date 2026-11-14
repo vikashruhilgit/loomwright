@@ -551,6 +551,49 @@ if (mode === 'nobrowser') {
     },
   );
 
+  // CORS preflights: while Playwright routes the context it answers a CORS preflight itself, so no
+  // OPTIONS reaches a server. A page on A sends a cross-origin, non-simple fetch to listed B (a PUT,
+  // and a POST with a custom header) under the guard twice — a local-only config (the route layer
+  // continues it) and a remote-listed one (the route layer sends it with route.fetch) — and once in
+  // a control: a plain context with no route and no proxy, where Chromium itself must preflight.
+  const preflightArms = async (page, A, B) => {
+    await page.goto(`${A.origin}/`, { timeout: 15000 });
+    const arms = {};
+    for (const [key, init] of [
+      ['put', { method: 'PUT', body: 'k=v' }],
+      ['header', { method: 'POST', body: 'k=v', headers: { 'x-selvedge-probe': '1' } }],
+    ]) arms[key] = await fetchIn(page, `${B.origin}/preflight-${key}`, init);
+    return arms;
+  };
+  for (const [name, remoteListed] of [['cors_preflight_continued', false], ['cors_preflight_route_fetch', true]]) {
+    await scenario(
+      name,
+      {
+        names: ['A', 'B'],
+        config: ({ A, B }) => (remoteListed ? { origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false } : { origins: [A.origin, B.origin] }),
+        lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      },
+      async ({ page }, { A, B }) => ({ arms: await preflightArms(page, A, B) }),
+    );
+  }
+  {
+    const dir = path.join(logRoot, 'cors-preflight-control');
+    mkdirSync(dir, { recursive: true });
+    const servers = await startServers(['A', 'B'], dir);
+    let browser = null;
+    try {
+      browser = await chromium.launch();
+      const context = await browser.newContext();
+      const arms = await preflightArms(await context.newPage(), servers.A, servers.B);
+      results.cors_preflight_control = { arms, logs: { A: servers.A.logFile, B: servers.B.logFile } };
+    } catch (e) {
+      results.cors_preflight_control = { error: String(e && e.stack ? e.stack : e) };
+    } finally {
+      if (browser) await browser.close();
+      await servers.closeAll();
+    }
+  }
+
   // AC19 — service workers are blocked.
   await scenario('ac19_sw', { config: onlyA }, async ({ page }, { A }) => {
     const first = await nav(page, `${A.origin}/`);

@@ -252,6 +252,13 @@ check "$B" "redirect modes: the fetch-mode tag never reaches a server" \
   'const s = R.ac19_redirect_modes; [s.logs.A, s.logs.B].every((f) => events(f).every((e) => e.fetchMode === null || e.fetchMode === undefined))' 'R.ac19_redirect_modes'
 check "$B" "the route layer follows at most 20 hops of a non-read request: a PUT down a 22-hop 307 chain is sent 20 times, fails, and never reaches /landing" \
   'const s = R.ac19_redirect_hop_limit; const a = events(s.logs.A); s.first.status === 200 && s.put.startsWith("err:") && a.filter((e) => e.method === "PUT" && e.path.startsWith("/r307")).length === 20 && !a.some((e) => e.path === "/landing")' 'R.ac19_redirect_hop_limit'
+echo "-- CORS preflights are answered by Playwright, not sent"
+check "$B" "control (plain context: no route, no proxy): Chromium sends B a real OPTIONS preflight for the cross-origin PUT and for the custom-header POST, so the arms below can fail; B allows no method or header, so both fetches fail and neither request is sent" \
+  'const s = R.cors_preflight_control; const o = events(s.logs.B).filter((e) => e.method === "OPTIONS"); const b = events(s.logs.B); o.some((e) => e.path === "/preflight-put") && o.some((e) => e.path === "/preflight-header") && s.arms.put.startsWith("err:") && s.arms.header.startsWith("err:") && !b.some((e) => e.event === "request" && e.method !== "OPTIONS" && String(e.path).startsWith("/preflight-"))' 'R.cors_preflight_control'
+for name in cors_preflight_continued cors_preflight_route_fetch; do
+  check "$B" "$name: under the guard the same cross-origin PUT and custom-header POST from A reach B once each, and B never receives an OPTIONS" \
+    "const s = R.$name; const b = events(s.logs.B); s.arms.put === 'ok:200' && s.arms.header === 'ok:200' && !b.some((e) => e.method === 'OPTIONS') && b.filter((e) => e.method === 'PUT' && e.path === '/preflight-put').length === 1 && b.filter((e) => e.method === 'POST' && e.path === '/preflight-header').length === 1" "R.$name"
+done
 check "$B" "AC19 service workers are blocked: register() never yields a ready worker, /sw.js is never fetched, nothing controls the page" \
   'const s = R.ac19_sw; s.first.status === 200 && s.sw !== "registered:ready" && s.controlled === false && !s.seen.some((x) => x.url.endsWith("/sw.js")) && !events(s.logs.A).some((e) => e.path === "/sw.js")' 'R.ac19_sw'
 check "$B" "AC19 the first request of the first page is seen by the route layer (layer route), and a listed page loads" \
