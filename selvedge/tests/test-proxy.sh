@@ -72,13 +72,15 @@ check "an Upgrade: websocket to a listed localhost:A reaches A" \
   'R.upgrade_allowed.A.some((e) => e.event === "request" && e.path === "/ws" && e.upgrade === "websocket")' 'R.upgrade_allowed'
 
 echo "-- AC15 a listed remote that resolves private"
-for label in v4_loopback v6_loopback v6_link_local one_of_several_private one_of_several_mapped unspecified; do
+for label in v4_loopback v6_loopback v6_link_local one_of_several_private one_of_several_mapped unspecified nat64_loopback sixto4_private; do
   for kind in http connect; do
     check "AC15 $label via $kind: 403 remote_resolves_private, lookup ran once, nothing dialled, R records nothing" \
       "const a = R.ac15['${label}_${kind}']; a.status === 403 && a.blockedHeader === 'remote_resolves_private' && a.blocks.length === 1 && a.blocks[0].reason === 'remote_resolves_private' && a.lookups === 1 && a.dials === 0 && zero(a.R.log)" \
       "R.ac15['${label}_${kind}']"
   done
 done
+check "AC15 NAT64 (64:ff9b::/96) and 6to4 (2002::/16) embedding a private IPv4 are private; local-use NAT64 and Teredo fail closed; public embeddings stay public" \
+  'const e = R.ac15_embedded; ["64:ff9b::7f00:1","64:ff9b::127.0.0.1","64:ff9b::a00:1","2002:7f00:1::1","2002:c0a8:101::","64:ff9b:1::1","2001:0:4136:e378::1"].every((a) => e[a] === true) && ["64:ff9b::5db8:d822","2002:5db8:d822::1","2606:4700::1111"].every((a) => e[a] === false)' 'R.ac15_embedded'
 check "AC15 a public resolution is dialled by its validated address, never the name (one lookup per connection)" \
   'const a = R.ac15_validated; a.status === 200 && a.lookupsAfterGet === 1 && a.dialsAfterGet.length === 1 && a.dialsAfterGet[0].address === "93.184.216.34" && a.lookupAll === true && a.lookupHosts.every((h) => h === "remote.selvedge.test") && a.R.some((e) => e.path === "/v")' 'R.ac15_validated'
 check "AC15 a CONNECT to the same remote also dials the validated address" \
@@ -93,12 +95,16 @@ check "a remote origin listed without allow_remote is refused host_not_allowed, 
   'const a = R.remote_without_allow_remote; a.status === 403 && a.blockedHeader === "host_not_allowed" && a.lookups === 0 && zero(a.R.log)' 'R.remote_without_allow_remote'
 
 echo "-- AC19 plain-HTTP mutation to a listed remote"
-for method in POST PUT PATCH DELETE; do
+for method in POST PUT PATCH DELETE PROPFIND MKCOL; do
   check "AC19 $method to a listed remote (allow_remote_mutation false): 403 remote_mutation_refused before any lookup, R records nothing" \
     "const a = R.ac19.$method; a.status === 403 && a.blockedHeader === 'remote_mutation_refused' && a.blocks.length === 1 && a.blocks[0].method === '$method' && a.lookups === 0 && zero(a.R.log)" "R.ac19.$method"
 done
-check "AC19 GET to the same remote is not refused by the mutation rule (forwarded after one lookup)" \
-  'const a = R.ac19.GET; a.status === 200 && a.blockedHeader === null && a.blocks.length === 0 && a.lookups === 1 && !zero(a.R.log)' 'R.ac19.GET'
+for method in GET HEAD OPTIONS; do
+  check "AC19 $method to the same remote is not refused by the mutation rule (forwarded after one lookup)" \
+    "const a = R.ac19.$method; a.status === 200 && a.blockedHeader === null && a.blocks.length === 0 && a.lookups === 1 && !zero(a.R.log)" "R.ac19.$method"
+done
+check "AC19 an Upgrade sent with POST to a listed remote: 403 remote_mutation_refused before any lookup, R records nothing" \
+  'const a = R.ac19_upgrade_post; a.status === 403 && a.blockedHeader === "remote_mutation_refused" && a.lookups === 0 && zero(a.R.log)' 'R.ac19_upgrade_post'
 check "AC19 with allow_remote_mutation: true the POST is forwarded" \
   'R.ac19_mutation_allowed.status === 200 && R.ac19_mutation_allowed.R.some((e) => e.method === "POST")' 'R.ac19_mutation_allowed'
 

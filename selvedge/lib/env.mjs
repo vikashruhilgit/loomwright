@@ -31,6 +31,11 @@ Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reaso
 const SCOPE_LINE =
   "scope: the guard covers the browser only; the verifier's shell is not behind the proxy (hooks and shell commands are not contained)";
 
+// What an approval does and does not pin. Printed by `env approve` (and documented in the README's
+// "Where approvals live"): the sha256 covers the hook command text only, never a file it runs.
+const HOOK_PIN_LIMIT =
+  'limit: the approval pins the hook command text, not the files it runs; a hook that calls a repo script (e.g. `bash seed.sh`) runs that script as it is in the current checkout, even with --base';
+
 class UsageError extends Error {}
 
 function err(line) {
@@ -234,6 +239,7 @@ async function cmdApprove(args) {
     out(`    sha256: ${one}`);
   }
   out(`hooks sha256 (what is recorded): ${hooksSha256(config.hooks)}`);
+  out(HOOK_PIN_LIMIT);
   if (config.origins.some((o) => !isLocalOrigin(o))) out('note: hooks never run while any origin is remote');
   if (state.state === 'approved') {
     out('selvedge env: these hooks are already approved; nothing to do');

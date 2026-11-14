@@ -81,8 +81,9 @@ shell hooks that set up the app under test:
   or substring match exists anywhere.
 - `allow_remote` — an origin whose host is not `localhost`, `127.0.0.1` or `[::1]` is refused
   unless this is `true`.
-- `allow_remote_mutation` — with it `false` (the default), POST, PUT, PATCH and DELETE to a remote
-  origin are refused; GET is not.
+- `allow_remote_mutation` — with it `false` (the default), a remote origin gets only the read
+  methods GET, HEAD and OPTIONS; every other method (POST, PUT, PATCH, DELETE, PROPFIND, MKCOL, a
+  custom verb) is refused. This is an allow-list: a method not named here is refused.
 - `hooks` — optional; only `seed`, `reset` and `auth_setup`. They run only after you approve them
   (below).
 
@@ -103,7 +104,8 @@ selvedge env hook <name> [--base <ref>]
   hooks with their sha256, the approval state (`approved`, `unapproved` or `no hooks`), and a scope
   line: the guard covers the browser only.
 - **`--base <ref>`** reads the committed `<ref>:selvedge.json` (`git show`) and never the working
-  tree, so a pull request cannot widen its own allowlist or change its own hooks. Without it the
+  tree, so a pull request cannot widen its own allowlist or change its hooks' command text. It
+  does not pin the files a hook runs: see the limit under "Where approvals live". Without it the
   working-tree file is read and the output says `config source: working tree (no --base)`. An
   unreadable `<ref>:selvedge.json` is `base_config_unreadable`, never a fallback to the working tree.
 - **`init`** writes `schema_version: 1`, exactly one origin `http://localhost:<port>`, both
@@ -121,7 +123,12 @@ selvedge env hook <name> [--base <ref>]
 `0600`, written atomically), keyed by the repo's identity (its `origin` remote URL with any
 credentials removed, else the repo root's real path). Nothing inside the repo is ever read as an
 approval. Honest limit: the file is user-scoped, so any process running as you, an agent with a
-shell included, can write it; `env approve` itself refuses without a TTY.
+shell included, can write it; `env approve` itself refuses without a TTY. Second honest limit:
+**the approval pins the hook command text, not the files it runs.** A hook that calls a repo script
+(`node scripts/make-test-user.js`, `bash seed.sh`) runs that script as it is in the current
+checkout, so a pull request that edits only the script changes what the approved hook does, even
+under `--base`. `env approve` prints this limit with every approval prompt. Read the scripts a hook
+calls before running it on a branch you did not write.
 
 ## The browser guard
 
@@ -132,13 +139,24 @@ refusal names its layer:
    and nothing else: no bypass list, no `direct://` fallback. Every connection Chromium makes goes
    through it: a navigation, each redirect hop, `fetch`, a `ws`/`wss` handshake, an https CONNECT.
    An unlisted origin is refused before any DNS lookup. A listed remote host is looked up once; if
-   any address it resolves to is private, loopback, link-local or unspecified, it is refused and no
-   connection is attempted. Otherwise the proxy connects to that validated address, never to the
-   name again. If the proxy dies, the browser's requests fail (`proxy_unavailable`); they never go
+   any address it resolves to is private, loopback, link-local or unspecified (an IPv6 NAT64 or
+   6to4 address counts by the IPv4 it embeds; local-use NAT64 and Teredo always count), it is
+   refused and no connection is attempted. Otherwise the proxy connects to that validated address,
+   never to the name again. If the proxy dies, the browser's requests fail (`proxy_unavailable`); they never go
    direct.
 2. **A `context.route('**/*')` layer**, installed before any page exists, refuses unlisted origins
-   and remote mutations (POST, PUT, PATCH, DELETE without `allow_remote_mutation`). It also covers
-   https, where the proxy cannot see the method. Service workers are blocked.
+   and, without `allow_remote_mutation`, any remote request whose method is not GET, HEAD or
+   OPTIONS. It also covers https, where the proxy cannot see the method. Service workers are
+   blocked.
+
+   **Redirects.** Chromium follows a redirect without showing the next hop to the route layer, and
+   over https the proxy sees only the CONNECT, so neither would see the method of a 307/308 hop
+   (which re-sends the body with the same method). So when a remote origin is listed and
+   `allow_remote_mutation` is off, the route layer sends a non-read request itself, one hop at a
+   time through the same proxy, checks each 307/308 target before sending it, and refuses a hop to
+   a remote origin (`remote_mutation_refused`, layer `route`). The cost: on that path the page gets
+   the final response under the URL it asked for, not the redirect target's URL. Every other
+   request is passed on untouched.
 
 Playwright sends localhost through the proxy only while
 `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is unset, so the guard refuses to launch if
@@ -151,7 +169,8 @@ What the guard does **not** cover:
   remote.
 - **HTTPS and WSS are checked by host and port only.** They are tunnelled (CONNECT), so the proxy
   never sees the path or method; there is no TLS interception. The route layer adds the method
-  check for https requests the page makes.
+  check for https requests the page makes, including the 307/308 hops of a non-read request
+  (above).
 
 ## BLOCKED and config reasons
 
@@ -162,7 +181,7 @@ and usage reasons print on stderr. Both exit 2.
 |---|---|---|
 | `host_not_allowed` | BLOCKED | the browser asked for an origin not in `origins` (exact scheme, host and port) |
 | `remote_resolves_private` | BLOCKED | a listed remote host resolved to a private, loopback, link-local or unspecified address |
-| `remote_mutation_refused` | BLOCKED | POST, PUT, PATCH or DELETE to a remote origin without `allow_remote_mutation` |
+| `remote_mutation_refused` | BLOCKED | a method other than GET, HEAD or OPTIONS to a remote origin (directly or as a 307/308 hop) without `allow_remote_mutation` |
 | `proxy_loopback_disabled` | BLOCKED | `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set, so localhost would skip the proxy |
 | `proxy_unavailable` | BLOCKED | the guard's proxy is gone; the request failed instead of going direct |
 | `env_hooks_unapproved` | BLOCKED | the hooks have no approval matching their current sha256 for this repo; run `selvedge env approve` |

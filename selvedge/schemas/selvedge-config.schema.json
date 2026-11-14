@@ -18,7 +18,7 @@
       "type": "boolean"
     },
     "allow_remote_mutation": {
-      "description": "Permit POST, PUT, PATCH and DELETE to a remote origin.",
+      "description": "Permit methods other than GET, HEAD and OPTIONS (POST, PUT, PATCH, DELETE, PROPFIND, …) to a remote origin.",
       "type": "boolean"
     },
     "hooks": {

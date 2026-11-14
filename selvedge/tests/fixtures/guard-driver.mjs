@@ -90,11 +90,27 @@ if (mode === 'nobrowser') {
     remote_put: d(remote, 'https://shop.example.com/cart', 'PUT'),
     remote_patch: d(remote, 'https://shop.example.com/cart', 'PATCH'),
     remote_delete: d(remote, 'https://shop.example.com/cart', 'DELETE'),
+    remote_propfind: d(remote, 'https://shop.example.com/cart', 'PROPFIND'),
+    remote_mkcol: d(remote, 'https://shop.example.com/cart', 'MKCOL'),
+    remote_custom: d(remote, 'https://shop.example.com/cart', 'MERGE'),
+    remote_head: d(remote, 'https://shop.example.com/cart', 'HEAD'),
+    remote_options: d(remote, 'https://shop.example.com/cart', 'OPTIONS'),
     remote_post_allowed: d({ ...remote, allow_remote_mutation: true }, 'https://shop.example.com/cart', 'POST'),
     local_post: d(local, 'http://localhost:4001/form', 'POST'),
     remote_without_allow_remote: d({ origins: ['https://shop.example.com'] }, 'https://shop.example.com/'),
     data_url: d(local, 'data:text/plain,hi'),
     ftp_url: d(local, 'ftp://localhost:4001/f'),
+  };
+  // When the route layer sends a request itself to check its 307/308 hops: a non-read method, a
+  // listed remote, allow_remote on, allow_remote_mutation off. Anything else is continued untouched.
+  results.redirect_check = {
+    local_post_remote_listed: G.needsRedirectCheck(remote, 'POST'),
+    local_propfind_remote_listed: G.needsRedirectCheck(remote, 'PROPFIND'),
+    get_remote_listed: G.needsRedirectCheck(remote, 'GET'),
+    head_remote_listed: G.needsRedirectCheck(remote, 'HEAD'),
+    post_local_only: G.needsRedirectCheck(local, 'POST'),
+    post_mutation_allowed: G.needsRedirectCheck({ ...remote, allow_remote_mutation: true }, 'POST'),
+    post_without_allow_remote: G.needsRedirectCheck({ origins: remote.origins }, 'POST'),
   };
   results.failure_reasons = {
     proxy_failed: G.reasonForFailure('net::ERR_PROXY_CONNECTION_FAILED'),
@@ -118,6 +134,7 @@ if (mode === 'nobrowser') {
         ...extra,
         blocks: guard.blocks,
         proxyBlocks: guard.proxy.blocks,
+        proxyLog: guard.proxy.log,
         seen: guard.seen,
         logs: Object.fromEntries(names.map((k) => [k, servers[k].logFile])),
         ports: Object.fromEntries(names.map((k) => [k, servers[k].port])),
@@ -234,10 +251,58 @@ if (mode === 'nobrowser') {
       await page.route(`${remote}/`, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>remote</title>' }));
       const first = await nav(page, `${remote}/`);
       const out = { first, remote: `remote.selvedge.test:${R.port}` };
-      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'GET']) {
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'PROPFIND', 'GET']) {
         out[method] = await fetchIn(page, `/api/${method.toLowerCase()}`, method === 'GET' ? { method } : { method, body: 'k=v' });
       }
       return out;
+    },
+  );
+
+  // AC19 — a 307/308 from a listed LOCAL page re-sending a POST to a listed HTTPS remote (the proxy
+  // sees only CONNECT for https, Chromium never shows the hop to context.route): the route layer
+  // refuses the hop remote_mutation_refused before it is sent. The lookup answers a PUBLIC address,
+  // so the proxy would NOT have refused the CONNECT (remote_resolves_private) — only the route layer
+  // stands in the way. `direct` = A → remote; `chain` = A → listed local B → remote.
+  const REMOTE_TLS = 'https://remote.selvedge.test:8443';
+  for (const [name, viaB] of [['ac19_redirect_direct', false], ['ac19_redirect_chain', true]]) {
+    await scenario(
+      name,
+      {
+        names: ['A', 'B'],
+        config: ({ A, B }) => ({ origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
+        lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      },
+      async ({ page }, { A, B }) => {
+        const target = `${REMOTE_TLS}/api`;
+        const to = viaB ? `${B.origin}/r307?to=${encodeURIComponent(target)}` : target;
+        const failed = page
+          .waitForEvent('requestfailed', { predicate: (r) => r.url().includes('/r307'), timeout: 15000 })
+          .then((r) => ({ method: r.method(), url: r.url(), error: (r.failure() || {}).errorText || null }))
+          .catch((e) => ({ error: errText(e) }));
+        const first = await nav(page, `${A.origin}/form307?to=${encodeURIComponent(to)}`);
+        return { first, failed: await failed, remote: 'remote.selvedge.test:8443' };
+      },
+    );
+  }
+  // … and a local-only 307 chain (A → B → A) under the same config still completes, each hop sent
+  // exactly once (no double send), and the page gets the final response.
+  await scenario(
+    'ac19_redirect_local',
+    {
+      names: ['A', 'B'],
+      config: ({ A, B }) => ({ origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    },
+    async ({ page }, { A, B }) => {
+      const to = `${B.origin}/r307?to=${encodeURIComponent(`${A.origin}/landing`)}`;
+      const done = page
+        .waitForResponse((r) => r.url().includes('/r307') && r.request().method() === 'POST', { timeout: 15000 })
+        .then(async (r) => ({ status: r.status(), body: await r.text().catch((e) => `bodyerr:${errText(e)}`) }))
+        .catch((e) => ({ error: errText(e) }));
+      const first = await nav(page, `${A.origin}/form307?to=${encodeURIComponent(to)}`);
+      const final = await done;
+      const get = await fetchIn(page, `${A.origin}/plain-get`);
+      return { first, final, get };
     },
   );
 

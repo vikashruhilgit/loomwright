@@ -7,11 +7,14 @@
 //   1. allowlist: the target's origin must be listed (isOriginAllowed from env-config.mjs — the one
 //      origin parser; exact scheme, host AND port). A remote origin also needs allow_remote: true.
 //      Unlisted ⇒ BLOCKED host_not_allowed, decided before any DNS lookup.
-//   2. mutation: a plain-HTTP POST/PUT/PATCH/DELETE to a remote origin without
-//      allow_remote_mutation ⇒ BLOCKED remote_mutation_refused, also before any lookup. (A CONNECT
-//      tunnel hides the method; route-guard.mjs's route layer covers https.)
+//   2. mutation: without allow_remote_mutation, a plain-HTTP request (or upgrade) to a remote
+//      origin must use GET, HEAD or OPTIONS; any other method (POST, PUT, PATCH, DELETE, PROPFIND,
+//      MKCOL, a custom verb, …) ⇒ BLOCKED remote_mutation_refused, also before any lookup. An
+//      allow-list, not a deny-list: a method nobody listed is refused. (A CONNECT tunnel hides the
+//      method; route-guard.mjs's route layer covers https.)
 //   3. resolution: a remote host is looked up ONCE (`lookup(host, { all: true })`); if ANY resolved
-//      address is private, loopback, link-local, unique-local, multicast or unspecified ⇒ BLOCKED
+//      address is private, loopback, link-local, unique-local, multicast or unspecified — or an
+//      IPv6 address that embeds a private IPv4 (NAT64, 6to4; Teredo and local-use NAT64 always) ⇒ BLOCKED
 //      remote_resolves_private and no connection is attempted. Otherwise the proxy connects to the
 //      validated addresses themselves, never to the name (so no second lookup can rebind it). Local
 //      origins (localhost, 127.0.0.1, [::1]) need no lookup: localhost is loopback by definition.
@@ -30,9 +33,10 @@ import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { REASONS, isLocalOrigin, isOriginAllowed, parseOrigin } from '../env-config.mjs';
 
-// The proxy layer's own mutating-method set. route-guard.mjs keeps its own copy on purpose: the two
-// layers are independent, so a change to one cannot silently weaken the other.
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// The proxy layer's own read-only method set: without allow_remote_mutation a remote origin gets
+// these methods and no other. route-guard.mjs keeps its own copy on purpose: the two layers are
+// independent, so a change to one cannot silently weaken the other.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const BLOCKED_HEADER = 'x-selvedge-blocked';
 
@@ -70,6 +74,8 @@ for (const [net4, prefix] of [
 for (const [net6, prefix] of [
   ['::', 96], // unspecified ::, loopback ::1, IPv4-compatible
   ['::ffff:0:0', 96], // IPv4-mapped (fail closed: never dial a mapped address)
+  ['64:ff9b:1::', 48], // NAT64 local-use (RFC 8215): embedding varies by deployment, fail closed
+  ['2001::', 32], // Teredo: embeds (obfuscated) IPv4 server and client addresses, fail closed
   ['fc00::', 7], // unique-local
   ['fe80::', 10], // link-local
   ['fec0::', 10], // site-local (deprecated)
@@ -78,11 +84,49 @@ for (const [net6, prefix] of [
   PRIVATE6.addSubnet(net6, prefix, 'ipv6');
 }
 
-// True when `address` is not a public unicast IP (anything unparsable counts as private).
+// The eight 16-bit groups of an IPv6 address (a trailing dotted IPv4 is folded in), or null.
+function ipv6Groups(address) {
+  let s = String(address).split('%')[0];
+  const tail = [];
+  const dotted = s.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const o = dotted[2].split('.').map(Number);
+    tail.push((o[0] << 8) | o[1], (o[2] << 8) | o[3]);
+    s = dotted[1].endsWith('::') ? dotted[1] : dotted[1].slice(0, -1);
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part) => (part === '' ? [] : part.split(':').map((h) => parseInt(h, 16)));
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  const fill = 8 - head.length - rest.length - tail.length;
+  if (fill < 0 || (halves.length === 1 && fill !== 0)) return null;
+  const groups = [...head, ...new Array(fill).fill(0), ...rest, ...tail];
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff) ? groups : null;
+}
+
+const ipv4Of = (hi, lo) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+
+// The IPv4 address an IPv6 address carries in a translation prefix, or null: the well-known NAT64
+// prefix 64:ff9b::/96 (RFC 6052, last 32 bits) and 6to4 2002::/16 (RFC 3056, bits 16–47).
+function embeddedIpv4(groups) {
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((g) => g === 0)) return ipv4Of(groups[6], groups[7]);
+  if (groups[0] === 0x2002) return ipv4Of(groups[1], groups[2]);
+  return null;
+}
+
+// True when `address` is not a public unicast IP (anything unparsable counts as private). An IPv6
+// address that embeds an IPv4 (NAT64, 6to4) is private when that IPv4 is.
 export function isPrivateAddress(address) {
   const family = net.isIP(address);
   if (family === 4) return PRIVATE4.check(address, 'ipv4');
-  if (family === 6) return PRIVATE6.check(address, 'ipv6');
+  if (family === 6) {
+    if (PRIVATE6.check(address, 'ipv6')) return true;
+    const groups = ipv6Groups(address);
+    if (!groups) return true;
+    const v4 = embeddedIpv4(groups);
+    return v4 !== null && PRIVATE4.check(v4, 'ipv4');
+  }
   return true;
 }
 
@@ -238,7 +282,7 @@ export async function startProxy({ config, lookup = dnsLookup, dial = defaultDia
       refuseHttp(res, block(REASONS.host_not_allowed, target || { origin: url.origin, hostname: url.hostname, port: url.port }, { method: req.method }));
       return;
     }
-    if (!isLocalOrigin(target) && MUTATING_METHODS.has(req.method) && config.allow_remote_mutation !== true) {
+    if (!isLocalOrigin(target) && !SAFE_METHODS.has(String(req.method).toUpperCase()) && config.allow_remote_mutation !== true) {
       refuseHttp(res, block(REASONS.remote_mutation_refused, target, { method: req.method }));
       return;
     }
@@ -346,6 +390,10 @@ export async function startProxy({ config, lookup = dnsLookup, dial = defaultDia
     }
     if (!checkOrigin(target)) {
       refuseRaw(clientSocket, block(REASONS.host_not_allowed, target, { method: req.method }));
+      return;
+    }
+    if (!isLocalOrigin(target) && !SAFE_METHODS.has(String(req.method).toUpperCase()) && config.allow_remote_mutation !== true) {
+      refuseRaw(clientSocket, block(REASONS.remote_mutation_refused, target, { method: req.method }));
       return;
     }
     let upstream;

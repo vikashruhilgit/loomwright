@@ -8,9 +8,19 @@
 //          forces loopback through it unless PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK is
 //          set — so that variable makes openGuardedContext refuse before launching.
 //   route  (this file) — `context.route('**/*')`, installed before any page exists, aborts a request
-//          to an unlisted origin (host_not_allowed) and a POST/PUT/PATCH/DELETE to a remote origin
-//          without allow_remote_mutation (remote_mutation_refused) — including over https, where the
-//          proxy sees host and port only.
+//          to an unlisted origin (host_not_allowed) and, without allow_remote_mutation, any request
+//          to a remote origin whose method is not GET, HEAD or OPTIONS (remote_mutation_refused) —
+//          including over https, where the proxy sees host and port only.
+//
+// Redirects: Chromium follows a redirect without showing the next hop to `context.route`, and over
+// https the proxy sees only CONNECT host:port, so neither layer would see the method of a 307/308
+// hop (which re-sends the body with the same method). So when a remote origin is listed and
+// allow_remote_mutation is off, a non-read request the route layer allows is not continued: the
+// route layer sends it itself (`route.fetch({ maxRedirects: 0 })`, through the same proxy), checks
+// every 307/308 Location with checkRequest before sending the next hop, and fulfills the page with
+// the final response. A hop to a remote origin is refused remote_mutation_refused (layer 'route')
+// before it is sent. Cost of that path: the page sees the final response under the URL it asked
+// for (not the redirect target). Every other request is continued untouched (sent once, by Chromium).
 // Service workers are blocked (`serviceWorkers: 'block'`), so no worker can answer or issue
 // requests outside the route layer.
 //
@@ -27,8 +37,15 @@ import { BLOCKED_HEADER, startProxy } from './proxy.mjs';
 
 export const LOOPBACK_ENV = 'PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK';
 
-// The route layer's own mutating-method set (proxy.mjs keeps its own; the layers are independent).
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// The route layer's own read-only method set: without allow_remote_mutation a remote origin gets
+// these methods and no other (proxy.mjs keeps its own; the layers are independent).
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// Redirect statuses that re-send the method and body unchanged (301/302/303 turn a write into GET).
+const METHOD_PRESERVING_REDIRECTS = new Set([307, 308]);
+
+// The most 307/308 hops the route layer follows for one request (Chromium's own limit is 20).
+const MAX_REDIRECT_HOPS = 20;
 
 // URL schemes that never open a network connection; the route layer lets them through.
 const NO_NETWORK_SCHEMES = new Set(['data:', 'blob:', 'about:']);
@@ -91,10 +108,22 @@ export function checkRequest(config, url, method) {
   if (!isOriginAllowed(config, url) || (!local && config.allow_remote !== true)) {
     return { allow: false, reason: REASONS.host_not_allowed, origin: target.origin, host };
   }
-  if (!local && MUTATING_METHODS.has(String(method).toUpperCase()) && config.allow_remote_mutation !== true) {
+  if (!local && !SAFE_METHODS.has(String(method).toUpperCase()) && config.allow_remote_mutation !== true) {
     return { allow: false, reason: REASONS.remote_mutation_refused, origin: target.origin, host };
   }
   return { allow: true };
+}
+
+// True when a request that the route layer allowed could be redirected (307/308, same method and
+// body) to a remote origin that refuses mutations: a remote origin is listed and allowed, mutations
+// to it are not, and the method is not read-only.
+export function needsRedirectCheck(config, method) {
+  if (SAFE_METHODS.has(String(method).toUpperCase())) return false;
+  if (config.allow_remote_mutation === true || config.allow_remote !== true) return false;
+  return config.origins.some((o) => {
+    const t = parseOrigin(o);
+    return t !== null && !isLocalOrigin(t);
+  });
 }
 
 function originAndHost(url) {
@@ -149,14 +178,52 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
       seen.push(Object.freeze({ url, method, layer: 'route' }));
       const decision = routeLayer === false ? { allow: true } : checkRequest(config, url, method);
       try {
-        if (decision.allow) {
+        if (!decision.allow) {
+          blocks.push(Object.freeze({ reason: decision.reason, origin: decision.origin, host: decision.host, layer: 'route', method, url }));
+          await route.abort('blockedbyclient');
+          return;
+        }
+        if (routeLayer === false || !needsRedirectCheck(config, method)) {
           await route.continue();
           return;
         }
-        blocks.push(Object.freeze({ reason: decision.reason, origin: decision.origin, host: decision.host, layer: 'route', method, url }));
-        await route.abort('blockedbyclient');
+        // Send it ourselves, one hop at a time, so no 307/308 hop leaves unchecked. Each hop is sent
+        // exactly once; the request is never also continued.
+        let hopUrl = url;
+        for (let hop = 0; ; hop += 1) {
+          const response = await route.fetch(hop === 0 ? { maxRedirects: 0 } : { url: hopUrl, maxRedirects: 0 });
+          const location = response.headers().location;
+          if (!METHOD_PRESERVING_REDIRECTS.has(response.status()) || !location) {
+            await route.fulfill({ response });
+            return;
+          }
+          let next;
+          try {
+            next = new URL(location, hopUrl).href;
+          } catch {
+            next = location;
+          }
+          const hopDecision = checkRequest(config, next, method);
+          if (!hopDecision.allow) {
+            blocks.push(Object.freeze({ reason: hopDecision.reason, origin: hopDecision.origin, host: hopDecision.host, layer: 'route', method, url: next, redirectedFrom: hopUrl }));
+            await route.abort('blockedbyclient');
+            return;
+          }
+          if (hop + 1 >= MAX_REDIRECT_HOPS) {
+            await route.abort('failed');
+            return;
+          }
+          seen.push(Object.freeze({ url: next, method, layer: 'route', redirectedFrom: hopUrl }));
+          hopUrl = next;
+        }
       } catch {
-        // the page or context closed while the request was in flight
+        // the page or context closed while the request was in flight, or a hop could not be sent:
+        // fail the request (never continue it, which would send it a second time)
+        try {
+          await route.abort('failed');
+        } catch {
+          // already handled
+        }
       }
     });
 

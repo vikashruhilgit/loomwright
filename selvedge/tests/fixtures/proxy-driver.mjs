@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { startServers } from './servers.mjs';
 
 const [libDir, logRoot] = process.argv.slice(2);
-const { startProxy } = await import(pathToFileURL(path.join(libDir, 'runner', 'proxy.mjs')).href);
+const { startProxy, isPrivateAddress } = await import(pathToFileURL(path.join(libDir, 'runner', 'proxy.mjs')).href);
 
 // rawExchange(port, text, { then? }) → { status, headers, body, tunnel? }. Sends `text`, reads until
 // the proxy closes (or, for an established CONNECT, sends `then` through the tunnel and reads that).
@@ -159,6 +159,8 @@ for (const [label, addresses] of [
   ['one_of_several_private', ['93.184.216.34', '10.0.0.1']],
   ['one_of_several_mapped', ['93.184.216.34', '::ffff:127.0.0.1']],
   ['unspecified', ['0.0.0.0']],
+  ['nat64_loopback', ['64:ff9b::7f00:1']],
+  ['sixto4_private', ['2002:c0a8:101::1']],
 ]) {
   for (const kind of ['http', 'connect']) {
     results.ac15[`${label}_${kind}`] = await arm(['R'], async ({ R }, open) => {
@@ -171,6 +173,12 @@ for (const [label, addresses] of [
     });
   }
 }
+
+// AC15 — the private check decodes an IPv4 embedded in a NAT64 or 6to4 address (a public one stays
+// public), and fails closed on local-use NAT64 and Teredo.
+results.ac15_embedded = Object.fromEntries(
+  ['64:ff9b::7f00:1', '64:ff9b::127.0.0.1', '64:ff9b::a00:1', '2002:7f00:1::1', '2002:c0a8:101::', '64:ff9b:1::1', '2001:0:4136:e378::1', '64:ff9b::5db8:d822', '2002:5db8:d822::1', '2606:4700::1111'].map((a) => [a, isPrivateAddress(a)]),
+);
 
 // AC15 — the proxy connects to the validated address, never to the name (one lookup in total).
 results.ac15_validated = await arm(['R'], async ({ R }, open) => {
@@ -204,12 +212,12 @@ results.ac18_get = await arm(['A'], async ({ A }, open) => {
 
 // AC19 — a plain-HTTP mutation to a listed remote without allow_remote_mutation: refused before lookup.
 results.ac19 = {};
-for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'GET']) {
+for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'PROPFIND', 'MKCOL', 'GET', 'HEAD', 'OPTIONS']) {
   results.ac19[method] = await arm(['R'], async ({ R }, open) => {
     const lookup = countingLookup(['93.184.216.34']);
     const dial = recordingDial(R.port);
     const p = await open({ config: { origins: [remoteOf(R)], allow_remote: true, allow_remote_mutation: false }, lookup, dial });
-    const body = method === 'GET' ? '' : 'k=v';
+    const body = ['GET', 'HEAD', 'OPTIONS'].includes(method) ? '' : 'k=v';
     const r = await rawExchange(
       p.port,
       `${method} ${remoteOf(R)}/m HTTP/1.1\r\nHost: remote.selvedge.test:${R.port}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
@@ -223,6 +231,14 @@ results.ac19_mutation_allowed = await arm(['R'], async ({ R }, open) => {
   const p = await open({ config: { origins: [remoteOf(R)], allow_remote: true, allow_remote_mutation: true }, lookup, dial });
   const r = await rawExchange(p.port, `POST ${remoteOf(R)}/m HTTP/1.1\r\nHost: remote.selvedge.test:${R.port}\r\nContent-Length: 3\r\nConnection: close\r\n\r\nk=v`);
   return { status: r.status, R: R.events };
+});
+
+// An Upgrade with a non-read method to a listed remote is refused by the same method rule.
+results.ac19_upgrade_post = await arm(['R'], async ({ R }, open) => {
+  const lookup = countingLookup(['93.184.216.34']);
+  const p = await open({ config: { origins: [remoteOf(R)], allow_remote: true, allow_remote_mutation: false }, lookup, dial: recordingDial(R.port) });
+  const r = await rawExchange(p.port, `POST ${remoteOf(R)}/ws HTTP/1.1\r\nHost: remote.selvedge.test:${R.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nContent-Length: 0\r\n\r\n`);
+  return { status: r.status, blockedHeader: r.headers['x-selvedge-blocked'] || null, lookups: lookup.calls.length, R: logOf(R), blocks: p.blocks };
 });
 
 // A listed remote without allow_remote (an unvalidated config) is refused, before any lookup.

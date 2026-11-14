@@ -105,6 +105,10 @@ if run_driver nobrowser "$TMP/logs-nb" "$NB"; then
     'R.check_request.next_localhost === "host_not_allowed shop.example.com:443"' 'R.check_request'
   check "$NB" "route layer (AC19): POST, PUT, PATCH and DELETE to a listed remote are refused remote_mutation_refused, GET is allowed" \
     'const c = R.check_request; ["remote_post","remote_put","remote_patch","remote_delete"].every((k) => c[k] === "remote_mutation_refused shop.example.com:443") && c.remote_get === "allow"' 'R.check_request'
+  check "$NB" "route layer: PROPFIND, MKCOL and a custom MERGE to a listed remote are refused remote_mutation_refused; HEAD and OPTIONS are allowed (an allow-list of read methods)" \
+    'const c = R.check_request; ["remote_propfind","remote_mkcol","remote_custom"].every((k) => c[k] === "remote_mutation_refused shop.example.com:443") && c.remote_head === "allow" && c.remote_options === "allow"' 'R.check_request'
+  check "$NB" "route layer: only a non-read request in a config with a listed remote and no allow_remote_mutation is sent by the route layer to check its redirects" \
+    'const r = R.redirect_check; r.local_post_remote_listed === true && r.local_propfind_remote_listed === true && r.get_remote_listed === false && r.head_remote_listed === false && r.post_local_only === false && r.post_mutation_allowed === false && r.post_without_allow_remote === false' 'R.redirect_check'
   check "$NB" "route layer: allow_remote_mutation: true allows the remote POST; a local POST is always allowed" \
     'R.check_request.remote_post_allowed === "allow" && R.check_request.local_post === "allow"' 'R.check_request'
   check "$NB" "route layer: a listed remote without allow_remote is refused; data: is allowed; ftp: is refused" \
@@ -181,12 +185,22 @@ check "$B" "AC18 route layer: https://shop.example.com/?next=localhost is BLOCKE
   "$P"' const s = R.ac18_route; s.nav.ok === false && at(s, "route", "host_not_allowed", "shop.example.com:443").length === 1 && proxyFor(s, "shop.example.com:443").length === 0 && s.proxyBlocks.length === 0' 'R.ac18_route'
 
 echo "-- AC19 remote mutation, service workers, route before any page"
-for method in POST PUT PATCH DELETE; do
+for method in POST PUT PATCH DELETE PROPFIND; do
   check "$B" "AC19 route layer: a same-origin $method on a listed remote page is aborted remote_mutation_refused at layer route; the proxy never saw it" \
     "const s = R.ac19_mutation_route; s.first.status === 200 && s.$method.startsWith('err:') && s.blocks.some((b) => b.layer === 'route' && b.reason === 'remote_mutation_refused' && b.method === '$method' && b.host === s.remote) && !s.proxyBlocks.some((b) => b.method === '$method') && zero(s.logs.R)" 'R.ac19_mutation_route'
 done
 check "$B" "AC19 GET on the same remote is not refused by the mutation rule (route continued it; the proxy refused it only as remote_resolves_private)" \
   'const s = R.ac19_mutation_route; !s.blocks.some((b) => b.method === "GET" && b.reason === "remote_mutation_refused") && s.seen.some((x) => x.method === "GET" && x.url.endsWith("/api/get")) && s.proxyBlocks.some((b) => b.method === "GET" && b.reason === "remote_resolves_private") && zero(s.logs.R)' 'R.ac19_mutation_route'
+for name in ac19_redirect_direct ac19_redirect_chain; do
+  check "$B" "AC19 $name: a form POST 307-redirected to a listed HTTPS remote is refused remote_mutation_refused at layer route before the hop is sent; the proxy saw no CONNECT to the remote (its lookup answers a public address, so nothing else would have refused it)" \
+    "const s = R.$name; s.first.status === 200 && s.failed.method === 'POST' && s.blocks.some((b) => b.layer === 'route' && b.reason === 'remote_mutation_refused' && b.method === 'POST' && b.host === s.remote && b.url.startsWith('https://remote.selvedge.test:8443/api')) && !s.proxyBlocks.some((b) => b.host === s.remote) && !s.proxyLog.some((e) => e.origin.includes('remote.selvedge.test'))" "R.$name"
+done
+check "$B" "AC19 ac19_redirect_direct: A received the POST to /r307 exactly once (the route layer sent it; Chromium never re-sent it)" \
+  'const s = R.ac19_redirect_direct; events(s.logs.A).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1' 'R.ac19_redirect_direct'
+check "$B" "AC19 ac19_redirect_chain: each local hop (A /r307, B /r307) received the POST exactly once before the remote hop was refused" \
+  'const s = R.ac19_redirect_chain; events(s.logs.A).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1 && events(s.logs.B).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1' 'R.ac19_redirect_chain'
+check "$B" "AC19 a local-only 307 chain (A → B → A) under the same config completes: the page gets A's /landing response, every hop sent once, nothing blocked; a GET is continued as before" \
+  'const s = R.ac19_redirect_local; s.final.status === 200 && String(s.final.body).includes("fixture A POST /landing") && events(s.logs.A).filter((e) => e.method === "POST" && e.path.startsWith("/r307")).length === 1 && events(s.logs.B).filter((e) => e.method === "POST").length === 1 && events(s.logs.A).filter((e) => e.method === "POST" && e.path === "/landing").length === 1 && s.blocks.length === 0 && s.get === "ok:200" && events(s.logs.A).filter((e) => e.path === "/plain-get").length === 1' 'R.ac19_redirect_local'
 check "$B" "AC19 service workers are blocked: register() never yields a ready worker, /sw.js is never fetched, nothing controls the page" \
   'const s = R.ac19_sw; s.first.status === 200 && s.sw !== "registered:ready" && s.controlled === false && !s.seen.some((x) => x.url.endsWith("/sw.js")) && !events(s.logs.A).some((e) => e.path === "/sw.js")' 'R.ac19_sw'
 check "$B" "AC19 the first request of the first page is seen by the route layer (layer route), and a listed page loads" \

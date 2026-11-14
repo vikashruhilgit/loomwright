@@ -215,8 +215,10 @@ function readBase(root, ref) {
 
 // loadConfig({ cwd, base }) → { config, raw, root, source }.
 // With `base`, the config is the committed `<base>:selvedge.json` (git show) and the working tree is
-// never read, so a PR branch cannot widen its own allowlist or hooks. Without it, the working-tree
-// file at the repo root (or cwd outside git) is read and `source` says so.
+// never read, so a PR branch cannot widen its own allowlist or change its hook command text. (A hook
+// that runs a repo script still runs the working tree's copy: the approval pins the command text
+// only.) Without it, the working-tree file at the repo root (or cwd outside git) is read and
+// `source` says so.
 export function loadConfig({ cwd = process.cwd(), base } = {}) {
   const root = repoRoot(cwd);
   let raw;

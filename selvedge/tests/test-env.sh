@@ -255,6 +255,19 @@ run "$H" env hook seed
 { [ "$rc" -eq 2 ] && grep -qxF 'BLOCKED env_hooks_unapproved' <<<"$out" && [ ! -e "$H/marker-seed" ]; } \
   && ok "AC5 one changed byte in a hook re-blocks it and the marker is not rewritten" || ko "AC5 one byte: rc=$rc out='$out' err='$err'"
 printf '{"schema_version":1,"origins":["http://localhost:3000"],"hooks":%s}' "$hooks_json" > "$H/selvedge.json"
+# The documented limit, pinned: --base pins the hook COMMAND TEXT, not the script it runs. main has
+# {"seed":"bash seed.sh"} approved; a pr branch edits only seed.sh; `hook seed --base main` runs the
+# pr's seed.sh. If this ever changes, update README "Where approvals live" and the approve prompt.
+S="$TMP/r-hook-script"; mkrepo "$S"
+printf '{"schema_version":1,"origins":["http://localhost:3000"],"hooks":{"seed":"bash seed.sh"}}' > "$S/selvedge.json"
+printf 'touch marker-main\n' > "$S/seed.sh"
+git -C "$S" add selvedge.json seed.sh && git -C "$S" commit -q -m base && git -C "$S" checkout -q -b pr
+printf 'touch marker-pr\n' > "$S/seed.sh"
+git -C "$S" commit -qam 'pr edits only the script'
+write_approval "$(cd "$S" && pwd -P)" "$(sha_of '{"seed":"bash seed.sh"}')"
+run "$S" env hook seed --base main
+{ [ "$rc" -eq 0 ] && [ -e "$S/marker-pr" ] && [ ! -e "$S/marker-main" ]; } \
+  && ok "documented limit: with --base main an approved 'bash seed.sh' runs the checkout's (pr's) seed.sh" || ko "hook script limit: rc=$rc out='$out' err='$err'"
 run "$H" env hook auth_setup
 { [ "$rc" -eq 0 ] && grep -qF 'no auth_setup hook' <<<"$out"; } && ok "a hook name not in selvedge.json is a no-op (exit 0)" || ko "undefined hook: rc=$rc out='$out'"
 run "$H" env hook teardown
@@ -309,6 +322,8 @@ out="$(cd "$P" && printf 'n\n' | python3 -c "$PTY_PY" bash "$CLI" env approve 2>
 out="$(cd "$P" && printf 'y\n' | python3 -c "$PTY_PY" bash "$CLI" env approve 2>&1)"; rc=$?
 { [ "$rc" -eq 0 ] && grep -qF 'seed: "touch marker-seed"' <<<"$out" && grep -qF "$p_sha" <<<"$out" && [ -f "$APPROVALS" ]; } \
   && ok "AC7 on a TTY it prints every hook and the hash, and y writes the approval" || ko "AC7 pty y: rc=$rc out='$out'"
+grep -qF 'limit: the approval pins the hook command text, not the files it runs' <<<"$out" \
+  && ok "AC7 the approve prompt states the limit: the approval pins the command text, not the files a hook runs" || ko "AC7 approve limit line missing: out='$out'"
 out="$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(d.approvals[process.argv[2]] && d.approvals[process.argv[2]].hooks_sha256)' "$APPROVALS" "$(cd "$P" && pwd -P)" 2>&1)"
 [ "$out" = "$p_sha" ] && ok "AC7 the recorded approval is this repo's identity -> the canonical hooks sha256" || ko "AC7 recorded: '$out' want $p_sha"
 { [ "$(file_mode "$APPROVALS")" = "600" ] && [ "$(file_mode "$(dirname "$APPROVALS")")" = "700" ]; } \
