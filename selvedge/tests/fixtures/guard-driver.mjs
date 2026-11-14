@@ -126,6 +126,60 @@ if (mode === 'nobrowser') {
     other: G.reasonForFailure('net::ERR_CONNECTION_REFUSED'),
   };
   results.reason_values = { proxy_unavailable: REASONS.proxy_unavailable };
+
+  // proxyUnreachable on stub proxies: each of its two branches alone, the port boundary, and an
+  // unrelated error.
+  {
+    const P = 41234;
+    results.proxy_unreachable = {
+      closed_any: G.proxyUnreachable({ closed: true, port: P }, new Error('Target page, context or browser has been closed')),
+      refused_port: G.proxyUnreachable({ closed: false, port: P }, new Error(`connect ECONNREFUSED 127.0.0.1:${P}`)),
+      refused_longer_port: G.proxyUnreachable({ closed: false, port: P }, new Error(`connect ECONNREFUSED 127.0.0.1:${P}5`)),
+      unrelated: G.proxyUnreachable({ closed: false, port: P }, new Error('Target page, context or browser has been closed')),
+    };
+  }
+
+  // The route handler itself, driven with a stub route (a spy chromium hands it over), under a
+  // config whose POSTs the route layer sends itself (route.fetch). Each case gets its own guard.
+  const remoteListed = { origins: ['http://localhost:4001', 'https://remote.selvedge.test:8443'], allow_remote: true, allow_remote_mutation: false };
+  const handlerCase = async ({ fetchImpl, fulfillImpl, closeProxy = false }) => {
+    let handler = null;
+    const context = {
+      route: async (_pattern, h) => { handler = h; },
+      on: () => {},
+      newPage: async () => ({}),
+    };
+    const browser = { newContext: async () => context, close: async () => {} };
+    const guard = await G.openGuardedContext({ chromium: { launch: async () => browser }, config: remoteListed });
+    const calls = [];
+    try {
+      if (closeProxy) await guard.proxy.close();
+      const route = {
+        request: () => ({ url: () => 'http://localhost:4001/x-post', method: () => 'POST' }),
+        fetch: async (opts) => { calls.push(`fetch:${JSON.stringify(opts)}`); return fetchImpl(guard.proxy); },
+        fulfill: async () => { calls.push('fulfill'); if (fulfillImpl) await fulfillImpl(); },
+        abort: async (code) => { calls.push(`abort:${code}`); },
+        continue: async () => { calls.push('continue'); },
+      };
+      await handler(route);
+      return { calls, blocks: guard.blocks.map((b) => ({ ...b })) };
+    } finally {
+      await guard.close();
+    }
+  };
+  const response = (status, headers = {}) => ({ status: () => status, headers: () => headers });
+  try {
+    results.handler = {
+      // route.fetch fails with a plain error after the proxy closed: proxy_unavailable, once
+      fetch_fails_proxy_closed: await handlerCase({ closeProxy: true, fetchImpl: async () => { throw new Error('socket hang up'); } }),
+      // route.fetch returned, then route.fulfill fails while the proxy is closed: not proxy_unavailable
+      fulfill_fails_proxy_closed: await handlerCase({ closeProxy: true, fetchImpl: async () => response(200), fulfillImpl: async () => { throw new Error('Target page, context or browser has been closed'); } }),
+      // a 307 whose Location is not a URL: refused host_not_allowed at layer route, never sent
+      bad_location: await handlerCase({ fetchImpl: async () => response(307, { location: 'http://[bad' }) }),
+    };
+  } catch (e) {
+    results.handler = { error: errText(e) };
+  }
 } else if (mode === 'browser') {
   const { chromium } = await import(pathToFileURL(process.env.PW_MODULE).href);
 
@@ -379,6 +433,56 @@ if (mode === 'nobrowser') {
       const final = await done;
       const get = await fetchIn(page, `${A.origin}/plain-get`);
       return { first, final, get };
+    },
+  );
+
+  // The documented costs of the route layer following non-read hops itself (route-guard.mjs header,
+  // README §"The browser guard"): Playwright shows a route handler no redirect mode, so a PUT with
+  // redirect 'manual' (307) or 'error' (302) from A to listed local B is still followed, and a
+  // cross-origin hop carries the page's Authorization header with no CORS preflight. Plain Chromium
+  // would return an opaqueredirect / a TypeError / a failed preflight, and B would get no PUT.
+  await scenario(
+    'ac19_redirect_known_costs',
+    {
+      names: ['A', 'B'],
+      config: ({ A, B }) => ({ origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    },
+    async ({ page }, { A, B }) => {
+      const first = await nav(page, `${A.origin}/`);
+      const out = { first };
+      for (const [key, code, init] of [
+        ['manual', 307, { redirect: 'manual' }],
+        ['errormode', 302, { redirect: 'error' }],
+        ['auth', 307, { headers: { authorization: 'Bearer selvedge-test' } }],
+      ]) {
+        out[key] = await page
+          .evaluate(async ([u, i]) => {
+            try {
+              const r = await fetch(u, i);
+              return `ok:${r.status}:${r.type}:${(await r.text()).trim()}`;
+            } catch (e) {
+              return `err:${e && e.name}`;
+            }
+          }, [`${A.origin}/r${code}?to=${encodeURIComponent(`${B.origin}/landing-${key}`)}`, { method: 'PUT', body: 'k=v', ...init }])
+          .catch((e) => `evalerr:${errText(e)}`);
+      }
+      return out;
+    },
+  );
+  // The route layer follows at most 20 hops of a non-read request itself, then fails it: a PUT down
+  // a 22-hop local 307 chain (A → A → … → /landing) is sent 20 times and never reaches /landing.
+  await scenario(
+    'ac19_redirect_hop_limit',
+    {
+      config: ({ A }) => ({ origins: [A.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    },
+    async ({ page }, { A }) => {
+      const first = await nav(page, `${A.origin}/`);
+      let u = `${A.origin}/landing`;
+      for (let i = 0; i < 22; i += 1) u = `${A.origin}/r307?to=${encodeURIComponent(u)}`;
+      return { first, put: await fetchIn(page, u, { method: 'PUT', body: 'k=v' }) };
     },
   );
 

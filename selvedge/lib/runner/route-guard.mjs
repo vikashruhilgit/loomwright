@@ -22,8 +22,14 @@
 // checkRequest before sending that hop, and fulfills the page with the final response. A hop to a
 // remote origin is refused remote_mutation_refused (layer 'route') before it is sent. A redirect
 // whose next hop is a read is fulfilled to the page and Chromium follows it (the proxy checks its
-// host). Cost of that path: the page sees the final response under the URL it asked for (not the
-// redirect target). Every other request is continued untouched (sent once, by Chromium).
+// host). Costs of that path, all because Playwright exposes neither the request's redirect mode
+// nor Chromium's redirect processing to a route handler: the page sees the final response under
+// the URL it asked for (not the redirect target); a hop is followed even when the page asked for
+// `redirect: 'manual'` or `'error'` (the page gets the hop's response, not an opaqueredirect or a
+// network error, and the hop's server receives the request); and a followed cross-origin hop is
+// sent without the CORS preflight Chromium would send and keeps the original headers (e.g.
+// Authorization). Each followed hop is still checked against the allowlist. Every other request
+// is continued untouched (sent once, by Chromium).
 // Service workers are blocked (`serviceWorkers: 'block'`), so no worker can answer or issue
 // requests outside the route layer.
 //
@@ -141,7 +147,7 @@ export function needsRedirectCheck(config, method) {
 
 // True when a route.fetch failed because the guard's proxy is gone: it was closed, or the connection
 // to its port was refused. Any other failure (a closed page, a refused CONNECT) is not proxy_unavailable.
-function proxyUnreachable(proxy, err) {
+export function proxyUnreachable(proxy, err) {
   if (proxy.closed === true) return true;
   const text = String(err && err.message ? err.message : err);
   return text.includes('ECONNREFUSED') && new RegExp(`127\\.0\\.0\\.1:${proxy.port}(?!\\d)`).test(text);
