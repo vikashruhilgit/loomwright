@@ -1,6 +1,7 @@
 # The browser can only reach allowed origins, and env shell hooks run only with user approval
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/916
 
 > Phase 1, item 02 of `qa-split/00-plan.md` (rev 2, approved 2026-11-12).
 > Decisions: D12 (rev 3: proxy-enforced origin allowlist + mutation rule), D15 (b) base-branch config read and
@@ -107,3 +108,9 @@ the repo can write or imply an approval. File mode 0600.
 - `selvedge/bin/selvedge`, `selvedge/lib/env*`, `selvedge/lib/runner/route-guard*`, `selvedge/lib/runner/proxy*`,
   `selvedge/tests/**`
 - `selvedge/schemas/selvedge-config.schema.json`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-14T17:25:00Z
+- **Brief:** .supervisor/jobs/done/2026-11-14-qa-split-02-target-safety-allowlist-hooks.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/916
