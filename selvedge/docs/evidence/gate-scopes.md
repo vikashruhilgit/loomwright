@@ -23,8 +23,23 @@ from a run on this branch, not an expectation.
 | Gate | Scan scope (quoted defining line) | Reaches `selvedge/`? | Observed |
 |---|---|---|---|
 | `scripts/check-locale-prefix.sh` | `git -c core.quotePath=false ls-files -z --cached --others --exclude-standard -- '*.sh' '*.bash'` (tracked + untracked-unignored) | **Yes**: all four `selvedge/tests/*.sh` (`check-release.sh`, `run.sh`, `test-check-release.sh`, `test-cli.sh`). They pass because none runs a command under a temporary `LC_ALL=` assignment (`grep -c LC_ALL` is 0 in each; the convention, if one is ever needed, is `env LC_ALL=C cmd`). `selvedge/bin/selvedge` has no `.sh` extension, so it is NOT scanned; it also has no `LC_ALL` | `check-locale-prefix: OK — 542/542 scanned shell files (git mode) carry no temporary locale assignment at command position` |
-| `scripts/check-test-hermetic.sh` | `files=(loomwright/scripts/test-*.sh loomwright/scripts/adapters/*/test-*.sh scripts/test-*.sh)` | No. `selvedge/tests/test-*.sh` are hermetic on their own terms instead: each makes a fresh temp `HOME`, makes no network call, and sources nothing from `loomwright/` (decision D4) | `check-test-hermetic: OK — 213/213 covered tests source hermetic-test-env.sh as their first executable line` |
+| `scripts/check-test-hermetic.sh` | `files=(loomwright/scripts/test-*.sh loomwright/scripts/adapters/*/test-*.sh scripts/test-*.sh)` | No. `selvedge/tests/test-*.sh` are hermetic on their own terms instead: each makes a fresh temp `HOME` and sources nothing from `loomwright/` (decision D4). The only network the suite uses is the pinned Playwright library + Chromium download that `test-route-guard.sh` makes through `tests/lib/playwright-cache.sh` (into a selvedge-owned cache, with `PLAYWRIGHT_BROWSERS_PATH` exported before `HOME` moves); every other arm, and every fixture server and proxy, stays on `127.0.0.1` | `check-test-hermetic: OK — 213/213 covered tests source hermetic-test-env.sh as their first executable line` |
 | `scripts/check-mkdir-lock.sh` (not in the brief's list; checked because it is repo-wide) | `{ git ls-files -- loomwright/scripts scripts; git ls-files -o --exclude-standard -- loomwright/scripts scripts; }` | No (selvedge uses only `mkdir -p` anyway) | `check-mkdir-lock: PASS — 338 files scanned, no unjustified bare mkdir` |
+
+## qa-split/02 additions (2026-11-14)
+
+The target-safety item adds Node modules under `selvedge/lib/` and three shell files the shared
+gates can see: `selvedge/tests/test-proxy.sh`, `selvedge/tests/test-route-guard.sh` and the sourced
+helper `selvedge/tests/lib/playwright-cache.sh`. `check-locale-prefix.sh` scans all of them (its
+git mode lists tracked + untracked-unignored `*.sh`); none uses a temporary `LC_ALL=` assignment.
+Observed on this branch: `check-locale-prefix: OK — 546/546 scanned shell files (git mode) carry no
+temporary locale assignment at command position`. The helpers under `tests/lib/` and
+`tests/fixtures/` are not named `test-*`, so `selvedge/tests/run.sh` runs only the top-level tests.
+
+CI cost: `test-route-guard.sh` installs Playwright (`--with-deps` under `CI`) and Chromium on every
+`static` run (no cache in this item). The selvedge step's added wall time is to be read from this
+branch's first CI run; locally, with a warm cache, the whole `bash selvedge/tests/run.sh` took about
+15 s.
 
 ## Release gates
 

@@ -3,7 +3,8 @@
 # (selvedge/lib/env-config.mjs, env-approvals.mjs, env.mjs, schemas/selvedge-config.schema.json):
 # the exact-origin allowlist and its reasons, the --base read from git, user-scoped sha256 hook
 # approvals, the TTY-only approve (driven through a real pseudo-terminal), env init, and the schema /
-# validator key-set equality. Every arm turns red under its row of the brief's pin-mutation table.
+# validator key-set equality, and the README reasons table kept in sync with REASONS. Every arm turns
+# red under its row of the brief's pin-mutation table.
 #
 # Hermetic: a fresh temp HOME (the user's ~/.claude/selvedge/approvals.json is never touched), temp
 # git repos, no network. Needs node (>= 18), git and python3 (for the pty arms); a missing node is a
@@ -97,6 +98,18 @@ const okSet = JSON.stringify(keys) === JSON.stringify([...want].sort());
 const okVals = keys.every((k) => E.REASONS[k] === k);
 console.log(Object.isFrozen(E.REASONS) && okSet && okVals ? "yes" : "no " + JSON.stringify(keys));' 2>&1)"
 [ "$out" = "yes" ] && ok "REASONS is frozen and holds exactly the 16 named reasons (value == key)" || ko "REASONS: $out"
+# README sync: the README's reasons table (rows `| \`<reason>\` | …`) and REASONS hold the same keys,
+# so a reason added to the code without a documented row (or a stale row) turns this red.
+export SELVEDGE_README="$PLUGIN_DIR/README.md"
+out="$(node_eval '
+const md = (await import("node:fs")).readFileSync(process.env.SELVEDGE_README, "utf8");
+const rows = [...md.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);
+const keys = Object.keys(E.REASONS);
+const missing = keys.filter((k) => !rows.includes(k));
+const extra = rows.filter((r) => !keys.includes(r));
+const dupes = rows.filter((r, i) => rows.indexOf(r) !== i);
+console.log(missing.length || extra.length || dupes.length ? JSON.stringify({ missing, extra, dupes }) : "yes");' 2>&1)"
+[ "$out" = "yes" ] && ok "README sync: every REASONS key has exactly one row in README's reasons table, and no row is unknown" || ko "README reasons table out of sync: $out"
 
 echo "-- origin parsing and the allowlist match (AC2, AC14)"
 out="$(node_eval '

@@ -1,7 +1,7 @@
 {
   "name": "selvedge",
-  "version": "0.1.0",
-  "description": "Selvedge checks finished work against its brief and reports an evidenced PASS/FAIL per acceptance criterion. Scaffold release: the selvedge CLI (version, install-cli) and the plugin's own release gate; checking arrives in later releases.",
+  "version": "0.2.0",
+  "description": "Selvedge checks finished work against its brief and reports an evidenced PASS/FAIL per acceptance criterion. Target safety: a committed selvedge.json origin allowlist, the env commands (check, init, approve, hook) with user-approved hooks, and a browser guard (a runner-owned proxy plus a route layer) that refuses unlisted origins; checking arrives in later releases.",
   "author": {
     "name": "vikash ruhil"
   },
