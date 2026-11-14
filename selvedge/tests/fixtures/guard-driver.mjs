@@ -55,6 +55,7 @@ if (mode === 'nobrowser') {
     const page = { spy: 'page' };
     const context = {
       route: async (pattern) => { calls.push(`route:${pattern}`); },
+      addInitScript: async () => { calls.push('addInitScript'); },
       on: (event) => { calls.push(`on:${event}`); },
       newPage: async () => { calls.push('newPage'); return page; },
     };
@@ -142,43 +143,90 @@ if (mode === 'nobrowser') {
   // The route handler itself, driven with a stub route (a spy chromium hands it over), under a
   // config whose POSTs the route layer sends itself (route.fetch). Each case gets its own guard.
   const remoteListed = { origins: ['http://localhost:4001', 'https://remote.selvedge.test:8443'], allow_remote: true, allow_remote_mutation: false };
-  const handlerCase = async ({ fetchImpl, fulfillImpl, closeProxy = false }) => {
+  const handlerCase = async ({ fetchImpl, fulfillImpl, closeProxy = false, request = {}, config = remoteListed }) => {
     let handler = null;
+    let initsBeforePage = null;
+    const inits = [];
     const context = {
       route: async (_pattern, h) => { handler = h; },
       on: () => {},
-      newPage: async () => ({}),
+      addInitScript: async (fn, arg) => { inits.push({ fn: typeof fn, arg }); },
+      newPage: async () => { initsBeforePage = inits.length; return {}; },
     };
     const browser = { newContext: async () => context, close: async () => {} };
-    const guard = await G.openGuardedContext({ chromium: { launch: async () => browser }, config: remoteListed });
+    const guard = await G.openGuardedContext({ chromium: { launch: async () => browser }, config });
     const calls = [];
+    const sent = [];
+    const fulfilled = [];
+    let n = 0;
     try {
       if (closeProxy) await guard.proxy.close();
+      const req = { url: 'http://localhost:4001/x-post', method: 'POST', headers: {}, resourceType: 'xhr', ...request };
       const route = {
-        request: () => ({ url: () => 'http://localhost:4001/x-post', method: () => 'POST' }),
-        fetch: async (opts) => { calls.push(`fetch:${JSON.stringify(opts)}`); return fetchImpl(guard.proxy); },
-        fulfill: async () => { calls.push('fulfill'); if (fulfillImpl) await fulfillImpl(); },
+        request: () => ({ url: () => req.url, method: () => req.method, headers: () => ({ ...req.headers }), resourceType: () => req.resourceType }),
+        fetch: async (opts) => {
+          calls.push(`fetch:${JSON.stringify({ url: opts.url, maxRedirects: opts.maxRedirects })}`);
+          sent.push({ url: opts.url || req.url, headers: opts.headers });
+          n += 1;
+          return fetchImpl(guard.proxy, opts, n);
+        },
+        fulfill: async (opts) => { calls.push('fulfill'); fulfilled.push({ status: opts.response.status(), location: (opts.headers || opts.response.headers()).location || null }); if (fulfillImpl) await fulfillImpl(); },
         abort: async (code) => { calls.push(`abort:${code}`); },
-        continue: async () => { calls.push('continue'); },
+        continue: async (opts) => { calls.push(opts ? `continue:${JSON.stringify(opts)}` : 'continue'); },
       };
       await handler(route);
-      return { calls, blocks: guard.blocks.map((b) => ({ ...b })) };
+      return { calls, sent, fulfilled, inits, initsBeforePage, blocks: guard.blocks.map((b) => ({ ...b })) };
     } finally {
       await guard.close();
     }
   };
   const response = (status, headers = {}) => ({ status: () => status, headers: () => headers });
+  const TAG = G.FETCH_MODE_HEADER;
+  const tagged = (redirect, credentials = 'same-origin', extra = {}) => ({ resourceType: 'fetch', headers: { [TAG]: `redirect=${redirect};credentials=${credentials}`, origin: 'http://localhost:4001', ...extra } });
   try {
     results.handler = {
       // route.fetch fails with a plain error after the proxy closed: proxy_unavailable, once
       fetch_fails_proxy_closed: await handlerCase({ closeProxy: true, fetchImpl: async () => { throw new Error('socket hang up'); } }),
+      // the proxy is open (not closed) but its port refuses: proxy_unavailable, once
+      fetch_refused_proxy_open: await handlerCase({ fetchImpl: async (proxy) => { throw new Error(`connect ECONNREFUSED 127.0.0.1:${proxy.port}`); } }),
+      // the proxy is open and the error is not a refused connection to it: no proxy_unavailable
+      fetch_fails_proxy_open: await handlerCase({ fetchImpl: async () => { throw new Error('socket hang up'); } }),
       // route.fetch returned, then route.fulfill fails while the proxy is closed: not proxy_unavailable
       fulfill_fails_proxy_closed: await handlerCase({ closeProxy: true, fetchImpl: async () => response(200), fulfillImpl: async () => { throw new Error('Target page, context or browser has been closed'); } }),
       // a 307 whose Location is not a URL: refused host_not_allowed at layer route, never sent
       bad_location: await handlerCase({ fetchImpl: async () => response(307, { location: 'http://[bad' }) }),
+      // redirect modes: a 307 PUT to the listed https remote from a fetch tagged manual, tagged
+      // error, or untagged is never followed or refused here: the page gets the 3xx, Location withheld
+      manual_withheld: await handlerCase({ request: { method: 'PUT', ...tagged('manual') }, fetchImpl: async () => response(307, { location: 'https://remote.selvedge.test:8443/api' }) }),
+      error_withheld: await handlerCase({ request: { method: 'PUT', ...tagged('error') }, fetchImpl: async () => response(307, { location: 'https://remote.selvedge.test:8443/api' }) }),
+      untagged_fetch_withheld: await handlerCase({ request: { method: 'PUT', resourceType: 'fetch', headers: { origin: 'http://localhost:4001' } }, fetchImpl: async () => response(307, { location: 'http://localhost:4001/landing' }) }),
+      // follow: a 307 PUT hop to another origin is followed with the tag removed and Authorization dropped
+      follow_cross_origin: await handlerCase({
+        config: { ...remoteListed, origins: [...remoteListed.origins, 'http://localhost:4002'] },
+        request: { method: 'PUT', ...tagged('follow', 'same-origin', { authorization: 'Bearer t', cookie: 'sid=s' }) },
+        fetchImpl: async (_p, _o, i) => (i === 1 ? response(307, { location: 'http://localhost:4002/landing' }) : response(200)),
+      }),
     };
   } catch (e) {
     results.handler = { error: errText(e) };
+  }
+  results.request_modes = {
+    fetch_follow: G.requestModes('fetch', { [TAG]: 'redirect=follow;credentials=include' }),
+    fetch_manual: G.requestModes('fetch', { [TAG]: 'redirect=manual;credentials=same-origin' }),
+    fetch_untagged: G.requestModes('fetch', {}),
+    fetch_bad_tag: G.requestModes('fetch', { [TAG]: 'redirect=sideways;credentials=include' }),
+    xhr_tag_ignored: G.requestModes('xhr', { [TAG]: 'redirect=manual;credentials=omit' }),
+    document: G.requestModes('document', {}),
+  };
+  {
+    const base = { authorization: 'Bearer t', cookie: 'sid=s', accept: '*/*' };
+    const h = (credentials, crossed, tainted) => G.redirectHopHeaders(base, { credentials, crossed, tainted });
+    results.hop_headers = {
+      same_origin_clean: h('same-origin', false, false),
+      same_origin_tainted: h('same-origin', true, true),
+      include_crossed: h('include', true, true),
+      omit_same: h('omit', false, false),
+    };
   }
 } else if (mode === 'browser') {
   const { chromium } = await import(pathToFileURL(process.env.PW_MODULE).href);
@@ -436,25 +484,30 @@ if (mode === 'nobrowser') {
     },
   );
 
-  // The documented costs of the route layer following non-read hops itself (route-guard.mjs header,
-  // README §"The browser guard"): Playwright shows a route handler no redirect mode, so a PUT with
-  // redirect 'manual' (307) or 'error' (302) from A to listed local B is still followed, and a
-  // cross-origin hop carries the page's Authorization header with no CORS preflight. Plain Chromium
-  // would return an opaqueredirect / a TypeError / a failed preflight, and B would get no PUT.
+  // The page's redirect and credentials modes on a non-read hop the route layer would follow
+  // (route-guard.mjs header, README §"The browser guard"): a PUT with redirect 'manual' (307) or
+  // 'error' (302) from A to listed local B is never sent to B (an opaque redirect / a TypeError, as
+  // in plain Chromium); a followed hop to another origin loses Authorization and, under the default
+  // credentials, cookies, while a same-origin hop keeps both and `credentials: 'include'` keeps
+  // cookies; a non-read fetch from a Worker (no tag) is never followed by the route layer.
   await scenario(
-    'ac19_redirect_known_costs',
+    'ac19_redirect_modes',
     {
       names: ['A', 'B'],
       config: ({ A, B }) => ({ origins: [A.origin, B.origin, REMOTE_TLS], allow_remote: true, allow_remote_mutation: false }),
       lookup: async () => [{ address: '93.184.216.34', family: 4 }],
     },
-    async ({ page }, { A, B }) => {
+    async ({ page, context }, { A, B }) => {
+      await context.addCookies([{ name: 'sid', value: 'selvedge-cookie', url: A.origin }]);
       const first = await nav(page, `${A.origin}/`);
       const out = { first };
-      for (const [key, code, init] of [
-        ['manual', 307, { redirect: 'manual' }],
-        ['errormode', 302, { redirect: 'error' }],
-        ['auth', 307, { headers: { authorization: 'Bearer selvedge-test' } }],
+      const AUTH = { authorization: 'Bearer selvedge-test' };
+      for (const [key, code, target, init] of [
+        ['manual', 307, B, { redirect: 'manual' }],
+        ['errormode', 302, B, { redirect: 'error' }],
+        ['cross', 307, B, { headers: AUTH }],
+        ['include', 307, B, { headers: AUTH, credentials: 'include' }],
+        ['same', 307, A, { headers: AUTH }],
       ]) {
         out[key] = await page
           .evaluate(async ([u, i]) => {
@@ -464,9 +517,21 @@ if (mode === 'nobrowser') {
             } catch (e) {
               return `err:${e && e.name}`;
             }
-          }, [`${A.origin}/r${code}?to=${encodeURIComponent(`${B.origin}/landing-${key}`)}`, { method: 'PUT', body: 'k=v', ...init }])
+          }, [`${A.origin}/r${code}?to=${encodeURIComponent(`${target.origin}/landing-${key}`)}`, { method: 'PUT', body: 'k=v', ...init }])
           .catch((e) => `evalerr:${errText(e)}`);
       }
+      out.omit = await fetchIn(page, `${A.origin}/plain-omit`, { method: 'PUT', body: 'k=v', credentials: 'omit' });
+      out.worker = await page
+        .evaluate(async (u) => {
+          const src = `fetch(${JSON.stringify(u)}, { method: 'PUT', body: 'k=v' }).then((r) => postMessage('ok:' + r.status), (e) => postMessage('err:' + (e && e.name)));`;
+          const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+          return new Promise((resolve) => {
+            const t = setTimeout(() => resolve('timeout'), 10000);
+            w.onmessage = (m) => { clearTimeout(t); resolve(m.data); };
+            w.onerror = () => { clearTimeout(t); resolve('worker-error'); };
+          });
+        }, `${A.origin}/r307?to=${encodeURIComponent(`${A.origin}/landing-worker`)}`)
+        .catch((e) => `evalerr:${errText(e)}`);
       return out;
     },
   );

@@ -154,19 +154,31 @@ refusal names its layer:
    over https the proxy sees only the CONNECT, so neither would see the method of a redirect hop.
    Chromium keeps the method and body on a 307 or 308, and on a 301 or 302 for every method except
    POST (which becomes GET); a 303 turns every method except HEAD into GET. So when a remote origin
-   is listed and `allow_remote_mutation` is off, the route layer sends a non-read request itself,
-   one hop at a time through the same proxy, checks the target of every redirect whose next hop
-   keeps a method other than GET, HEAD or OPTIONS before sending it, and refuses such a hop to a
-   remote origin (`remote_mutation_refused`, layer `route`). A redirect whose next hop is a read is
-   handed to the page and Chromium follows it through the proxy. If the proxy is gone, a request
-   the route layer sends fails `proxy_unavailable` like any other. The costs on that path, because
-   Playwright shows a route handler neither the request's redirect mode nor Chromium's redirect
-   handling: the page gets the final response under the URL it asked for, not the redirect
-   target's URL; a hop is followed even when the page's `fetch` asked for `redirect: 'manual'` or
-   `'error'` (the page gets the hop's response instead of an opaque redirect or an error, and the
-   hop's server receives the request); and a cross-origin hop is sent without the CORS preflight
-   Chromium would send, with the original headers (including `Authorization`). Every hop is still
-   checked against the allowlist. Every other request is passed on untouched.
+   is listed and `allow_remote_mutation` is off, the route layer sends a non-read request itself
+   through the same proxy. A redirect whose next hop is a read is handed to the page and Chromium
+   follows it through the proxy. For a redirect whose next hop keeps a method other than GET, HEAD
+   or OPTIONS, the route layer needs the request's redirect mode, which Playwright does not show a
+   route handler. So under that config an init script wraps the page's `fetch` and tags each
+   non-read call with its `redirect` and `credentials` modes (a header the route layer removes
+   before anything is sent):
+   - **follow** (a navigation, a form, an XHR, or a `fetch` tagged `follow`): the route layer checks
+     the hop's target before sending it, refuses a hop to a remote origin
+     (`remote_mutation_refused`, layer `route`), and follows the rest itself, one hop at a time, as
+     a browser would: `Authorization` is dropped once a hop changes origin, and cookies go only
+     where the credentials mode lets them (`include`, or `same-origin` while every URL so far has
+     the page's origin; a navigation, form or XHR counts as `same-origin`).
+   - **manual** or **error**, or a `fetch` with no tag (one from a Worker, or a `no-cors` POST):
+     the route layer never sends the hop. The page gets the redirect with its `Location` replaced by
+     an unlisted `.invalid` host, so Chromium applies the page's own mode: an opaque redirect for
+     `manual`, a network error for `error`, and for an untagged `fetch` that does follow, a request
+     to that host, which the proxy refuses (`host_not_allowed`). Nothing reaches a real server.
+
+   If the proxy is gone, a request the route layer sends fails `proxy_unavailable` like any other.
+   The costs of the follow path: the page gets the final response under the URL it asked for, not
+   the redirect target's URL; and cookies on a followed hop are the browser context's for that
+   URL, without SameSite applied. (No CORS preflight reaches a server for any request
+   while Playwright routes the context: Playwright answers preflights itself.) Every request is
+   still checked against the allowlist. Every other request is passed on untouched.
 
 Playwright sends localhost through the proxy only while
 `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is unset, so the guard refuses to launch if

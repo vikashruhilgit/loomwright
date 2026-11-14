@@ -18,18 +18,24 @@
 // (POST becomes GET); 303 makes every method but HEAD a GET (nextRedirectMethod). So when a remote
 // origin is listed and allow_remote_mutation is off, a non-read request the route layer allows is
 // not continued: the route layer sends it itself (`route.fetch({ maxRedirects: 0 })`, through the
-// same proxy), checks every 3xx Location whose next method is not GET, HEAD or OPTIONS with
-// checkRequest before sending that hop, and fulfills the page with the final response. A hop to a
-// remote origin is refused remote_mutation_refused (layer 'route') before it is sent. A redirect
-// whose next hop is a read is fulfilled to the page and Chromium follows it (the proxy checks its
-// host). Costs of that path, all because Playwright exposes neither the request's redirect mode
-// nor Chromium's redirect processing to a route handler: the page sees the final response under
-// the URL it asked for (not the redirect target); a hop is followed even when the page asked for
-// `redirect: 'manual'` or `'error'` (the page gets the hop's response, not an opaqueredirect or a
-// network error, and the hop's server receives the request); and a followed cross-origin hop is
-// sent without the CORS preflight Chromium would send and keeps the original headers (e.g.
-// Authorization). Each followed hop is still checked against the allowlist. Every other request
-// is continued untouched (sent once, by Chromium).
+// same proxy). A 3xx whose next hop is a read is fulfilled to the page and Chromium follows it
+// (the proxy checks its host). A 3xx whose next hop keeps a non-read method depends on the
+// request's redirect mode, which Playwright does not expose to a route handler, so the page tells
+// it: under such a config an init script wraps the page's `fetch` and tags every non-read fetch
+// with its redirect and credentials modes (FETCH_MODE_HEADER, removed before anything is sent).
+//   follow   (every navigation, form and XHR, and a fetch tagged follow): the route layer checks
+//            the hop with checkRequest before sending it — a hop to a remote origin is refused
+//            remote_mutation_refused (layer 'route') — and follows it itself, with the browser's
+//            redirect rules for credentials: Authorization is dropped once a hop changes origin,
+//            and cookies go only where the credentials mode lets them (redirectHopHeaders).
+//   manual, error, or unknown (a fetch with no valid tag: a Worker's fetch, a no-cors POST): the
+//            hop is never sent by the route layer. The page gets the 3xx with its Location
+//            withheld (WITHHELD_LOCATION), so Chromium applies the page's own mode: `manual` gives
+//            an opaque redirect, `error` a network error, and a fetch that does follow goes to a
+//            host neither layer lets through (it fails; nothing reaches a real server).
+// Costs of the follow path: the page gets the final response under the URL it asked for (not the
+// redirect target), and cookies on a followed hop are the context's for that URL (SameSite is not
+// applied). Every other request is continued untouched (sent once, by Chromium).
 // Service workers are blocked (`serviceWorkers: 'block'`), so no worker can answer or issue
 // requests outside the route layer.
 //
@@ -53,6 +59,73 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // The most redirect hops the route layer follows for one request (Chromium's own limit is 20).
 const MAX_REDIRECT_HOPS = 20;
+
+// The header the page's fetch wrapper (tagFetchModes) puts on every non-read fetch under a config
+// whose non-read requests the route layer sends itself: `redirect=<mode>;credentials=<mode>`. The
+// route layer reads it and removes it; it never leaves the browser.
+export const FETCH_MODE_HEADER = 'x-selvedge-fetch-mode';
+
+// The Location a 3xx is handed to the page with when the route layer will not follow it: an
+// unlisted host under the reserved .invalid TLD, so a browser that follows it anyway is refused.
+export const WITHHELD_LOCATION = 'http://selvedge-redirect-withheld.invalid/';
+
+const REDIRECT_MODES = new Set(['follow', 'manual', 'error']);
+const CREDENTIALS_MODES = new Set(['omit', 'same-origin', 'include']);
+
+// The init script (runs in every frame before the page's own scripts): wraps fetch so a non-read
+// request carries its redirect and credentials modes in `tag`. A Request whose headers cannot take
+// the tag (mode no-cors) goes untagged. Self-contained: it is serialized into the page.
+export function tagFetchModes(tag) {
+  const original = globalThis.fetch;
+  if (typeof original !== 'function') return;
+  const reads = ['GET', 'HEAD', 'OPTIONS'];
+  globalThis.fetch = function fetch(input, init) {
+    let request;
+    try {
+      request = new Request(input, init);
+    } catch {
+      return original.apply(this, arguments);
+    }
+    if (reads.includes(request.method.toUpperCase())) return original.call(this, request);
+    const headers = new Headers(request.headers);
+    headers.set(tag, `redirect=${request.redirect};credentials=${request.credentials}`);
+    return original.call(this, new Request(request, { headers }));
+  };
+}
+
+// The redirect and credentials modes of a request the route layer sends itself. A fetch carries
+// them in FETCH_MODE_HEADER; one without a valid tag has redirect mode 'unknown'. Every other
+// resource type (navigation, form, XHR, beacon) can only follow; its credentials are taken as
+// 'same-origin', the choice that sends fewer credentials on a cross-origin hop.
+export function requestModes(resourceType, headers) {
+  if (resourceType !== 'fetch') return { redirect: 'follow', credentials: 'same-origin' };
+  const m = /^redirect=([a-z-]+);credentials=([a-z-]+)$/.exec(String((headers && headers[FETCH_MODE_HEADER]) || ''));
+  if (!m || !REDIRECT_MODES.has(m[1]) || !CREDENTIALS_MODES.has(m[2])) return { redirect: 'unknown', credentials: 'same-origin' };
+  return { redirect: m[1], credentials: m[2] };
+}
+
+function originOf(url) {
+  try {
+    const o = new URL(url).origin;
+    return o === 'null' ? null : o;
+  } catch {
+    return null;
+  }
+}
+
+// The headers for a followed redirect hop, by the browser's fetch rules. `base` is the original
+// request's headers (without FETCH_MODE_HEADER). Authorization is dropped once any hop so far
+// changed origin (`crossed`). Cookies: the context's for the hop URL (route.fetch adds them when no
+// Cookie header is given) when credentials are 'include', or 'same-origin' while every URL so far
+// has the page's origin (`tainted` false); otherwise none — an empty Cookie header stops route.fetch
+// adding them.
+export function redirectHopHeaders(base, { credentials, crossed, tainted }) {
+  const headers = { ...base };
+  delete headers.cookie;
+  if (crossed) delete headers.authorization;
+  if (!(credentials === 'include' || (credentials === 'same-origin' && !tainted))) headers.cookie = '';
+  return headers;
+}
 
 // The method Chromium sends on the hop after a redirect with this status (the Fetch spec rule), or
 // null when Chromium does not follow the status. 307/308 keep the method and body; 301/302 keep
@@ -197,6 +270,8 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
   try {
     browser = await chromium.launch(buildLaunchOptions({ proxyPort: proxy.port }));
     const context = await browser.newContext({ serviceWorkers: 'block' });
+    // Only a config whose non-read requests the route layer sends itself needs the fetch modes.
+    if (routeLayer !== false && needsRedirectCheck(config, 'POST')) await context.addInitScript(tagFetchModes, FETCH_MODE_HEADER);
 
     await context.route('**/*', async (route) => {
       const request = route.request();
@@ -213,24 +288,44 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
           return;
         }
         if (routeLayer === false || !needsRedirectCheck(config, method)) {
-          await route.continue();
+          if (request.headers()[FETCH_MODE_HEADER] === undefined) {
+            await route.continue();
+          } else {
+            const headers = { ...request.headers() };
+            delete headers[FETCH_MODE_HEADER];
+            await route.continue({ headers });
+          }
           return;
         }
         // Send it ourselves, one hop at a time, so no hop that keeps a non-read method leaves
         // unchecked. Each hop is sent exactly once; the request is never also continued. A hop is
-        // followed here only when its next method is not a read, and nextRedirectMethod changes a
-        // method only into a read, so every followed hop re-sends the original method and body
-        // (route.fetch's default).
+        // followed here only when its next method is not a read and the page's redirect mode is
+        // follow, and nextRedirectMethod changes a method only into a read, so every followed hop
+        // re-sends the original method and body (route.fetch's default).
+        const sent = { ...request.headers() };
+        const modes = requestModes(request.resourceType(), sent);
+        delete sent[FETCH_MODE_HEADER];
+        const pageOrigin = originOf(sent.origin);
+        let crossed = false;
+        let tainted = pageOrigin === null || originOf(url) !== pageOrigin;
         let hopMethod = String(method).toUpperCase();
+        // hop 0 carries the browser's own headers; a fetch tagged credentials 'omit' gets an empty
+        // Cookie so route.fetch does not add the context's cookies the browser would not send
+        let hopHeaders = modes.credentials === 'omit' ? { ...sent, cookie: '' } : sent;
         for (let hop = 0; ; hop += 1) {
           fetching = true;
-          const response = await route.fetch(hop === 0 ? { maxRedirects: 0 } : { url: hopUrl, maxRedirects: 0 });
+          const response = await route.fetch(hop === 0 ? { headers: hopHeaders, maxRedirects: 0 } : { url: hopUrl, headers: hopHeaders, maxRedirects: 0 });
           fetching = false;
           const location = response.headers().location;
           const nextMethod = location ? nextRedirectMethod(response.status(), hopMethod) : null;
           if (nextMethod === null || SAFE_METHODS.has(nextMethod)) {
             // not a redirect Chromium follows, or one whose next hop is a read: hand it to the page
             await route.fulfill({ response });
+            return;
+          }
+          if (modes.redirect !== 'follow') {
+            // manual, error or unknown: never sent from here; Chromium applies the page's own mode
+            await route.fulfill({ response, headers: { ...response.headers(), location: WITHHELD_LOCATION } });
             return;
           }
           let next;
@@ -250,6 +345,10 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
             return;
           }
           seen.push(Object.freeze({ url: next, method: nextMethod, layer: 'route', redirectedFrom: hopUrl }));
+          const nextOrigin = originOf(next);
+          crossed = crossed || nextOrigin === null || nextOrigin !== originOf(hopUrl);
+          tainted = tainted || nextOrigin === null || nextOrigin !== pageOrigin;
+          hopHeaders = redirectHopHeaders(sent, { credentials: modes.credentials, crossed, tainted });
           hopUrl = next;
           hopMethod = nextMethod;
         }

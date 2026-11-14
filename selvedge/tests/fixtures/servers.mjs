@@ -2,7 +2,8 @@
 // test-route-guard.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
 //
 // Each server binds 127.0.0.1 on a random port and appends every accepted TCP connection and every
-// request line (method, path, Upgrade and Authorization headers) to its own JSON log file (a JSON array, rewritten on
+// request line (method, path, Upgrade, Authorization and Cookie headers, and the route layer's fetch-mode tag if one
+// ever arrives) to its own JSON log file (a JSON array, rewritten on
 // each event). Tests assert "records zero connections" on that file, so a connection the guard was
 // meant to stop is visible even when the browser reports nothing.
 //
@@ -39,7 +40,7 @@ export async function startServer(name, logDir) {
   writeFileSync(logFile, '[]');
 
   const server = http.createServer((req, res) => {
-    record({ event: 'request', method: req.method, path: req.url, upgrade: req.headers.upgrade || null, authorization: req.headers.authorization || null });
+    record({ event: 'request', method: req.method, path: req.url, upgrade: req.headers.upgrade || null, authorization: req.headers.authorization || null, cookie: req.headers.cookie || null, fetchMode: req.headers['x-selvedge-fetch-mode'] || null });
     const url = new URL(req.url, 'http://fixture.invalid');
     const to = url.searchParams.get('to');
     req.resume();
