@@ -6,7 +6,10 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# Exit codes: 0 ok, 1 an operation failed, 2 usage error.
+# The `env` commands run lib/env.mjs and are the only ones that need Node (>= 18); --version,
+# help and install-cli stay bash-only.
+#
+# Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line).
 set -uo pipefail
 
 die() { printf 'selvedge: %s\n' "$*" >&2; exit 1; }
@@ -46,8 +49,16 @@ Commands:
   --version, version   print the plugin version
   install-cli          link this CLI into \$HOME/.local/bin/selvedge (a plugin's bin/ may not
                        be on PATH; see docs/cli-discovery.md)
+  env <check|init|approve|hook>
+                       selvedge.json origin allowlist and approved env hooks (needs Node >= 18;
+                       \`selvedge env help\` for details)
   help, -h, --help     print this help
 EOF
+}
+
+cmd_env() {
+  command -v node >/dev/null 2>&1 || die "the env commands need Node.js >= 18 on PATH (node not found)"
+  exec node "$BIN_DIR/../lib/env.mjs" "$@"
 }
 
 cmd_version() {
@@ -84,6 +95,7 @@ case "${1:-}" in
   "") usage ;;
   --version|version) cmd_version ;;
   install-cli) cmd_install_cli ;;
+  env) shift; cmd_env "$@" ;;
   help|-h|--help) usage ;;
   *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
 esac

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "selvedge.json",
+  "description": "Selvedge target configuration: the exact origins the guarded browser may reach and the env hooks a user may approve. Validated by selvedge/lib/env-config.mjs, whose accepted key sets selvedge/tests/test-env.sh asserts equal to the property names here.",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "origins": {
+      "description": "Exact origins, each scheme://host[:port] (http or https). Compared as parsed exact strings: no regex, suffix or substring match. A non-local origin (any host other than localhost, 127.0.0.1, [::1]) needs allow_remote.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "allow_remote": {
+      "description": "Permit non-local origins in the list.",
+      "type": "boolean"
+    },
+    "allow_remote_mutation": {
+      "description": "Permit POST, PUT, PATCH and DELETE to a remote origin.",
+      "type": "boolean"
+    },
+    "hooks": {
+      "description": "Shell commands run at the repo root by `selvedge env hook <name>`, only with a user-scoped approval and only while every origin is local.",
+      "type": "object",
+      "properties": {
+        "seed": { "type": "string" },
+        "reset": { "type": "string" },
+        "auth_setup": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
