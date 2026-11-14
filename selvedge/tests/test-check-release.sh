@@ -50,7 +50,9 @@ jq '.version = "9.9.9"' "$PLUGIN_DIR/.claude-plugin/plugin.json" > "$d/.claude-p
 expect_gate "plugin.json version != changelog top heading fails" nonzero changelog_version_mismatch "$d"
 
 d="$(fixture top-heading)"
-{ printf '# Changelog\n\n## 0.2.0 — 2026-12-01\n\n- newer\n\n'; sed -n '/^## [0-9]/,$p' "$PLUGIN_DIR/CHANGELOG.md"; } > "$d/CHANGELOG.md"
+# The prepended heading must never equal the real version: a literal "next release" version would
+# turn this arm green the day the plugin releases it.
+{ printf '# Changelog\n\n## 999.999.999 — 2026-12-01\n\n- newer\n\n'; sed -n '/^## [0-9]/,$p' "$PLUGIN_DIR/CHANGELOG.md"; } > "$d/CHANGELOG.md"
 expect_gate "only the FIRST release heading counts" nonzero changelog_version_mismatch "$d"
 
 d="$(fixture invalid-json)"
