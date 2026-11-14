@@ -13,7 +13,8 @@
 //      allow-list, not a deny-list: a method nobody listed is refused. (A CONNECT tunnel hides the
 //      method; route-guard.mjs's route layer covers https.)
 //   3. resolution: a remote host is looked up ONCE (`lookup(host, { all: true })`); if ANY resolved
-//      address is private, loopback, link-local, unique-local, multicast or unspecified — or an
+//      address is private, loopback, link-local, unique-local, multicast, unspecified or reserved
+//      (the PRIVATE4/PRIVATE6 tables below, incl. shared CGNAT and benchmarking ranges) — or an
 //      IPv6 address that embeds a private IPv4 (NAT64, 6to4; Teredo and local-use NAT64 always) ⇒ BLOCKED
 //      remote_resolves_private and no connection is attempted. Otherwise the proxy connects to the
 //      validated addresses themselves, never to the name (so no second lookup can rebind it). Local
@@ -236,7 +237,7 @@ export async function startProxy({ config, lookup = dnsLookup, dial = defaultDia
       addresses = (Array.isArray(rows) ? rows : [rows]).map((r) => (r && typeof r === 'object' ? r.address : r));
     }
     if (addresses.length === 0 || addresses.some((a) => typeof a !== 'string' || isPrivateAddress(a))) {
-      const err = new Error(`${target.hostname} resolves to a private, loopback or link-local address (${addresses.join(', ')})`);
+      const err = new Error(`${target.hostname} resolves to a private, loopback, link-local, unique-local, multicast, unspecified or reserved address (${addresses.join(', ')})`);
       err.reason = REASONS.remote_resolves_private;
       throw err;
     }

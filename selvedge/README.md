@@ -139,7 +139,8 @@ refusal names its layer:
    and nothing else: no bypass list, no `direct://` fallback. Every connection Chromium makes goes
    through it: a navigation, each redirect hop, `fetch`, a `ws`/`wss` handshake, an https CONNECT.
    An unlisted origin is refused before any DNS lookup. A listed remote host is looked up once; if
-   any address it resolves to is private, loopback, link-local or unspecified (an IPv6 NAT64 or
+   any address it resolves to is private, loopback, link-local, unique-local, multicast,
+   unspecified or reserved (including shared CGNAT and benchmarking ranges; an IPv6 NAT64 or
    6to4 address counts by the IPv4 it embeds; local-use NAT64 and Teredo always count), it is
    refused and no connection is attempted. Otherwise the proxy connects to that validated address,
    never to the name again. If the proxy dies, the browser's requests fail (`proxy_unavailable`); they never go
@@ -189,7 +190,7 @@ and usage reasons print on stderr. Both exit 2.
 | Reason | Kind | Meaning |
 |---|---|---|
 | `host_not_allowed` | BLOCKED | the browser asked for an origin not in `origins` (exact scheme, host and port) |
-| `remote_resolves_private` | BLOCKED | a listed remote host resolved to a private, loopback, link-local or unspecified address |
+| `remote_resolves_private` | BLOCKED | a listed remote host resolved to a private, loopback, link-local, unique-local, multicast, unspecified or reserved address |
 | `remote_mutation_refused` | BLOCKED | a method other than GET, HEAD or OPTIONS to a remote origin (directly or as a redirect hop that keeps the method: 307/308, or 301/302 for any method but POST) without `allow_remote_mutation` |
 | `proxy_loopback_disabled` | BLOCKED | `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set, so localhost would skip the proxy |
 | `proxy_unavailable` | BLOCKED | the guard's proxy is gone; the request failed instead of going direct |

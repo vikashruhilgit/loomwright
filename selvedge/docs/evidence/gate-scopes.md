@@ -28,8 +28,9 @@ from a run on this branch, not an expectation.
 
 ## qa-split/02 additions (2026-11-14)
 
-The target-safety item adds Node modules under `selvedge/lib/` and three shell files the shared
-gates can see: `selvedge/tests/test-proxy.sh`, `selvedge/tests/test-route-guard.sh` and the sourced
+The target-safety item adds Node modules under `selvedge/lib/` and four shell files the shared
+gates can see: `selvedge/tests/test-env.sh`, `selvedge/tests/test-proxy.sh`,
+`selvedge/tests/test-route-guard.sh` and the sourced
 helper `selvedge/tests/lib/playwright-cache.sh`. `check-locale-prefix.sh` scans all of them (its
 git mode lists tracked + untracked-unignored `*.sh`); none uses a temporary `LC_ALL=` assignment.
 Observed on this branch: `check-locale-prefix: OK — 546/546 scanned shell files (git mode) carry no

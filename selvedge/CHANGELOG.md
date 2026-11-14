@@ -20,7 +20,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   origin is remote. Limit: the approval pins the command text, not the files a hook runs, so a hook
   that calls a repo script runs that script as it is in the current checkout.
 - The browser guard: a runner-owned forward proxy (`lib/runner/proxy.mjs`, exact-origin checks,
-  one DNS lookup per remote connection with private/loopback/link-local results refused, including
+  one DNS lookup per remote connection with private, loopback, link-local, unique-local, multicast,
+  unspecified or reserved results refused, including
   NAT64 and 6to4 addresses that embed a private IPv4, the validated address dialled) and a
   `context.route` second layer (`lib/runner/route-guard.mjs`, service workers blocked, Playwright
   injected by the caller) that also checks each redirect hop that keeps a non-read method (307/308,
