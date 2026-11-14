@@ -338,8 +338,12 @@ had fully merged.
 ports-and-adapters so the core runs beyond Claude Code, with vendor-native adoptions living in the
 adapter. A coupling ratchet is in place to stop the seam growing.
 
-**5. QA spin-off (Selvedge).** *queued.* Seven items to move the QA agents, commands, and skills
-into a sibling plugin so Loomwright's core stays a mill, not a suite.
+**5. QA moves out: Selvedge, rebuilt.** *planned.* QA leaves Loomwright entirely and is rebuilt,
+not moved, as `selvedge`, a standalone sibling plugin that answers one question per acceptance
+criterion: PASS, FAIL, BLOCKED or NOT_VERIFIABLE, with evidence. A model writes a frozen step plan; a
+runner with no model in it executes the plan, behind an origin allowlist. Loomwright calls it from
+one seam, and its verdict is advisory: it never gates a merge. Seven build items come first, then a
+held-out accuracy measurement before the seam lands, so Loomwright's core stays a mill, not a suite.
 
 ### D2 — "What's next" (ordered, with the condition that unblocks each)
 
@@ -348,7 +352,7 @@ structural: each item states *what has to be true before it starts*, not a date.
 
 | Next | What it is | Unblocked by |
 |---|---|---|
-| **Ground-truth verification** | run the software in the heal pass — Playwright for web apps, headless loops against a corpus. A hard pass/fail, not a score | nothing; this is the current front |
+| **Ground-truth verification** | run the software in the heal pass — headless loops against a corpus, and web apps through Selvedge's `verify:` seam. A hard pass/fail per check, not a score, and advisory to the merge | nothing for the corpus loops (the current front); for web apps, Selvedge passing its held-out false-PASS gate |
 | **Workers get shared context and explicit file lanes** | Launch Pad's file-impact analysis handed to workers instead of thrown away, so each one stops re-acquiring the codebase cold | the runner work below, which composes the spawn prompt |
 | **The runner substrate** | the SDK runner becomes the execution core; the judgment layers (Twin, lessons, rules, review lenses) ride on top | fixing it forward — it is a chosen substrate, not an experiment |
 | **Twin starts enforcing** | flip advisory conformance to a real gate | only after the benchmark has caught real regressions without a false-positive habit. **No calendar flip** |
