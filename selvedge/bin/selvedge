@@ -6,8 +6,9 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# The `env`, `criteria` and `plan` commands run lib/<command>.mjs and are the only ones that need
-# Node (>= 18); --version, help and install-cli stay bash-only.
+# The `env`, `criteria`, `snapshot` and `plan` commands run lib/<command>.mjs and are the only ones
+# that need Node (>= 18; `snapshot` also needs Playwright, found at run time); --version, help and
+# install-cli stay bash-only.
 #
 # Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line),
 # 3 NOT_VERIFIABLE (a named reason on its own line). Precedence when several apply: 1 > 2 > 3 > 0.
@@ -56,6 +57,10 @@ Commands:
   criteria <from-pr|from-md|from-text|check>
                        acceptance criteria to criteria.json, and the testability pre-check
                        (needs Node >= 18; \`selvedge criteria help\`)
+  snapshot <url> [--steps <prefix.json>] --run-dir <dir>
+                       the accessibility tree of an allowed origin, opened in the guarded
+                       browser after an optional step prefix (needs Node >= 18 and Playwright;
+                       \`selvedge snapshot help\`)
   plan --validate <plan.json>
                        lint a plan.json: every problem, one line each (needs Node >= 18;
                        \`selvedge plan help\`)
@@ -106,6 +111,7 @@ case "${1:-}" in
   install-cli) cmd_install_cli ;;
   env) shift; cmd_node env "$@" ;;
   criteria) shift; cmd_node criteria "$@" ;;
+  snapshot) shift; cmd_node snapshot "$@" ;;
   plan) shift; cmd_node plan "$@" ;;
   help|-h|--help) usage ;;
   *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
