@@ -1,0 +1,3 @@
+<!-- bump: minor -->
+Product Owner asks for proof a defect exists before saving a defect story
+A story that fixes a defect now records its evidence in Assumptions as `Defect evidence: observed | reproduced | read, unverified`. A defect only read from code or a static review (such as a CI finding ending `execution: none`) is an unproven-defect flag at the Pre-persist gate: a new `PO-DEFECT` question offers Reproduce first, Write it as a probe (check whether it happens, fix only what the check shows, no AC that presumes the bug) or Proceed anyway. When it cannot ask, the flag counts in `po_gate: needs_owner (<n> flags)` and nothing is persisted. Closes #919, where a false CI-review claim reached Launch Pad as a ready story and was only caught at its NO-GO check.

@@ -146,6 +146,8 @@ _lp_catalog_rows() {
     'Product Owner assumption-check soft gate, pre-persist house-rule check, missing-proof (no Validation) flag and contract-change flag (/automate prompt intake)'
   _lp_row PO-RULE-MUST human-only 'Refine requirements|Change the rule via /rules|Abort' \
     'Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden)'
+  _lp_row PO-DEFECT    human-only 'Reproduce first|Write it as a probe|Proceed anyway' \
+    'Product Owner pre-persist unproven-defect flag: a defect story whose only evidence is a code read or a static review (Defect evidence read, unverified)'
   _lp_row LP-CLARIFY   human-only '(free text)' \
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \

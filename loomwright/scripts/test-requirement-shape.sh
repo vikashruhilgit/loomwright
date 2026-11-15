@@ -34,6 +34,13 @@
 #        flags. Its own mutation controls (sweep line deleted per file, the skill bullet's companions
 #        reference removed, one word of the command's line drifted, `contract-change flags` dropped from
 #        each `<n>` formula separately) each must turn (S7) red.
+#   (S8) defect evidence (#919): the PO agent and its command mirror carry identical `**Defect evidence:**`
+#        drafting lines naming all three classes, identical `**Unproven-defect flag**` gate lines asking
+#        `header: "PO-DEFECT"`, and an `<n>` formula counting unproven-defect flags; the skill's Story
+#        Template Assumptions carry the Defect evidence bullet; lane-policy.sh's catalog has the PO-DEFECT
+#        row human-only with the three labels the gate line offers. Its mutation controls (drafting line
+#        deleted, gate line drifted, formula term dropped per file, the template bullet deleted) must each
+#        turn (S8) red.
 #   MUTATION CONTROLS (each must turn its check red): (M1) the template's status stamp deleted
 #   ⇒ S2 fails (the plan doc is enqueued); (M2) one required section deleted ⇒ S1 fails;
 #   (M3) the "count by hand" sentence restored in the skill ⇒ S5 fails; (M4) the Story Template's
@@ -323,6 +330,52 @@ s7_mutant skill-no-companions '/^- \*\*Shared-file sweep\./s#`\.agent/companions
 s7_mutant cmd-drift 's/\*\*Shared-file sweep:\*\* when a story/**Shared-file sweep:** when any story/' cmd
 s7_mutant agent-n-formula 's/missing-proof flags + contract-change flags/missing-proof flags/' agent
 s7_mutant cmd-n-formula 's/missing-proof flags + contract-change flags/missing-proof flags/' cmd
+
+# (S8) defect evidence. defect_ok <agent> <command> <skill> — 0 when the two PO files carry identical
+# drafting and gate lines, both <n> formulas count unproven-defect flags, the skill's Story Template
+# carries the Defect evidence bullet, and the catalog row matches the gate's options; prints the reason.
+DEF_PO='**Defect evidence:**'
+DEF_GATE='**Unproven-defect flag**'
+DEF_OPTS='"Reproduce first" / "Write it as a probe" / "Proceed anyway" (`header: "PO-DEFECT"`)'
+defect_ok() {
+  local f da dc ga gc n cls
+  da="$(grep -F -- "$DEF_PO" "$1")"; dc="$(grep -F -- "$DEF_PO" "$2")"
+  [ -n "$da" ] && [ "$da" = "$dc" ] || { echo "the agent and command '$DEF_PO' lines differ (or are missing)"; return 1; }
+  for cls in '`observed`' '`reproduced`' '`read, unverified`'; do
+    grep -qF -- "$cls" <<<"$da" || { echo "the '$DEF_PO' line does not name the class $cls"; return 1; }
+  done
+  ga="$(grep -F -- "$DEF_GATE" "$1")"; gc="$(grep -F -- "$DEF_GATE" "$2")"
+  [ -n "$ga" ] && [ "$ga" = "$gc" ] || { echo "the agent and command '$DEF_GATE' lines differ (or are missing)"; return 1; }
+  grep -qF -- "$DEF_OPTS" <<<"$ga" || { echo "the '$DEF_GATE' line does not offer the PO-DEFECT options"; return 1; }
+  for f in "$1" "$2"; do
+    n="$(grep -F -- "$N_LINE" "$f")"
+    grep -qF 'unproven-defect flags' <<<"$n" || { echo "the <n> formula in $f does not count unproven-defect flags"; return 1; }
+  done
+  grep -qF -- '- [Defect stories only, first bullet: Defect evidence:' <<<"$(extract_story_template "$3")" \
+    || { echo "the skill's Story Template has no Defect evidence bullet"; return 1; }
+  [ "$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' '$1 == "PO-DEFECT" { print $2 "|" $3 }')" \
+    = "human-only|Reproduce first|Write it as a probe|Proceed anyway" ] || { echo "lane-policy.sh catalog has no matching PO-DEFECT row"; return 1; }
+  return 0
+}
+if r="$(defect_ok "$PO_AGENT" "$PO_CMD" "$SKILL")"; then
+  ok "(S8) defect evidence: identical PO drafting + gate lines, both <n> formulas count it, template bullet, PO-DEFECT catalog row"
+else no "(S8) $r"; fi
+
+s8_mutant() {
+  local label="$1" expr="$2" which="$3" src a="$PO_AGENT" c="$PO_CMD" s="$SKILL" m
+  case "$which" in agent) src="$PO_AGENT" ;; cmd) src="$PO_CMD" ;; skill) src="$SKILL" ;; esac
+  m="$T/s8-$label.md"
+  sed "$expr" "$src" > "$m"
+  if [ ! -s "$m" ] || cmp -s "$src" "$m"; then no "(S8/$label) mutant not built"; return; fi
+  case "$which" in agent) a="$m" ;; cmd) c="$m" ;; skill) s="$m" ;; esac
+  if defect_ok "$a" "$c" "$s" >/dev/null; then no "(S8/$label) control did not discriminate: (S8) passed on the mutant"
+  else ok "(S8/$label) control: (S8) fails on the mutant"; fi
+}
+s8_mutant agent-no-defect-line '/\*\*Defect evidence:\*\*/d' agent
+s8_mutant cmd-gate-drift 's/"Write it as a probe" reshapes/"Write it as a probe" rewrites/' cmd
+s8_mutant agent-n-formula 's/ + unproven-defect flags//' agent
+s8_mutant cmd-n-formula 's/ + unproven-defect flags//' cmd
+s8_mutant skill-no-template-bullet '/^- \[Defect stories only, first bullet:/d' skill
 
 echo "test-requirement-shape: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
