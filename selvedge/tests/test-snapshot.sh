@@ -228,6 +228,43 @@ FILL="$(steps fill '[{"type":"fill","locator":{"label":"User"},"value":"{{SHOP_U
 snap ac16-unset -u SHOP_USER "$STUBENV" -- "$AURL/echo" --run-dir "$D" --steps "$FILL"
 check "AC16 SHOP_USER unset: stdout BLOCKED placeholder_unset, stderr names SHOP_USER, exit 2, nothing launched" \
   'rc === 2 && out.split("\n").includes("BLOCKED placeholder_unset") && err.includes("SHOP_USER") && launches() === 0 && rec.prefix_steps[0].value === "{{SHOP_USER}}"'
+# The module path goes in through the environment (as argv[1] it would make isMain() run the CLI).
+out="$(SNAP_MODULE="$LIB/snapshot.mjs" node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const S = await import(pathToFileURL(process.env.SNAP_MODULE).href);
+const secrets = S.placeholderValues([{ type: 'fill', locator: { label: 'a' }, value: '{{TOK}}-{{LONG}}' }, { type: 'select', locator: { label: 'b' }, value: '{{EMPTY}}' }], { TOK: 'ab', LONG: 'ab\"c\\\\d', EMPTY: '' });
+console.log(JSON.stringify([secrets.map((s) => s.name), S.redactValues('x ab\"c\\\\d y ab z', secrets), S.redactValues('kept', [])]));" 2>&1)"
+[ "$out" = '[["TOK","LONG"],"x {{LONG}} y {{TOK}} z","kept"]' ] \
+  && ok "redactValues: every resolved value becomes its {{NAME}}, the longest first, quotes and backslashes included; an empty value is never a secret" \
+  || ko "redactValues: $out"
+
+echo "-- a parent-set run folder and config source are pinned"
+D="$(rundir pinned-rd)"; D2="$(rundir pinned-elsewhere)"; export D2
+snap rd-conflict "$STUBENV" SELVEDGE_RUN_DIR="$D" SELVEDGE_SNAPSHOT_BUDGET=0 -- "$AURL/" --run-dir "$D2"
+check "SELVEDGE_RUN_DIR set and --run-dir naming another folder: exit 2 usage error naming SELVEDGE_RUN_DIR, nothing launched, nothing recorded in either folder" \
+  'rc === 2 && err.includes("conflicts with SELVEDGE_RUN_DIR") && launches() === 0 && recs.length === 0 && !require("fs").existsSync(process.env.D2 + "/snapshots.jsonl")'
+snap rd-same "$STUBENV" SELVEDGE_RUN_DIR="$D" SELVEDGE_SNAPSHOT_BUDGET=0 -- "$AURL/" --run-dir "$D/."
+check "control: --run-dir naming the same folder as SELVEDGE_RUN_DIR is accepted (the spent budget then answers NOT_VERIFIABLE)" \
+  'rc === 3 && out.split("\n").includes("NOT_VERIFIABLE exploration_budget") && recs.length === 1'
+RB="$TMP/repo-base"; mkdir -p "$RB" && git -C "$RB" init -q
+printf '{"schema_version":1,"origins":["http://localhost:%s"]}\n' "$A" > "$RB/selvedge.json"
+git -C "$RB" add selvedge.json && git -C "$RB" -c user.name=t -c user.email=t@t commit -qm base
+printf '{"schema_version":1,"origins":["http://localhost:%s","http://localhost:%s"]}\n' "$A" "$U" > "$RB/selvedge.json"
+D="$(rundir base-pin)"
+SNAP_CWD="$RB" snap base-pinned "$STUBENV" SELVEDGE_BASE=HEAD -- "$UURL/" --run-dir "$D"
+check "SELVEDGE_BASE=HEAD, localhost:<U> listed only in the working tree: BLOCKED host_not_allowed, nothing launched, U records zero connections" \
+  'rc === 2 && out.split("\n").includes("BLOCKED host_not_allowed") && launches() === 0 && zero(E.ULOG)'
+SNAP_CWD="$RB" snap base-unpinned "$STUBENV" -- "$UURL/" --run-dir "$D"
+check "control: the same call without SELVEDGE_BASE reads the working tree, passes the origin check and reaches the launch" \
+  'rc === 1 && !out.includes("BLOCKED") && launches() === 1'
+SNAP_CWD="$RB" snap base-conflict "$STUBENV" SELVEDGE_BASE=HEAD -- "$UURL/" --run-dir "$D" --base HEAD~0
+check "SELVEDGE_BASE=HEAD and --base naming another ref: exit 2 usage error naming SELVEDGE_BASE, nothing launched or recorded" \
+  'rc === 2 && err.includes("conflicts with SELVEDGE_BASE") && launches() === 0 && recs.length === 2'
+SNAP_CWD="$RB" snap base-empty "$STUBENV" SELVEDGE_BASE= -- "$AURL/" --run-dir "$D" --base HEAD
+check "SELVEDGE_BASE empty (the working tree) and any --base: exit 2 usage error, nothing launched" \
+  'rc === 2 && err.includes("conflicts with SELVEDGE_BASE") && launches() === 0 && recs.length === 2'
+SNAP_CWD="$RB" snap base-same "$STUBENV" SELVEDGE_BASE=HEAD -- "$AURL/" --run-dir "$D" --base HEAD
+check "control: --base equal to SELVEDGE_BASE is accepted (reaches the launch)" 'rc === 1 && launches() === 1'
 
 echo "-- AC10 the snapshot budget (20 calls per run folder by default)"
 D="$(rundir ac10-20 20)"
@@ -330,11 +367,17 @@ check "AC15 the snapshots.jsonl line: outcome step_failed, failed_step 1" 'rec.o
 echo "-- AC16 a set {{NAME}} reaches the page; the record keeps the placeholder"
 D="$(rundir ac16)"
 snap ac16 "$PWENV" SHOP_USER=alice-from-env -- "$AURL/echo" --run-dir "$D" --steps "$FILL"
-check "AC16 SHOP_USER=alice-from-env: exit 0 and the page received the value (the fixture echoes it into the tree)" \
-  'rc === 0 && json().aria_snapshot.includes("Hello, alice-from-env")'
+check "AC16 SHOP_USER=alice-from-env: exit 0 and the page received the value (the fixture's reversed echo shows it; the plain echo prints as {{SHOP_USER}})" \
+  'rc === 0 && json().aria_snapshot.includes("Reversed: vne-morf-ecila") && json().aria_snapshot.includes("Hello, {{SHOP_USER}}")'
+check "AC16 the value itself is on neither stdout nor stderr" '!out.includes("alice-from-env") && !err.includes("alice-from-env")'
 check "AC16 snapshots.jsonl records the step with the literal {{SHOP_USER}}, never the value" \
   'rec.prefix_steps[0].value === "{{SHOP_USER}}" && !require("fs").readFileSync(E.D + "/snapshots.jsonl", "utf8").includes("alice-from-env")'
 
+D="$(rundir secret)"
+SECRET_FILL="$(steps secret '[{"type":"fill","locator":{"label":"User"},"value":"{{SOME_SECRET_TOKEN}}"},{"type":"select","locator":{"label":"Size"},"value":"{{SOME_SECRET_TOKEN}}"}]')"
+snap secret "$PWENV" SOME_SECRET_TOKEN=ghp_FAKE_s3cr3t_value -- "$AURL/echo" --run-dir "$D" --steps "$SECRET_FILL"
+check "a resolved secret never reaches stdout or stderr (tree, error, stderr): the tree shows textbox \"User\": {{SOME_SECRET_TOKEN}}, yet the page got the value (reversed echo)" \
+  'rc === 1 && !out.includes("ghp_FAKE_s3cr3t_value") && !err.includes("ghp_FAKE_s3cr3t_value") && json().aria_snapshot.includes("{{SOME_SECRET_TOKEN}}") && json().failed_step === 1 && json().aria_snapshot.includes("Reversed: eulav_t3rc3s_EKAF_phg")'
 echo "-- AC11a the snapshots.jsonl line"
 D="$(rundir ac11a)"
 snap ac11a "$PWENV" -- "$AURL/echo" --run-dir "$D" --steps "$(steps ac11a '[{"type":"goto","url":"'"$AURL"'/echo"},{"type":"click","locator":{"role":"button","name":"Reset"}},{"type":"fill","locator":{"label":"User"},"value":"bob"}]')"

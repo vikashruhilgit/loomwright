@@ -42,8 +42,20 @@
 // Each call launches its own guarded browser and context (openGuardedContext) and closes it before
 // it returns: no cookie, storage or page state carries from one call to the next.
 //
-// Note: the tree shows what the page shows. A {{NAME}} value the page echoes (a text field's value)
-// appears in the printed tree; it is kept out of snapshots.jsonl only.
+// {{NAME}} values never reach stdout or stderr as given: before printing, every resolved value is
+// replaced by its `{{NAME}}` (longest first, empty values skipped) in aria_snapshot, error and
+// stderr (redactValues), and snapshots.jsonl keeps the steps as given. A short value (a "2") is
+// redacted wherever it occurs, so the tree can read oddly. Exact matches only: a page that shows a
+// value transformed (escaped, cut, re-cased, reversed) still shows it.
+// OPEN (owner decision): any environment variable name is resolvable, not only names a plan
+// declares, so a planner that may run `snapshot` can make the page hold any variable's value; the
+// redaction above keeps the plain value off the output, nothing more.
+//
+// Run-folder and config pins (a planner run by `plan` gets both from it): with SELVEDGE_RUN_DIR set,
+// a --run-dir naming another folder is a usage error (each call is counted where the caller said);
+// with SELVEDGE_BASE set (`plan --base <ref>` sets it to <ref>, `plan` without --base to "", the
+// working tree), the allowlist is read from that source and a --base naming another is a usage
+// error. Both are refused before anything is recorded or launched.
 //
 // Exit codes (00-plan D7): 0 ok, 1 an operation failed, 2 usage error or BLOCKED, 3 NOT_VERIFIABLE.
 // Every reason comes from REASONS in env-config.mjs.
@@ -51,9 +63,8 @@
 // Node >= 18, standard library only (Playwright is resolved at run time, never imported here).
 import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { EnvError, REASONS, UsageError, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
-import { ACTION_TYPES, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
+import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
+import { ACTION_TYPES, placeholderNames, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
 import { problemLine } from './plan-validate.mjs';
 import { openGuardedContext, reasonOfResponse } from './runner/route-guard.mjs';
 import { firstLine, resolvePlaywright } from './snapshot-playwright.mjs';
@@ -89,8 +100,12 @@ browser, after an optional prefix of plan steps (a JSON array of goto, click, fi
 press, wait_for; at most 15; a fill/select value may use {{NAME}} from the environment).
 
   --run-dir <dir>   the run folder (or SELVEDGE_RUN_DIR); required: each call appends one line to
-                    <dir>/snapshots.jsonl and counts against SELVEDGE_SNAPSHOT_BUDGET (default 20)
-  --base <ref>      read the allowlist from the committed <ref>:selvedge.json (as env check --base)
+                    <dir>/snapshots.jsonl and counts against SELVEDGE_SNAPSHOT_BUDGET (default 20).
+                    With SELVEDGE_RUN_DIR set, a --run-dir naming another folder is refused.
+  --base <ref>      read the allowlist from the committed <ref>:selvedge.json (as env check --base).
+                    SELVEDGE_BASE (set by plan for its planner) pins it; a different --base is refused.
+
+A {{NAME}} value is printed as {{NAME}}, never as the value (exact matches only).
 
 Playwright comes from SELVEDGE_PLAYWRIGHT_MODULE when set, else the repo's own node_modules.
 stdout: one JSON object {schema_version, url, steps_run, failed_step, error, aria_snapshot}.
@@ -128,6 +143,60 @@ export function recordedCalls(runDir) {
     throw e;
   }
   return raw.split('\n').filter((l) => l.trim() !== '').length;
+}
+
+// The base `plan --base <ref>` hands its planner: snapshot reads the allowlist the plan is checked
+// against, never a wider one. Set (even to "", the working tree) it pins the config source.
+export const BASE_ENV = 'SELVEDGE_BASE';
+
+// The config base for this call. With SELVEDGE_BASE set, a --base naming another ref is a usage
+// error (a planner cannot read a wider committed allowlist than its plan's); "" means the working
+// tree, so any --base then conflicts.
+export function pinnedBase(flags, env = process.env) {
+  if (!Object.prototype.hasOwnProperty.call(env, BASE_ENV) || env[BASE_ENV] === undefined) return flags.base;
+  const pinned = env[BASE_ENV];
+  if (flags.base !== undefined && flags.base !== pinned) {
+    const want = pinned === '' ? 'the working tree (no --base)' : `--base ${pinned}`;
+    throw new UsageError(`--base ${flags.base} conflicts with ${BASE_ENV}: the run that set it reads its allowlist from ${want}`);
+  }
+  return pinned === '' ? undefined : pinned;
+}
+
+// With SELVEDGE_RUN_DIR set, a --run-dir naming another folder is a usage error: each call is
+// counted (budget and plan_time_actions) in the run folder the caller was given.
+export function pinnedRunDir(flags, env = process.env, cwd = process.cwd()) {
+  if (!flags['run-dir'] || !env.SELVEDGE_RUN_DIR) return;
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const given = path.resolve(cwd, flags['run-dir']);
+  const pinned = path.resolve(cwd, env.SELVEDGE_RUN_DIR);
+  if (given !== pinned && real(given) !== real(pinned)) {
+    throw new UsageError(`--run-dir ${flags['run-dir']} conflicts with SELVEDGE_RUN_DIR (${pinned}): every call is counted in that run folder`);
+  }
+}
+
+// The resolved value of each {{NAME}} the steps use, as [{ name, value }] (empty values skipped).
+export function placeholderValues(steps, env = process.env) {
+  return placeholderNames(steps)
+    .filter((n) => typeof env[n] === 'string' && env[n] !== '')
+    .map((n) => ({ name: n, value: env[n] }));
+}
+
+// redactValues(text, secrets) → text with every secret value replaced by its `{{NAME}}`, longest
+// value first, in one pass (a replacement is never re-scanned). Exact matches only: a page that
+// shows the value transformed (escaped, cut, re-cased) is not caught.
+export function redactValues(text, secrets) {
+  if (typeof text !== 'string' || !secrets.length) return text;
+  const sorted = [...secrets].sort((a, b) => b.value.length - a.value.length);
+  const byValue = new Map();
+  for (const s of sorted) if (!byValue.has(s.value)) byValue.set(s.value, s.name);
+  const re = new RegExp([...byValue.keys()].map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  return text.replace(re, (m) => `{{${byValue.get(m)}}}`);
 }
 
 // The Playwright locator for a plan-step locator (role / label / text / testid; never CSS).
@@ -210,17 +279,23 @@ export async function runSnapshot(argv, { cwd = process.cwd(), env = process.env
   const errs = [];
   const say = (line) => out.push(`${line}\n`);
   const warn = (line) => errs.push(`selvedge snapshot: ${line}\n`);
-  const done = (code) => ({ code, stdout: out.join(''), stderr: errs.join('') });
+  // Every resolved {{NAME}} value, once known. stdout's JSON is redacted field by field before it
+  // is printed (a raw pass could corrupt the JSON itself, e.g. a value "1"); stderr on the way out.
+  const secrets = [];
+  const done = (code) => ({ code, stdout: out.join(''), stderr: redactValues(errs.join(''), secrets) });
 
   let flags;
   let positional;
   let budget;
+  let base;
   try {
     ({ flags, positional } = parseCliArgs(argv, { values: ['steps', 'run-dir', 'base'] }));
     if (positional.length !== 1) throw new UsageError(positional.length ? `unexpected argument: ${positional[1]}` : 'snapshot needs a <url>');
     if (!flags['run-dir'] && !env.SELVEDGE_RUN_DIR) {
       throw new UsageError('--run-dir <dir> (or SELVEDGE_RUN_DIR) is required: the snapshot budget is counted per run folder');
     }
+    pinnedRunDir(flags, env, cwd);
+    base = pinnedBase(flags, env);
     budget = snapshotBudget(env);
   } catch (e) {
     if (!(e instanceof UsageError)) throw e;
@@ -250,7 +325,7 @@ export async function runSnapshot(argv, { cwd = process.cwd(), env = process.env
 
   let code;
   try {
-    code = await snapshotIn({ url, flags, runDir, budget, cwd, env, record, say, warn });
+    code = await snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, secrets, say, warn });
   } catch (e) {
     if (e instanceof EnvError) {
       if (e.blocked) say(`BLOCKED ${e.reason}`);
@@ -273,7 +348,7 @@ export async function runSnapshot(argv, { cwd = process.cwd(), env = process.env
   return done(code);
 }
 
-async function snapshotIn({ url, flags, runDir, budget, cwd, env, record, say, warn }) {
+async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, secrets, say, warn }) {
   const blocked = (reason, message) => new EnvError(reason, message, { blocked: true });
 
   // The prefix as given (what snapshots.jsonl records), then the allowlist it is checked against.
@@ -285,7 +360,7 @@ async function snapshotIn({ url, flags, runDir, budget, cwd, env, record, say, w
     else steps = read.steps;
   }
   record.prefix_steps = steps;
-  const { config, root, source } = loadConfig({ cwd, base: flags.base });
+  const { config, root, source } = loadConfig({ cwd, base });
 
   // 1. the prefix: the one step validator, prefix mode. An unlisted goto is the origin check's.
   const problems = readProblems.length ? readProblems : validateSteps(steps, { config, prefix: true });
@@ -311,6 +386,7 @@ async function snapshotIn({ url, flags, runDir, budget, cwd, env, record, say, w
   // 4. {{NAME}} values: an unset name is BLOCKED (never an empty string). `resolved` is used to
   //    drive the page only; the record keeps `steps`.
   const resolved = resolvePlaceholders(steps, env);
+  secrets.push(...placeholderValues(steps, env));
 
   // 5. Playwright.
   const pw = await resolvePlaywright({ root, env, cwd });
@@ -370,6 +446,10 @@ async function snapshotIn({ url, flags, runDir, budget, cwd, env, record, say, w
     const seen = [...new Set(guard.blocks.map((b) => `${b.reason} ${b.host}`))];
     warn(`the guard refused ${guard.blocks.length} request(s): ${seen.join(', ')}`);
   }
+  // Redacted field by field before JSON escaping, so a value holding a quote or a backslash is
+  // still found. url is the caller's own argument (it holds no {{NAME}}).
+  result.aria_snapshot = result.aria_snapshot === null ? null : redactValues(result.aria_snapshot, secrets);
+  result.error = result.error === null ? null : redactValues(result.error, secrets);
   say(JSON.stringify(result, null, 2));
   if (result.failed_step !== null) {
     record.failed_step = result.failed_step;
@@ -406,13 +486,5 @@ async function main(argv) {
   return r.code;
 }
 
-function isMain() {
-  try {
-    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 // exitCode, not process.exit(): exiting at once can drop stdout still queued for a pipe.
-if (isMain()) process.exitCode = await main(process.argv.slice(2));
+if (isMain(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

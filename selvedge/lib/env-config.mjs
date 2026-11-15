@@ -7,8 +7,9 @@
 //
 // Node >= 18, standard library only.
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The closed reason list. Every emitter imports a value from here; no reason is a string literal
 // anywhere else. BLOCKED reasons print as a stdout line `BLOCKED <reason>`; config/usage reasons print
@@ -124,6 +125,17 @@ export function isOriginAllowed(config, candidate) {
 
 // A command-line usage problem (exit 2, the command's usage text follows).
 export class UsageError extends Error {}
+
+// isMain(import.meta.url) → true when that module is the script node was started with (the CLI
+// entry), false when it is imported. Every command module guards its top-level main() with it, so
+// importing one for its helpers never runs the command.
+export function isMain(importMetaUrl) {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(importMetaUrl));
+  } catch {
+    return false;
+  }
+}
 
 // parseCliArgs(args, { values, booleans }) → { flags, positional }.
 // `--name <v>` / `--name=<v>` for each name in `values` (an empty value is refused); a bare `--name`

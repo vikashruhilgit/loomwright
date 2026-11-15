@@ -8,7 +8,9 @@
 //                 value (data-testid "total": 6 × the quantity), plus a "Close" button. The dialog
 //                 is `hidden` until the click, so it is absent from the accessibility tree before it.
 //   /echo         a "User" text field, a "Reset" button and a paragraph (data-testid "echo") that
-//                 reads "Hello, <the field's value>" ("Hello, nobody" when empty) on every input;
+//                 reads "Hello, <the field's value>" ("Hello, nobody" when empty) on every input,
+//                 and one (data-testid "echo-reversed") reading "Reversed: <the value reversed>"
+//                 (how a test sees that the page got a value snapshot prints as {{NAME}});
 //                 a "Size" select (S, M, L), a "Gift wrap" checkbox and a paragraph (data-testid
 //                 "order") reading "size <S|M|L>, gift wrap <yes|no>, last key <key|none>" (the
 //                 last key pressed anywhere on the page)
@@ -66,17 +68,22 @@ const ECHO = page(
 <label>User <input type="text" id="user" name="user"></label>
 <button type="button" id="reset">Reset</button>
 <p data-testid="echo" id="echo">Hello, nobody</p>
+<p data-testid="echo-reversed" id="rev">Reversed: nobody</p>
 <label>Size <select id="size"><option>S</option><option>M</option><option>L</option></select></label>
 <label><input type="checkbox" id="wrap"> Gift wrap</label>
 <p data-testid="order" id="order">size S, gift wrap no, last key none</p></main>
 <script>
 const user = document.getElementById('user');
 const echo = document.getElementById('echo');
+const rev = document.getElementById('rev');
 const size = document.getElementById('size');
 const wrap = document.getElementById('wrap');
 const order = document.getElementById('order');
 let lastKey = 'none';
-const show = () => { echo.textContent = 'Hello, ' + (user.value || 'nobody'); };
+const show = () => {
+  echo.textContent = 'Hello, ' + (user.value || 'nobody');
+  rev.textContent = 'Reversed: ' + (user.value ? user.value.split('').reverse().join('') : 'nobody');
+};
 const showOrder = () => { order.textContent = 'size ' + size.value + ', gift wrap ' + (wrap.checked ? 'yes' : 'no') + ', last key ' + lastKey; };
 user.addEventListener('input', show);
 document.getElementById('reset').addEventListener('click', () => { user.value = ''; show(); });

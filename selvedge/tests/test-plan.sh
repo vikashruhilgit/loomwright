@@ -57,7 +57,8 @@ mkdir -p "$HOME" "$TMP/o"
 # Every variable an arm asserts the unset path of starts unset; arms that set one pass it explicitly.
 unset SELVEDGE_PLANNER SELVEDGE_PLANNER_MODEL SELVEDGE_PLANNER_TOKEN_BUDGET SELVEDGE_SNAPSHOT_BUDGET \
   SELVEDGE_PLAYWRIGHT_MODULE SELVEDGE_RUN_DIR SELVEDGE_CRITERIA SELVEDGE_PLAN_OUT SELVEDGE_BIN \
-  SELVEDGE_PLANNER_USAGE STUB_PLANNER_MODE STUB_PLANNER_LOG STUB_PLANNER_NO_USAGE STUB_CLAUDE_MODE NODE_PATH
+  SELVEDGE_PLANNER_USAGE SELVEDGE_BASE STUB_PLANNER_MODE STUB_PLANNER_LOG STUB_PLANNER_NO_USAGE STUB_CLAUDE_MODE NODE_PATH \
+  STUB_WIDE_URL STUB_WIDE_RUN_DIR STUB_WIDE_BASE
 
 # The fixture app (its origin is what every target repo below lists).
 node "$APP" serve "$TMP/servers.json" >"$TMP/servers.log" 2>&1 &
@@ -142,6 +143,15 @@ hits="$(cd "$LIB" && grep -nE "['\"\`]($reasons)['\"\`]" plan.mjs plan-runs.mjs 
   && grep -qE "import \{[^}]*classifyTestability[^}]*\} from './criteria.mjs'" "$LIB/plan.mjs"; } \
   && ok "plan.mjs imports validatePlan, freezeRun, runPlanner and classifyTestability (never a second lint or pre-check)" \
   || ko "plan.mjs does not import the shared lint / freeze / planner / pre-check"
+( ! grep -nE "function isMain" "$LIB/criteria.mjs" "$LIB/snapshot.mjs" "$LIB/plan.mjs" >/dev/null \
+  && for m in criteria snapshot plan; do grep -qE "import \{[^}]*isMain[^}]*\} from './env-config.mjs'" "$LIB/$m.mjs" && grep -qF "if (isMain(import.meta.url))" "$LIB/$m.mjs" || exit 1; done ) \
+  && ok "criteria.mjs, snapshot.mjs and plan.mjs guard main() with the one isMain from env-config.mjs (no copy)" \
+  || ko "a command module copies isMain or runs main() unguarded"
+out="$(node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const P = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/plan.mjs').href);
+console.log(typeof P.splitByTestability, process.exitCode === undefined ? 'no-exit-code' : process.exitCode);" 2>&1)"; prc=$?
+{ [ "$prc" -eq 0 ] && [ "$out" = "function no-exit-code" ]; } && ok "importing plan.mjs for its helpers never runs the plan command" || ko "import plan.mjs: rc=$prc out='$out'"
 run help "$R" -- help
 check "selvedge plan help documents the bare form, --init, --validate, --freeze and SELVEDGE_PLANNER" \
   'rc === 0 && ["<criteria.json>", "--init", "--validate", "--freeze", "SELVEDGE_PLANNER"].every((s) => out.includes(s))'
@@ -167,6 +177,28 @@ check "AC6 the planner got SELVEDGE_RUN_DIR, SELVEDGE_CRITERIA (planner-input.js
   'const v = JSON.parse(txt(E.TMP + "/log-ac6/env.json")); v.SELVEDGE_RUN_DIR === dir && v.SELVEDGE_CRITERIA === dir + "/planner-input.json" && v.SELVEDGE_PLAN_OUT === dir + "/plan.json" && v.SELVEDGE_BIN === E.BIN_REAL && v.SELVEDGE_PLANNER_USAGE === dir + "/planner-usage.json"'
 check "the planner input lists the allowed origins and the criteria_sha256 the plan must carry" \
   'const p = JSON.parse(txt(E.TMP + "/log-ac6/input.json")); JSON.stringify(p.origins) === JSON.stringify([E.AURL]) && p.criteria_sha256 === j("plan.json").criteria_sha256 && p.snapshot_budget === 20 && p.token_budget === null'
+
+check "the planner without --base got SELVEDGE_BASE \"\" (its snapshots read the working tree, as the plan does)" \
+  'JSON.parse(txt(E.TMP + "/log-ac6/env.json")).SELVEDGE_BASE === ""'
+
+echo "-- plan --base <ref>: the planner's snapshots read the same committed allowlist"
+RW="$TMP/repo-wide"; newrepo "$RW"
+git -C "$RW" add selvedge.json && git -C "$RW" -c user.name=t -c user.email=t@t commit -qm base
+# The working tree widens the allowlist with an origin the committed HEAD:selvedge.json lacks.
+printf '{"schema_version":1,"origins":["%s","http://localhost:4999"]}\n' "$AURL" > "$RW/selvedge.json"
+export LOGW="$TMP/log-wide"
+run wide "$RW" "$PLANNER" STUB_PLANNER_MODE=wide STUB_PLANNER_LOG="$LOGW" STUB_WIDE_URL=http://localhost:4999/ \
+  STUB_WIDE_RUN_DIR="$TMP/elsewhere" STUB_WIDE_BASE=HEAD~0 -- "$CRITERIA" --base HEAD
+check "plan --base HEAD: the planner got SELVEDGE_BASE=HEAD and the plan froze against HEAD:selvedge.json (exit 0)" \
+  'rc === 0 && has("plan.sha256") && JSON.parse(txt(E.LOGW + "/env.json")).SELVEDGE_BASE === "HEAD"'
+check "plan --base HEAD: the planner's snapshot of the working-tree-only origin is BLOCKED host_not_allowed (exit 2)" \
+  'txt(E.LOGW + "/wide.rc").trim() === "2" && txt(E.LOGW + "/wide.out").split("\n").includes("BLOCKED host_not_allowed")'
+check "plan --base HEAD: a planner snapshot with --base naming another ref is a usage error (exit 2, conflicts with SELVEDGE_BASE)" \
+  'txt(E.LOGW + "/wide-base.rc").trim() === "2" && txt(E.LOGW + "/wide-base.err").includes("conflicts with SELVEDGE_BASE")'
+check "a planner snapshot with --run-dir naming another folder is a usage error and records nothing there" \
+  'txt(E.LOGW + "/wide-rd.rc").trim() === "2" && txt(E.LOGW + "/wide-rd.err").includes("conflicts with SELVEDGE_RUN_DIR") && !fs.existsSync(E.TMP + "/elsewhere/snapshots.jsonl")'
+check "only the one in-folder call was recorded in the run folder's snapshots.jsonl" \
+  'jl(dir + "/snapshots.jsonl").length === 1 && jl(dir + "/snapshots.jsonl")[0].outcome === "blocked"'
 
 echo "-- AC4b the vague criterion never reaches the planner; plan lists it itself"
 check "AC4b planner-input.json carries the two testable criteria and not the vague one" \

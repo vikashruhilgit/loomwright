@@ -141,6 +141,28 @@ want_problem "AC2 read count then expect gt 0 is rejected existence_only_expect"
 validate "steps(c1).splice(3, 2, { type: 'read', property: 'count', locator: { testid: 'line' } }, { type: 'expect', op: 'equals', value: 2 });"
 [ "$rc" -eq 0 ] && ok "AC2 read count then expect equals 2 (a value) is accepted" || ko "AC2 count equals 2: rc=$rc err='$err'"
 
+echo "-- a final expect any read value meets (vacuousExpect)"
+for v in "''" "'   '"; do
+  validate "steps(c1)[4] = { type: 'expect', op: 'contains', value: $v };"
+  want_problem "a final expect contains $v (holds for any text) is rejected existence_only_expect" "$c1" existence_only_expect
+done
+for v in "''" "'.*'" "'^\\\\d*\$'"; do
+  validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: $v };"
+  want_problem "a final expect matches $v (a pattern matching the empty string) is rejected existence_only_expect" "$c1" existence_only_expect
+done
+validate "steps(c1).splice(3, 2, { type: 'read', property: 'count', locator: { testid: 'line' } }, { type: 'expect', op: 'lt', value: 1000000 });"
+want_problem "read count then expect lt 1000000 (holds when nothing exists) is rejected existence_only_expect" "$c1" existence_only_expect
+validate "steps(c1)[4] = { type: 'expect', op: 'contains', value: '12' };"
+[ "$rc" -eq 0 ] && ok "control: a final expect contains '12' (a non-blank value) is accepted" || ko "contains 12: rc=$rc err='$err'"
+validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: '^12\$' };"
+[ "$rc" -eq 0 ] && ok "control: a final expect matches '^12\$' (no empty match) is accepted" || ko "matches ^12$: rc=$rc err='$err'"
+validate "steps(c1).splice(3, 2, { type: 'read', property: 'count', locator: { testid: 'line' } }, { type: 'expect', op: 'gt', value: 1 });"
+[ "$rc" -eq 0 ] && ok "control: read count then expect gt 1 (a lower bound above existence) is accepted" || ko "count gt 1: rc=$rc err='$err'"
+validate "steps(c1)[4] = { type: 'expect', op: 'lt', value: 13 };"
+[ "$rc" -eq 0 ] && ok "control: read text then expect lt 13 (a bound on a read value, not a count) is accepted" || ko "text lt 13: rc=$rc err='$err'"
+validate "steps(c1)[4] = { type: 'expect', op: 'equals', value: '' };"
+[ "$rc" -eq 0 ] && ok "control: a final expect equals '' (the value is empty, e.g. a cleared field) is accepted" || ko "equals '': rc=$rc err='$err'"
+
 echo "-- the step registry (AC3)"
 validate "steps(c1).splice(1, 0, { type: 'hover', locator: { text: 'Cart' } });"
 want_problem "AC3 an unknown step type is rejected unknown_step_type" "$c1" unknown_step_type

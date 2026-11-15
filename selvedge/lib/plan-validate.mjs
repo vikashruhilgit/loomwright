@@ -6,7 +6,8 @@
 //
 // What it enforces (00-plan D6/D7):
 //  - the PASS rule: a criterion's steps end in `read` then `expect` — a value read after the last
-//    action — and that expect checks a value, not existence or visibility;
+//    action — and that expect checks a value, not existence or visibility, and not a bound any read
+//    value meets (contains "", a pattern matching "", read count then lt: vacuousExpect);
 //  - negative criteria read a baseline before their first action and do not check only that an
 //    element is absent or hidden;
 //  - each planned criterion states its interpretation, polarity and unverified assumptions;
@@ -88,6 +89,31 @@ function isCountAbsence(read, expect) {
     && ((expect.op === 'equals' && expect.value === 0) || (expect.op === 'lt' && typeof expect.value === 'number' && expect.value <= 1));
 }
 
+// A final expect that holds for any value read (so it checks nothing about the value): a detail
+// string, or null. `read` is the step before it (or null).
+//  - contains "" (or only whitespace): every text contains the empty string;
+//  - matches a pattern that matches "": it holds even when the read value is empty;
+//  - read count then lt N: an upper bound only, it holds when no element exists at all.
+export function vacuousExpect(read, expect) {
+  const { op, value } = expect;
+  if (op === 'contains' && typeof value === 'string' && value.trim() === '') {
+    return `expect contains ${JSON.stringify(value)} holds for any text read; check a non-blank value`;
+  }
+  if (op === 'matches' && typeof value === 'string') {
+    let re = null;
+    try {
+      re = new RegExp(value);
+    } catch {
+      re = null; // an invalid pattern is plan_schema_violation (validateSteps)
+    }
+    if (re && re.test('')) return `expect matches ${JSON.stringify(value)} also matches the empty string, so it holds even when nothing is read; anchor a non-empty value`;
+  }
+  if (isPlainObject(read) && read.property === 'count' && op === 'lt') {
+    return 'read count then expect lt holds when no element exists (an upper bound only); check the count with equals, a lower bound gt >= 1, or changed_from';
+  }
+  return null;
+}
+
 function lintSteps(id, entry, add) {
   const steps = entry.steps;
   if (!Array.isArray(steps)) return;
@@ -105,6 +131,8 @@ function lintSteps(id, entry, add) {
   if (endsInReadExpect && isCountExistence(prev, last)) {
     add(id, 'existence_only_expect', 'read count then expect gt 0 checks only that an element exists; check a value');
   }
+  const vacuous = isPlainObject(last) && last.type === 'expect' ? vacuousExpect(endsInReadExpect ? prev : null, last) : null;
+  if (vacuous) add(id, 'existence_only_expect', vacuous);
   if (entry.polarity !== 'negative') return;
   const firstAction = steps.findIndex((s) => isPlainObject(s) && ACTION_TYPES.includes(s.type));
   if (firstAction >= 0 && !steps.slice(0, firstAction).some((s) => isPlainObject(s) && s.type === 'read')) {

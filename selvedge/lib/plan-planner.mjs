@@ -4,8 +4,10 @@
 //
 //  - SELVEDGE_PLANNER set: a command run with `/bin/sh -c` at the repo root. It reads
 //    $SELVEDGE_CRITERIA (the run folder's planner-input.json), writes the plan to $SELVEDGE_PLAN_OUT,
-//    may call `$SELVEDGE_BIN snapshot …` (the run folder is $SELVEDGE_RUN_DIR, which snapshot reads,
-//    so each call counts against the folder's snapshot budget), and may write
+//    may call `$SELVEDGE_BIN snapshot …` (the run folder is $SELVEDGE_RUN_DIR and the config source
+//    $SELVEDGE_BASE — the plan's --base, "" for the working tree — which snapshot reads and holds
+//    it to, so each call counts against the folder's snapshot budget and sees the plan's
+//    allowlist), and may write
 //    {"input_tokens": N, "output_tokens": M} to $SELVEDGE_PLANNER_USAGE. Its stdout and stderr go
 //    to selvedge's stderr.
 //  - unset (or empty): the built-in default, `claude -p <prompt> --output-format json --model <m>
@@ -27,6 +29,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS } from './env-config.mjs';
 import { RUN_FILES, prettyJson, readPlannerUsage } from './plan-runs.mjs';
+import { BASE_ENV } from './snapshot.mjs';
 
 export const PLANNER_ENV = 'SELVEDGE_PLANNER';
 export const PLANNER_MODEL_ENV = 'SELVEDGE_PLANNER_MODEL';
@@ -140,10 +143,11 @@ function runClaudePlanner({ root, childEnv, planOut, runDir, promptFile, inputFi
   return tokens;
 }
 
-// runPlanner({ root, runDir, env, selvedgeBin, promptFile }) → { planner, tokens }.
+// runPlanner({ root, runDir, base, env, selvedgeBin, promptFile }) → { planner, tokens }.
+// `base` is the plan's --base (undefined: the working tree); the planner's snapshot calls get it.
 // The run folder already holds planner-input.json. On success plan.json exists in it; `tokens` is
 // what the planner reported ({input_tokens, output_tokens}) or null. Throws planner_failed.
-export function runPlanner({ root, runDir, env = process.env, selvedgeBin, promptFile }) {
+export function runPlanner({ root, runDir, base, env = process.env, selvedgeBin, promptFile }) {
   const inputFile = path.join(runDir, RUN_FILES.plannerInput);
   const planOut = path.join(runDir, RUN_FILES.plan);
   const childEnv = {
@@ -153,6 +157,9 @@ export function runPlanner({ root, runDir, env = process.env, selvedgeBin, promp
     SELVEDGE_PLAN_OUT: planOut,
     SELVEDGE_BIN: selvedgeBin,
     SELVEDGE_PLANNER_USAGE: path.join(runDir, RUN_FILES.plannerUsage),
+    // The config source the plan is validated against: every snapshot the planner runs reads the
+    // same allowlist ("" = the working tree), and a --base naming another is refused.
+    [BASE_ENV]: base === undefined || base === null ? '' : base,
   };
   const command = env[PLANNER_ENV];
   if (typeof command === 'string' && command.trim() !== '') {

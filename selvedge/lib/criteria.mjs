@@ -18,9 +18,8 @@
 // Node >= 18, standard library only.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { EnvError, REASONS, UsageError, parseCliArgs } from './env-config.mjs';
+import { readFileSync } from 'node:fs';
+import { EnvError, REASONS, UsageError, isMain, parseCliArgs } from './env-config.mjs';
 import { canonicalJson } from './env-approvals.mjs';
 
 export const CRITERIA_SCHEMA_VERSION = 1;
@@ -366,13 +365,5 @@ async function main(argv) {
   }
 }
 
-function isMain() {
-  try {
-    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 // exitCode, not process.exit(): exiting at once can drop stdout still queued for a pipe.
-if (isMain()) process.exitCode = await main(process.argv.slice(2));
+if (isMain(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

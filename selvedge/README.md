@@ -188,7 +188,12 @@ writes locators: content that appears only after a click is not in the tree unti
 - **The prefix** (`--steps`) is a JSON array of at most 15 `goto`, `click`, `fill`, `select`,
   `check`, `press` and `wait_for` steps (never `read` or `expect`), checked by the same step
   validator as a plan. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
-  unset name is `BLOCKED placeholder_unset`.
+  unset name is `BLOCKED placeholder_unset`. The value is never printed: every resolved value is
+  shown as its `{{NAME}}` in `aria_snapshot`, `error` and on stderr (exact matches only — a page
+  that shows the value escaped, cut or otherwise transformed still shows it). **Open item:** any
+  environment variable name resolves, not only names a plan declares, so whoever may run
+  `snapshot` (a planner included) can make the page hold any variable's value; the redaction keeps
+  the plain value off the output, nothing more.
 - **Before any browser launches** it refuses an unlisted `<url>` or prefix `goto` origin
   (`BLOCKED host_not_allowed`), a bad prefix (`plan_invalid`, one stderr line per problem), and a
   missing Playwright (`BLOCKED playwright_unavailable`).
@@ -198,7 +203,11 @@ writes locators: content that appears only after a click is not in the tree unti
   call past `SELVEDGE_SNAPSHOT_BUDGET` calls (default 20) per run folder prints
   `NOT_VERIFIABLE exploration_budget` and exits 3. `plan_time_actions` counts the action steps
   (`click`, `fill`, `select`, `check`, `press`) the browser attempted: state a planner changed in
-  the app before the run.
+  the app before the run. With `SELVEDGE_RUN_DIR` set, a `--run-dir` naming another folder is a
+  usage error, so a call cannot be counted outside the folder it was given.
+- **The config source.** `SELVEDGE_BASE` (which `plan` sets for its planner) pins where the
+  allowlist is read: `<ref>:selvedge.json`, or the working tree when it is empty. A `--base` naming
+  another source is a usage error.
 - **A failing prefix step** exits 1 with `failed_step` (0-based), the error's first line, and the
   tree as it was at that step.
 
@@ -258,7 +267,8 @@ a later run can say how much the planner changed in the app before it.
 - `SELVEDGE_PLANNER`, when set, is a command run with `/bin/sh -c` at the repo root. It reads
   `$SELVEDGE_CRITERIA` (`planner-input.json`), writes the plan to `$SELVEDGE_PLAN_OUT`, may call
   `$SELVEDGE_BIN snapshot …` (the run folder is `$SELVEDGE_RUN_DIR`, so each call counts against the
-  folder's budget), and may write `{"input_tokens": N, "output_tokens": M}` to
+  folder's budget, and `$SELVEDGE_BASE` is the plan's `--base`, empty for the working tree, so each
+  call reads the allowlist the plan is checked against), and may write `{"input_tokens": N, "output_tokens": M}` to
   `$SELVEDGE_PLANNER_USAGE`. It comes from your environment, never from a file in the repo.
 - Unset, the default is `claude -p <prompt> --output-format json --model <model> --allowedTools
   "Bash(<selvedge bin> snapshot:*)"`, with the fixed prompt
@@ -305,7 +315,7 @@ A locator is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"
 Plan-lint problems (the codes after `plan_invalid:`):
 
 - `missing_final_read_expect` — a criterion's steps do not end in `read` then `expect` (a value read after the last action).
-- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`).
+- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string, or `read count` then `lt`).
 - `unknown_step_type` — a step `type` that is not one of the step types above.
 - `unknown_field` — a field a step, a criterion entry or the plan does not have.
 - `invalid_locator` — a locator that is not exactly one role, label, text or test-id form (CSS, XPath and any other key are refused).
@@ -335,8 +345,10 @@ Read by the CLI only, never from a file in the repo:
 - `SELVEDGE_SNAPSHOT_BUDGET` — `snapshot` calls per run folder (default 20).
 - `SELVEDGE_PLAYWRIGHT_MODULE` — the Playwright entry `snapshot` loads (above).
 - `SELVEDGE_RUN_DIR` — the run folder `snapshot` records in, when `--run-dir` is not given.
+- `SELVEDGE_BASE` — the config source `snapshot` reads (a ref, or empty for the working tree);
+  set by `plan` for its planner, and a `--base` naming another is refused.
 - `SELVEDGE_CRITERIA`, `SELVEDGE_PLAN_OUT`, `SELVEDGE_BIN`, `SELVEDGE_PLANNER_USAGE` — set by
-  `plan` for the planner it runs (above), together with `SELVEDGE_RUN_DIR`.
+  `plan` for the planner it runs (above), together with `SELVEDGE_RUN_DIR` and `SELVEDGE_BASE`.
 
 ## The browser guard
 

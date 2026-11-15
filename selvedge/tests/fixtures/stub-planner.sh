@@ -10,6 +10,9 @@
 #   modal    calls "$SELVEDGE_BIN" snapshot <origin>/cart without and with a prefix (goto + click
 #            "Open cart"), keeping both outputs, then plans the first criterion against the cart
 #            dialog: open it, fill Quantity 2, read the Total, expect "12"
+#   wide     calls "$SELVEDGE_BIN" snapshot $STUB_WIDE_URL (an origin only the working tree lists),
+#            then the same with --run-dir $STUB_WIDE_RUN_DIR and with --base $STUB_WIDE_BASE,
+#            keeping each stdout / stderr / exit code as wide*.{out,err,rc}; then plans as valid
 # Every mode records the SELVEDGE_* variables it was given, and a copy of the input, under
 # $STUB_PLANNER_LOG/ (when set), and reports tokens 111 in / 22 out to $SELVEDGE_PLANNER_USAGE
 # unless STUB_PLANNER_NO_USAGE is set.
@@ -22,7 +25,7 @@ if [ -n "$log" ]; then
   mkdir -p "$log"
   node -e '
 const E = process.env;
-const keys = ["SELVEDGE_RUN_DIR", "SELVEDGE_CRITERIA", "SELVEDGE_PLAN_OUT", "SELVEDGE_BIN", "SELVEDGE_PLANNER_USAGE"];
+const keys = ["SELVEDGE_RUN_DIR", "SELVEDGE_CRITERIA", "SELVEDGE_PLAN_OUT", "SELVEDGE_BIN", "SELVEDGE_PLANNER_USAGE", "SELVEDGE_BASE"];
 require("fs").writeFileSync(process.argv[1], JSON.stringify(Object.fromEntries(keys.map((k) => [k, E[k] === undefined ? null : E[k]]))) + "\n");' \
     "$log/env.json"
   cp "$SELVEDGE_CRITERIA" "$log/input.json"
@@ -38,6 +41,15 @@ if [ "$mode" = "modal" ]; then
   printf '[{"type":"goto","url":"%s/cart"},{"type":"click","locator":{"role":"button","name":"Open cart"}}]\n' "$origin" >"$log/open-prefix.json"
   "$SELVEDGE_BIN" snapshot "$origin/cart" --steps "$log/open-prefix.json" >"$log/open.json" 2>"$log/open.err"
   echo "$?" >"$log/open.rc"
+fi
+
+if [ "$mode" = "wide" ]; then
+  "$SELVEDGE_BIN" snapshot "$STUB_WIDE_URL" >"$log/wide.out" 2>"$log/wide.err"
+  echo "$?" >"$log/wide.rc"
+  "$SELVEDGE_BIN" snapshot "$STUB_WIDE_URL" --run-dir "$STUB_WIDE_RUN_DIR" >"$log/wide-rd.out" 2>"$log/wide-rd.err"
+  echo "$?" >"$log/wide-rd.rc"
+  "$SELVEDGE_BIN" snapshot "$STUB_WIDE_URL" --base "$STUB_WIDE_BASE" >"$log/wide-base.out" 2>"$log/wide-base.err"
+  echo "$?" >"$log/wide-base.rc"
 fi
 
 STUB_MODE="$mode" node -e '

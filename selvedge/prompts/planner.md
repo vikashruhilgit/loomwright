@@ -73,7 +73,8 @@ Each step is an object with `type` and exactly these fields:
 - `goto` — `url` (its origin must be one of `origins`)
 - `click` — `locator`
 - `fill` — `locator`, `value` (a literal, or `{{NAME}}` for a value taken from the environment at
-  run time, such as a password: never write a secret into the plan)
+  run time, such as a password: never write a secret into the plan; a snapshot shows the value
+  as `{{NAME}}`)
 - `select` — `locator`, `value`
 - `check` — `locator`, optional `checked` (true or false)
 - `press` — `key`, optional `locator`
@@ -95,7 +96,9 @@ its accessible name, as the snapshot tree shows them.
 1. **A value read after the last action.** A criterion's steps end in `read` then `expect`, after
    every `click`, `fill`, `select`, `check` and `press`.
 2. **Check a value, not existence.** The final `expect` compares a value the criterion names. An
-   element being visible, hidden, attached or present (`read count` then `gt 0`) proves nothing.
+   element being visible, hidden, attached or present (`read count` then `gt 0`) proves nothing,
+   and neither does a check any value meets: `contains ""`, a `matches` pattern that matches the
+   empty string, or `read count` then `lt`.
 3. **Negative criteria** ("must not", "does not change") set `"polarity": "negative"`, `read` the
    side effect before their first action (the baseline), then read it again after the action and
    compare (`changed_from` false, or the count unchanged). Proving only that something is absent

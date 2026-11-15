@@ -30,7 +30,7 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EnvError, REASONS, UsageError, loadConfig, parseCliArgs, repoRoot } from './env-config.mjs';
+import { EnvError, REASONS, UsageError, isMain, loadConfig, parseCliArgs, repoRoot } from './env-config.mjs';
 import { classifyTestability, criteriaSha256, readCriteriaFile } from './criteria.mjs';
 import { PLAN_SCHEMA_VERSION, PLAN_SCOPE, PLAN_TARGETS, problemLine, validatePlan } from './plan-validate.mjs';
 import { RUN_FILES, assertNotFrozen, freezeRun, initRun, prettyJson } from './plan-runs.mjs';
@@ -230,7 +230,7 @@ function cmdPlan(args, env) {
         token_budget: tokenBudget,
       };
       writeFileSync(path.join(runDir, RUN_FILES.plannerInput), prettyJson(input));
-      const { planner } = runPlanner({ root, runDir, env, selvedgeBin: SELVEDGE_BIN, promptFile: PLANNER_PROMPT });
+      const { planner } = runPlanner({ root, runDir, base: flags.base, env, selvedgeBin: SELVEDGE_BIN, promptFile: PLANNER_PROMPT });
       err(`planner: ${planner}`);
       const read = readPlan(path.join(runDir, RUN_FILES.plan));
       if (read.problems) throw new PlanInvalid(read.problems, path.join(runDir, RUN_FILES.plan));
@@ -291,4 +291,4 @@ async function main(argv, env = process.env) {
 }
 
 // exitCode, not process.exit(): exiting at once can drop stdout still queued for a pipe.
-process.exitCode = await main(process.argv.slice(2));
+if (isMain(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

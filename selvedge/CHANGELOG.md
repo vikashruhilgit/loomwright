@@ -32,6 +32,13 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   re-plan of the same criteria is the next revision, counted from `.selvedge/runs.jsonl`. Planner
   tokens and the snapshot `plan_time_actions` sum are recorded in `freeze.json` and the
   `runs.jsonl` freeze line. Schema in `schemas/plan.schema.json` (`target: "web"`).
+- The planner sees no more than the plan: `plan --base <ref>` hands it `SELVEDGE_BASE` (empty for
+  the working tree), so every `snapshot` it runs reads the same allowlist, and a `snapshot` whose
+  `--base` or `--run-dir` names another source or folder than `SELVEDGE_BASE` / `SELVEDGE_RUN_DIR`
+  is a usage error. A resolved `{{NAME}}` value is printed as `{{NAME}}` (tree, error, stderr;
+  exact matches only); any variable name still resolves (an open item, see the README). The lint
+  also rejects a final expect any value meets (`contains` a blank string, `matches` a pattern
+  matching the empty string, `read count` then `lt`) as `existence_only_expect`.
 - Ten new reasons: `playwright_unavailable`, `placeholder_unset` (BLOCKED),
   `criterion_not_testable`, `side_effect_not_observable`, `exploration_budget` (NOT_VERIFIABLE, exit
   3), `already_frozen`, `plan_invalid`, `criteria_invalid`, `criteria_not_found`, `planner_failed`.
