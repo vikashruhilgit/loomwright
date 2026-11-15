@@ -4,10 +4,17 @@ Selvedge checks finished work against its brief and reports an **evidenced PASS/
 acceptance criterion**. It is a sibling plugin in the `atelier` marketplace, next to Loomwright,
 and it **releases on its own**: its own version, changelog and CI gate.
 
-This release ships the target-safety layer the checker drives a browser behind: a committed
-`selvedge.json` with an exact-origin allowlist, the `selvedge env` commands (`check`, `init`,
-`approve`, `hook`), and the browser guard: a runner-owned proxy plus a `context.route` layer that
-refuse every connection to an origin you did not list. Checking a brief arrives in later releases.
+What ships today:
+
+- **Target safety** — a committed `selvedge.json` with an exact-origin allowlist, the `selvedge env`
+  commands (`check`, `init`, `approve`, `hook`), and the browser guard: a runner-owned proxy plus a
+  `context.route` layer that refuse every connection to an origin you did not list.
+- **Criteria to a frozen plan** — `selvedge criteria` turns acceptance criteria into
+  `criteria.json` and flags vague ones; `selvedge snapshot` shows a planner an allowed page's
+  accessibility tree; `selvedge plan` has a planner write typed steps, lints them statically, and
+  freezes the plan with its sha256 in a run folder before anything runs.
+
+Running a frozen plan and reporting the verdict arrive in later releases.
 
 ## Install
 
@@ -43,16 +50,24 @@ selvedge                 # version and the command list
 selvedge --version       # selvedge <version>, read from .claude-plugin/plugin.json at run time
 selvedge install-cli     # link the CLI into $HOME/.local/bin (re-run after each plugin update)
 selvedge env <command>   # selvedge.json and its env hooks (below); needs Node.js >= 18
+selvedge criteria <command>   # acceptance criteria to criteria.json, and the testability pre-check
+selvedge snapshot <url> [--steps <prefix.json>] --run-dir <dir>   # an allowed page's accessibility tree
+selvedge plan <criteria.json>          # planner, lint and freeze into .selvedge/runs/<run-id>/
+selvedge plan --init | --validate | --freeze …   # the same steps one at a time
 ```
 
 `--version` and `install-cli` need only bash and standard userland tools (no `jq`, no Node); the
 CLI resolves its own real path through symlinks, so it works when run through the `install-cli`
-link. **The `env` commands need Node.js >= 18 on `PATH`**; without it `selvedge env` exits 1 and
-says so.
+link. **The `env`, `criteria`, `snapshot` and `plan` commands need Node.js >= 18 on `PATH`**;
+without it they exit 1 and say so. `snapshot` also needs Playwright (see
+[How Playwright is found](#how-playwright-is-found)), and the default planner needs the `claude`
+CLI.
 
-Exit codes: `0` ok, `1` an operation failed, `2` a usage error or **BLOCKED**. A BLOCKED outcome
-prints its own stdout line `BLOCKED <reason>`; a config or usage problem names its reason on
-stderr. Every reason is in the [table below](#blocked-and-config-reasons).
+Exit codes: `0` ok, `1` an operation failed, `2` a usage error or **BLOCKED**, `3`
+**NOT_VERIFIABLE**. A BLOCKED outcome prints its own stdout line `BLOCKED <reason>`, a
+NOT_VERIFIABLE one `NOT_VERIFIABLE <reason>`; a config or usage problem names its reason on stderr.
+When several apply, the lowest non-zero code wins (1, then 2, then 3). Every reason is in the
+[table below](#blocked-and-config-reasons).
 
 ## `selvedge.json`
 
@@ -130,6 +145,212 @@ checkout, so a pull request that edits only the script changes what the approved
 under `--base`. `env approve` prints this limit with every approval prompt. Read the scripts a hook
 calls before running it on a branch you did not write.
 
+## `criteria` commands
+
+```
+selvedge criteria from-pr <n> [--source <label>]     the list under the PR body's "Acceptance criteria" heading
+selvedge criteria from-md <file> [--source <label>]  a markdown list
+selvedge criteria from-text [--source <label>]       stdin: a list, or one criterion per line
+selvedge criteria check <criteria.json>              testable / vague, with a rewrite for each vague one
+```
+
+- **`from-*`** print `criteria.json` on stdout: `{"schema_version": 1, "source": null, "criteria":
+  [{"id", "text"}]}`, pretty-printed with 2 spaces and a trailing newline. `from-pr` reads the PR
+  body with `gh pr view <n> --json body` and takes the list under the first heading (a `#` heading
+  or a bold line) whose title contains "Acceptance criteria". `from-md` takes that section's list
+  when the file has one, else every top-level list item. `from-text` does the same, and with no
+  list at all takes each non-blank line. No criteria found exits 2 `criteria_not_found`.
+- **The same criteria give the same bytes**, whatever the input. Each text is normalized (list and
+  checkbox markers and surrounding whitespace stripped, inner whitespace collapsed) and its `id` is
+  `c-` plus the first 12 hex of sha256 of that text. `source` stays `null` unless you pass
+  `--source <label>`; where the criteria came from is printed on stderr instead. An indented line
+  or a nested item is folded into its parent criterion.
+- **`check`** prints `testable <id>` or `vague <id> ("<phrase>"): rewrite: <a testable shape>` per
+  criterion. The check is deterministic: a criterion is vague when it uses one of `works well`,
+  `looks good`, `looks right`, `looks nice`, `user-friendly`, `intuitive`, `as expected`,
+  `properly`, `correctly`, `seamless`, and carries no quoted literal and no digit. A vague criterion
+  is never planned: a plan lists it under `not_planned` with `criterion_not_testable` and a rewrite.
+
+The JSON Schema is [`schemas/criteria.schema.json`](schemas/criteria.schema.json).
+
+## `snapshot`
+
+```
+selvedge snapshot <url> [--steps <prefix.json>] --run-dir <dir> [--base <ref>]
+```
+
+Opens `<url>` in the guarded browser (a fresh browser and context per call), runs an optional
+prefix of plan steps, and prints the page's accessibility tree as one JSON object:
+`{"schema_version": 1, "url", "steps_run", "failed_step", "error", "aria_snapshot"}`. A planner
+uses it to see a page in the state a criterion needs (a dialog open, a form filled) before it
+writes locators: content that appears only after a click is not in the tree until a prefix clicks.
+
+- **The prefix** (`--steps`) is a JSON array of at most 15 `goto`, `click`, `fill`, `select`,
+  `check`, `press` and `wait_for` steps (never `read` or `expect`), checked by the same step
+  validator as a plan. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
+  unset name is `BLOCKED placeholder_unset`. The value is never printed: every resolved value is
+  shown as its `{{NAME}}` in `aria_snapshot`, `error` and on stderr (found as given and as
+  Playwright's YAML/JSON quoting and whitespace normalization print it — a page that shows the
+  value cut, re-cased or otherwise transformed still shows it). **Open item:** any
+  environment variable name resolves, not only names a plan declares, so whoever may run
+  `snapshot` (a planner included) can make the page hold any variable's value; the redaction keeps
+  the plain value off the output, nothing more.
+- **Before any browser launches** it refuses an unlisted `<url>` or prefix `goto` origin
+  (`BLOCKED host_not_allowed`), a bad prefix (`plan_invalid`, one stderr line per problem), and a
+  missing Playwright (`BLOCKED playwright_unavailable`).
+- **The budget.** `--run-dir` (or `SELVEDGE_RUN_DIR`) is required: every call appends one line to
+  `<dir>/snapshots.jsonl` — `{ts, origin, prefix_steps, plan_time_actions, browser_launched,
+  outcome, failed_step}`, the steps as given (a `{{NAME}}` stays literal), no page text — and a
+  call past `SELVEDGE_SNAPSHOT_BUDGET` calls (default 20) per run folder prints
+  `NOT_VERIFIABLE exploration_budget` and exits 3. `plan_time_actions` counts the action steps
+  (`click`, `fill`, `select`, `check`, `press`) the browser attempted: state a planner changed in
+  the app before the run. With `SELVEDGE_RUN_DIR` set, a `--run-dir` naming another folder is a
+  usage error, so a call cannot be counted outside the folder it was given.
+- **The config source.** `SELVEDGE_BASE` (which `plan` sets for its planner) pins where the
+  allowlist is read: `<ref>:selvedge.json`, or the working tree when it is empty. A `--base` naming
+  another source is a usage error.
+- **A failing prefix step** exits 1 with `failed_step` (0-based), the error's first line, and the
+  tree as it was at that step.
+
+### How Playwright is found
+
+Selvedge ships no `node_modules`. `snapshot` loads Playwright from `SELVEDGE_PLAYWRIGHT_MODULE` (the
+path of an importable entry, e.g. `<dir>/node_modules/playwright/index.mjs`) when it is set, and
+from nowhere else; otherwise from the target project's own `node_modules`, resolved from the repo
+root's `package.json` as the project's own code would. Neither ⇒ `BLOCKED playwright_unavailable`.
+In a project without it: `npm i -D playwright` then `npx playwright install chromium`.
+
+## `plan` commands
+
+```
+selvedge plan <criteria.json> [--base <ref>]          --init, the planner, --validate, --freeze in one go
+selvedge plan --init <criteria.json>                  a new run folder holding criteria.json
+selvedge plan --validate <plan.json> [--criteria <criteria.json>] [--base <ref>]
+selvedge plan --freeze <run-dir> [--base <ref>]       lint, stamp plan_revision, hash
+```
+
+`--init`, `--freeze` and the bare form print the run folder's path on stdout; the rest goes to
+stderr. `--base <ref>` reads the origin allowlist from `<ref>:selvedge.json`, as
+`env check --base` does.
+
+**The run folder** is `.selvedge/runs/<run-id>/` at the repo root, run id
+`<UTC YYYYMMDDTHHMMSSZ>-<6 hex>`. It holds:
+
+- `criteria.json` — a byte copy of the criteria the plan answers.
+- `planner-input.json` — what the planner got: the testable criteria only, the allowed origins,
+  `criteria_sha256`, the CLI path, the snapshot and token budgets.
+- `snapshots.jsonl` — one line per `snapshot` call made for this folder.
+- `planner-usage.json` — the planner's `{"input_tokens", "output_tokens"}`, when it reported them.
+- `plan.json` — the plan, rewritten once at freeze with `plan_revision` stamped.
+- `plan.sha256` — `<hex>  plan.json`, the sha256 of plan.json's bytes as written (the same line
+  `shasum -a 256 plan.json` prints). Its presence means the folder is frozen.
+- `freeze.json` — `{schema_version, ts, run_id, criteria_sha256, plan_sha256, plan_revision,
+  plan_time_actions, planner_tokens, planner_token_budget}`.
+
+**Freezing** always runs the lint first: an invalid plan is never hashed (`plan_invalid`, no
+`plan.sha256`). A frozen folder is never written again: `--freeze` on it exits 2
+`already_frozen` and changes nothing. A new plan for the same criteria goes in a new folder
+(`--init`), and its `plan_revision` is 1 + the `event: "freeze"` lines in `.selvedge/runs.jsonl`
+with the same `criteria_sha256`, so every re-plan is a numbered revision. Each freeze appends one
+line to `.selvedge/runs.jsonl`: `{"event": "freeze", ts, run_id, criteria_sha256, plan_sha256,
+plan_revision, plan_time_actions, planner_tokens}`. The count is read, not locked: the trail is an
+audit record, not a lock.
+
+**Plan-time actions.** The sum of `plan_time_actions` over the folder's `snapshots.jsonl` is
+recorded at freeze as `plan_time_actions` in `freeze.json` and in the `runs.jsonl` freeze line, so
+a later run can say how much the planner changed in the app before it.
+
+**The planner** (the bare form only):
+
+- Vague criteria (the `criteria check` pre-check) are **never sent** to the planner. `plan` itself
+  lists each under `not_planned` with `criterion_not_testable` and its rewrite. With no testable
+  criterion at all, no planner runs.
+- `SELVEDGE_PLANNER`, when set, is a command run with `/bin/sh -c` at the repo root. It reads
+  `$SELVEDGE_CRITERIA` (`planner-input.json`), writes the plan to `$SELVEDGE_PLAN_OUT`, may call
+  `$SELVEDGE_BIN snapshot …` (the run folder is `$SELVEDGE_RUN_DIR`, so each call counts against the
+  folder's budget, and `$SELVEDGE_BASE` is the plan's `--base`, empty for the working tree, so each
+  call reads the allowlist the plan is checked against), and may write `{"input_tokens": N, "output_tokens": M}` to
+  `$SELVEDGE_PLANNER_USAGE`. It comes from your environment, never from a file in the repo.
+- Unset, the default is `claude -p <prompt> --output-format json --model <model> --allowedTools
+  "Bash(<selvedge bin> snapshot:*)"`, with the fixed prompt
+  [`prompts/planner.md`](prompts/planner.md) followed by `planner-input.json`. The plan is the JSON
+  object in the result text; the result's `usage` is recorded (input tokens include cache reads
+  and writes). Honest limit: `--allowedTools` admits only `snapshot`, but `claude` also applies
+  your own settings, so a tool they allow is allowed to the planner too.
+- A planner that cannot start (no `claude` on `PATH` included), exits non-zero, or leaves no plan
+  is `planner_failed` (exit 2). What it wrote stays in the folder: fix `plan.json` there and run
+  `selvedge plan --freeze <run-dir>`.
+
+### The lint (`--validate`)
+
+Lints a `plan.json` against the run folder's `criteria.json` (the file beside the plan unless
+`--criteria` names another) and `selvedge.json` (the working tree, or `<ref>:selvedge.json` with
+`--base`, as `env check --base` reads it). It lists **every** problem, one stderr line each:
+`plan_invalid: <criterion id | (plan)>: <code>: <detail>`, and exits 2 when there is any.
+
+A plan is `{"schema_version": 1, "target": "web", "criteria_sha256", "plan_revision"?, "origins",
+"steps_by_criterion": {"<id>": {"interpretation", "polarity", "unverified_assumptions", "steps"}},
+"not_planned"?: [{"id", "reason", "rewrite"?, "detail"?}]}`. `polarity` is `positive` or
+`negative`; each assumption is `{"text", "material"}`; a `not_planned` reason is
+`criterion_not_testable` (with a non-empty `rewrite`), `side_effect_not_observable` or
+`exploration_budget`. The JSON Schema is [`schemas/plan.schema.json`](schemas/plan.schema.json).
+
+Step types (no field beyond these is accepted):
+
+- `goto` — `url`; its origin must be in the plan's `origins` and allowed by `selvedge.json`.
+- `click` — `locator`.
+- `fill` — `locator`, `value` (a literal, or `{{NAME}}` read from the environment at run time).
+- `select` — `locator`, `value` (as `fill`).
+- `check` — `locator`, optional `checked` (true or false).
+- `press` — `key`, optional `locator`.
+- `wait_for` — `locator`, `state` (`attached`, `detached`, `visible`, `hidden`).
+- `read` — `property`: `text`, `value`, `checked`, `count`, `attribute:<name>` (each with a
+  `locator`) or `url` (no locator).
+- `expect` — `op` and `value`, compared with the last read: `equals`, `contains`, `matches` (a
+  regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
+  from the previous read of the same locator and property, a negative criterion's baseline form).
+
+A locator is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"}` or
+`{"testid"}`: Playwright role, label, text and test-id locators, never CSS or XPath.
+
+Plan-lint problems (the codes after `plan_invalid:`):
+
+- `missing_final_read_expect` — a criterion's steps do not end in `read` then `expect` (a value read after the last action).
+- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or every one of a fixed set of unlike one-line texts, as `.`, `\S`, `^.+$` or `..` do, while a format such as `^[a-z0-9-]+$` or `^\d+$` passes, or `read count` then `lt`).
+- `unknown_step_type` — a step `type` that is not one of the step types above.
+- `unknown_field` — a field a step, a criterion entry or the plan does not have.
+- `invalid_locator` — a locator that is not exactly one role, label, text or test-id form (CSS, XPath and any other key are refused).
+- `code_like_content` — a step string that looks like code: `=>`, `function(`, `<script`, `javascript:`, `${`, a backtick, `eval(`, `document.`, `window.`, `require(`, `import `.
+- `origin_not_allowed` — a `goto` or a plan origin not allowed by `selvedge.json`, or a `goto` origin not in the plan's `origins`.
+- `missing_interpretation` — a planned criterion with no one-sentence `interpretation`.
+- `missing_polarity` — a planned criterion whose `polarity` is not `positive` or `negative`.
+- `invalid_assumptions` — `unverified_assumptions` is not an array of `{"text", "material"}`.
+- `negative_without_baseline` — a negative criterion with no `read` before its first action (`click`, `fill`, `select`, `check`, `press`).
+- `negative_absence_only` — a negative criterion whose only check is that an element is absent or hidden (final `read count` + `expect equals 0`, or a `wait_for` `hidden` as the last check).
+- `vague_criterion_planned` — a vague criterion has steps; it belongs under `not_planned`.
+- `criterion_unaccounted` — a criterion of `criteria.json` that is neither planned nor `not_planned`, or a planned id that is not in `criteria.json`.
+- `criteria_sha_mismatch` — `criteria_sha256` is not the hash of the run folder's `criteria.json`.
+- `prefix_step_not_allowed` — a snapshot prefix holds a `read` or `expect` step.
+- `prefix_too_long` — a snapshot prefix has more than 15 steps.
+- `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, or `criterion_not_testable` without a rewrite.
+- `plan_schema_violation` — the plan or a step is malformed: not JSON, a missing or wrongly typed value, an unknown `op`, `state` or `read` property.
+
+## Environment variables
+
+Read by the CLI only, never from a file in the repo:
+
+- `SELVEDGE_PLANNER` — the planner command (`/bin/sh -c`); unset, `claude -p`.
+- `SELVEDGE_PLANNER_MODEL` — the default planner's `--model` (default `sonnet`).
+- `SELVEDGE_PLANNER_TOKEN_BUDGET` — a whole number of tokens, given to the planner and recorded in
+  `freeze.json` (not enforced at plan time).
+- `SELVEDGE_SNAPSHOT_BUDGET` — `snapshot` calls per run folder (default 20).
+- `SELVEDGE_PLAYWRIGHT_MODULE` — the Playwright entry `snapshot` loads (above).
+- `SELVEDGE_RUN_DIR` — the run folder `snapshot` records in, when `--run-dir` is not given.
+- `SELVEDGE_BASE` — the config source `snapshot` reads (a ref, or empty for the working tree);
+  set by `plan` for its planner, and a `--base` naming another is refused.
+- `SELVEDGE_CRITERIA`, `SELVEDGE_PLAN_OUT`, `SELVEDGE_BIN`, `SELVEDGE_PLANNER_USAGE` — set by
+  `plan` for the planner it runs (above), together with `SELVEDGE_RUN_DIR` and `SELVEDGE_BASE`.
+
 ## The browser guard
 
 The checker's browser (`lib/runner/route-guard.mjs`) runs behind two independent layers, and every
@@ -200,7 +421,8 @@ What the guard does **not** cover:
 ## BLOCKED and config reasons
 
 Every reason selvedge prints. `BLOCKED` reasons print as a stdout line `BLOCKED <reason>`; config
-and usage reasons print on stderr. Both exit 2.
+and usage reasons print on stderr. Both exit 2. `NOT_VERIFIABLE` reasons print as a stdout line
+`NOT_VERIFIABLE <reason>` and exit 3; a plan also records them per criterion under `not_planned`.
 
 | Reason | Kind | Meaning |
 |---|---|---|
@@ -211,6 +433,11 @@ and usage reasons print on stderr. Both exit 2.
 | `proxy_unavailable` | BLOCKED | the guard's proxy is gone; the request failed instead of going direct |
 | `env_hooks_unapproved` | BLOCKED | the hooks have no approval matching their current sha256 for this repo; run `selvedge env approve` |
 | `env_hooks_remote_origin` | BLOCKED | a hook was asked to run while an origin is remote |
+| `playwright_unavailable` | BLOCKED | no `playwright` module was found: neither `SELVEDGE_PLAYWRIGHT_MODULE` nor the repo's own `node_modules` |
+| `placeholder_unset` | BLOCKED | a step uses `{{NAME}}` and `NAME` is not set in the environment |
+| `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
+| `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action; it is not planned |
+| `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
 | `origins_empty` | config | `origins` is absent or empty; add the app you test, e.g. `http://localhost:3000` |
 | `origin_invalid` | config | an origin is not exactly `scheme://host[:port]` |
 | `remote_origin_without_allow_remote` | config | a non-local origin is listed without `"allow_remote": true` |
@@ -220,6 +447,11 @@ and usage reasons print on stderr. Both exit 2.
 | `base_config_unreadable` | config | `--base <ref>` given, but `<ref>:selvedge.json` cannot be read |
 | `approve_requires_tty` | usage | `env approve` was run without an interactive terminal |
 | `port_required` | usage | `env init` found no port (`--port`, `package.json` scripts, or a TTY prompt) |
+| `already_frozen` | usage | `plan --freeze` on a run folder that already holds a frozen plan; a new plan goes in a new folder |
+| `plan_invalid` | usage | `plan --validate`, a freeze (`plan`, `plan --freeze`) or a snapshot prefix found problems; each is listed on its own line, and nothing is hashed |
+| `criteria_invalid` | usage | a `criteria.json` is not valid JSON or does not match its schema (an id that is not its text's hash included) |
+| `criteria_not_found` | usage | no criteria were found in the input, or the `criteria.json` file is missing or empty |
+| `planner_failed` | usage | the planner exited non-zero, wrote no plan, or could not be started |
 
 ## Releasing
 

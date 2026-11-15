@@ -8,6 +8,44 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.3.0 — 2026-11-15
+
+- Criteria become a frozen, validated step plan. `selvedge criteria from-pr|from-md|from-text`
+  turns acceptance criteria into `criteria.json` (stable `c-<12 hex>` ids, the same bytes from any
+  input; schema in `schemas/criteria.schema.json`), and `criteria check` flags vague criteria with a
+  deterministic phrase list and a suggested rewrite.
+- `selvedge snapshot <url> [--steps <prefix.json>] --run-dir <dir>`: an allowed page's
+  accessibility tree through the browser guard, after an optional prefix of up to 15 action steps.
+  Unlisted origins, bad prefixes, unset `{{NAME}}` placeholders and a missing Playwright are refused
+  before any browser launches. Each call is recorded in `snapshots.jsonl` (no page text) and
+  counts against `SELVEDGE_SNAPSHOT_BUDGET` (default 20 per run folder; past it,
+  `NOT_VERIFIABLE exploration_budget`, exit 3). Playwright is resolved at run time from
+  `SELVEDGE_PLAYWRIGHT_MODULE` or the target project's own `node_modules`.
+- `selvedge plan`: `--init` makes a run folder `.selvedge/runs/<run-id>/`; the planner
+  (`SELVEDGE_PLANNER`, or by default `claude -p` with the fixed prompt `prompts/planner.md` and only
+  `snapshot` allowed) never receives a vague criterion, which `plan` lists under `not_planned`
+  itself; `--validate` lints the plan (the PASS rule — a value read after the last action —,
+  existence-only checks, negative baselines, interpretation/polarity/assumptions, coverage,
+  `criteria_sha256`, step types, fields, locators, code-like content, goto origins; every problem
+  listed); `--freeze` lints, stamps `plan_revision`, and writes `plan.sha256` (the hash of the
+  bytes written) and `freeze.json`. A frozen folder is never written again (`already_frozen`); each
+  re-plan of the same criteria is the next revision, counted from `.selvedge/runs.jsonl`. Planner
+  tokens and the snapshot `plan_time_actions` sum are recorded in `freeze.json` and the
+  `runs.jsonl` freeze line. Schema in `schemas/plan.schema.json` (`target: "web"`).
+- The planner sees no more than the plan: `plan --base <ref>` hands it `SELVEDGE_BASE` (empty for
+  the working tree), so every `snapshot` it runs reads the same allowlist, and a `snapshot` whose
+  `--base` or `--run-dir` names another source or folder than `SELVEDGE_BASE` / `SELVEDGE_RUN_DIR`
+  is a usage error. A resolved `{{NAME}}` value is printed as `{{NAME}}` (tree, error, stderr; as given
+  and as Playwright quotes it); any variable name still resolves (an open item, see the README). The lint
+  also rejects a final expect any value meets (`contains` a blank string, `matches` a pattern
+  matching the empty string or every one of a fixed set of unlike one-line texts, `read count` then
+  `lt`) as `existence_only_expect`.
+- Ten new reasons: `playwright_unavailable`, `placeholder_unset` (BLOCKED),
+  `criterion_not_testable`, `side_effect_not_observable`, `exploration_budget` (NOT_VERIFIABLE, exit
+  3), `already_frozen`, `plan_invalid`, `criteria_invalid`, `criteria_not_found`, `planner_failed`.
+- Tests: `test-criteria.sh`, `test-plan-validate.sh`, `test-snapshot.sh` and `test-plan.sh` (the
+  last two against real Chromium and a fixture app; the planner and `claude` are stubs).
+
 ## 0.2.0 — 2026-11-14
 
 - Target safety. A committed `selvedge.json` (schema in `schemas/selvedge-config.schema.json`)

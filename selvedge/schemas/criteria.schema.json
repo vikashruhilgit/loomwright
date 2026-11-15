@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "criteria.json",
+  "description": "Acceptance criteria as written by `selvedge criteria from-pr|from-md|from-text`. Validated by selvedge/lib/criteria.mjs, whose accepted key sets selvedge/tests/test-criteria.sh asserts equal to the property names here. Each id is c- + the first 12 hex of sha256(text); text is normalized (list and checkbox markers and surrounding whitespace stripped, inner whitespace collapsed).",
+  "type": "object",
+  "required": ["schema_version", "source", "criteria"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source": {
+      "description": "A label given with --source, else null (provenance is printed on stderr, so the same criteria from any input give the same bytes).",
+      "type": ["string", "null"]
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^c-[0-9a-f]{12}$" },
+          "text": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "plan.json",
+  "description": "A selvedge plan: typed steps per acceptance criterion, frozen (sha256) before a run. Validated by selvedge/lib/plan-validate.mjs and selvedge/lib/plan-steps.mjs, whose frozen sets selvedge/tests/test-plan-validate.sh asserts equal to the names here. The lint adds rules a schema cannot state: steps end in read then expect, no existence-only expect, negative baselines, goto origins allowed by selvedge.json, no code-like content, every criterion accounted for.",
+  "type": "object",
+  "required": ["schema_version", "target", "criteria_sha256", "origins", "steps_by_criterion"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "target": { "const": "web" },
+    "criteria_sha256": {
+      "description": "sha256 hex of the canonical JSON of criteria.json's criteria array.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "plan_revision": {
+      "description": "Stamped by --freeze: 1 + the earlier freezes of the same criteria_sha256.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "origins": {
+      "description": "The origins the plan visits; each must be allowed by selvedge.json.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "steps_by_criterion": {
+      "description": "Keyed by criterion id (c- + 12 hex).",
+      "type": "object",
+      "propertyNames": { "pattern": "^c-[0-9a-f]{12}$" },
+      "additionalProperties": { "$ref": "#/$defs/criterion_plan" }
+    },
+    "not_planned": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/not_planned" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "criterion_plan": {
+      "type": "object",
+      "required": ["interpretation", "polarity", "unverified_assumptions", "steps"],
+      "properties": {
+        "interpretation": { "description": "One sentence: what the planner thinks the criterion means.", "type": "string", "minLength": 1 },
+        "polarity": { "enum": ["positive", "negative"] },
+        "unverified_assumptions": { "type": "array", "items": { "$ref": "#/$defs/assumption" } },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } }
+      },
+      "additionalProperties": false
+    },
+    "assumption": {
+      "type": "object",
+      "required": ["text", "material"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "material": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "not_planned": {
+      "type": "object",
+      "required": ["id", "reason"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^c-[0-9a-f]{12}$" },
+        "reason": { "enum": ["criterion_not_testable", "side_effect_not_observable", "exploration_budget"] },
+        "rewrite": { "description": "Required (non-empty) for criterion_not_testable.", "type": "string" },
+        "detail": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "step_type": {
+      "enum": ["goto", "click", "fill", "select", "check", "press", "wait_for", "read", "expect"]
+    },
+    "step": {
+      "oneOf": [
+        { "$ref": "#/$defs/step_goto" },
+        { "$ref": "#/$defs/step_click" },
+        { "$ref": "#/$defs/step_fill" },
+        { "$ref": "#/$defs/step_select" },
+        { "$ref": "#/$defs/step_check" },
+        { "$ref": "#/$defs/step_press" },
+        { "$ref": "#/$defs/step_wait_for" },
+        { "$ref": "#/$defs/step_read" },
+        { "$ref": "#/$defs/step_expect" }
+      ]
+    },
+    "step_goto": {
+      "type": "object",
+      "required": ["type", "url"],
+      "properties": { "type": { "const": "goto" }, "url": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "step_click": {
+      "type": "object",
+      "required": ["type", "locator"],
+      "properties": { "type": { "const": "click" }, "locator": { "$ref": "#/$defs/locator" } },
+      "additionalProperties": false
+    },
+    "step_fill": {
+      "type": "object",
+      "required": ["type", "locator", "value"],
+      "properties": {
+        "type": { "const": "fill" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "value": { "description": "A literal, or {{NAME}} resolved from the environment at run time.", "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "step_select": {
+      "type": "object",
+      "required": ["type", "locator", "value"],
+      "properties": {
+        "type": { "const": "select" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "value": { "description": "A literal, or {{NAME}} resolved from the environment at run time.", "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "step_check": {
+      "type": "object",
+      "required": ["type", "locator"],
+      "properties": {
+        "type": { "const": "check" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "checked": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "step_press": {
+      "type": "object",
+      "required": ["type", "key"],
+      "properties": {
+        "type": { "const": "press" },
+        "key": { "type": "string", "minLength": 1 },
+        "locator": { "$ref": "#/$defs/locator" }
+      },
+      "additionalProperties": false
+    },
+    "step_wait_for": {
+      "type": "object",
+      "required": ["type", "locator", "state"],
+      "properties": {
+        "type": { "const": "wait_for" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "state": { "enum": ["attached", "detached", "visible", "hidden"] }
+      },
+      "additionalProperties": false
+    },
+    "step_read": {
+      "type": "object",
+      "required": ["type", "property"],
+      "properties": {
+        "type": { "const": "read" },
+        "property": {
+          "description": "url takes no locator; every other property needs one.",
+          "anyOf": [
+            { "enum": ["text", "value", "checked", "count", "url"] },
+            { "type": "string", "pattern": "^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$" }
+          ]
+        },
+        "locator": { "$ref": "#/$defs/locator" }
+      },
+      "additionalProperties": false
+    },
+    "step_expect": {
+      "type": "object",
+      "required": ["type", "op", "value"],
+      "properties": {
+        "type": { "const": "expect" },
+        "op": { "enum": ["equals", "contains", "matches", "gt", "lt", "changed_from"] },
+        "value": {
+          "description": "equals: string, number or boolean; contains/matches: string; gt/lt: number; changed_from: boolean (whether the last read must differ from the previous read of the same locator/property).",
+          "type": ["string", "number", "boolean"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "locator": {
+      "description": "Exactly one Playwright role, label, text or test-id locator; never CSS or XPath.",
+      "oneOf": [
+        { "$ref": "#/$defs/locator_role" },
+        { "$ref": "#/$defs/locator_label" },
+        { "$ref": "#/$defs/locator_text" },
+        { "$ref": "#/$defs/locator_testid" }
+      ]
+    },
+    "locator_role": {
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "exact": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "locator_label": {
+      "type": "object",
+      "required": ["label"],
+      "properties": { "label": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "locator_text": {
+      "type": "object",
+      "required": ["text"],
+      "properties": { "text": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "locator_testid": {
+      "type": "object",
+      "required": ["testid"],
+      "properties": { "testid": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    }
+  }
+}
