@@ -608,7 +608,7 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `launch-pad`        | 47557 | 47556¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 12462 | 11382¹ | 0 |
-| `product-owner`     | 17356 | 17195¹ | 3 |
+| `product-owner`     | 19533 | 17757¹ | 3 |
 | `qa-executor`       | 53332 | 48483¹ | 5 |
 | `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
@@ -630,6 +630,8 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 > **Raise log (requirement-to-plan-checks, 2026-11-02):** `plan-reviewer` 9451 → 11535 (live 9273 at origin/main → 10486 at the raise, 10528¹ at the end of the PR) — the new partly-conditional Criterion 22 "Requirement Fit" (the two-way requirement ↔ brief mapping, the `### Requirement fit` table, the `requirement_fit: fulfils | under | over | skipped` field and issue category) plus its Decision Matrix row breached the 178-headroom row; restored to measured + ~10% per the raise rule. The same PR raised two non-agent ceilings, recorded here for completeness: skill `user-story-writing` 4732 → 5709 (live 4452 → 5190; the Story Template's `### Non-goals`, `### Owner decisions` and `## Validation (must pass before merge)`) and command `product-owner` 10258 → 11537 (live 9638 → 10488; the same three sections in its Output Format and Persist step, plus the missing-proof flag).
 
 > **Re-measure log (no raise — requirement-to-plan-checks, 2026-11-02):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agents `launch-pad` 44872 → 45127 (2430 headroom; the Phase 5.5 `--- SOURCE REQUIREMENT ---` spawn-contract paste and the refine branch's add-coverage rule), `product-owner` 15939 → 16719 (637 headroom; its Output Format and Persist step gained Non-goals, Owner decisions and Validation, plus the missing-proof flag); command `launch-pad` 5143 → 5326 (189 headroom; Criterion 22 in the Phase 5.5 conditional list). No budget breached; none raised, per the anti-treadmill rule. The two agent rows are ¹-marked LIVE rows; all three table cells and JSON `measured` fields carry these end-of-PR figures.
+
+> **Raise log (#919, defect evidence at intake, 2026-11-15):** agent `product-owner` 17356 → 19533 (measured 17195 → 17757¹); command `product-owner` 11537 → 12779 (measured 11004 → 11617); skill `user-story-writing` 5709 → 6381 (measured 5535 → 5801), each raised to measured + ~10% per `bash scripts/check-token-budget.sh`. The growth is the mirrored **Defect evidence:** drafting bullet (three evidence classes), the unproven-defect flag at the Pre-persist gate (Assumption Check and Output Format lines, the 3a trigger, the `PO-DEFECT` option bullet, the `<n>` count, a checklist line) and the skill's Story Template bullet with its rule. The agent row stays ¹-marked LIVE.
 
 > **Re-measure log (no raise — touches-name-shared-files-at-intake, 2026-11-05):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agent `product-owner` 16719 → 17195 (**161 headroom, 0.9%** — the next PR that grows it will breach); command `product-owner` 10488 → 11004 (533 headroom); skill `user-story-writing` 5279 → 5535 (174 headroom). The growth is the Product Owner's shared-file sweep bullet (mirrored in the command), the contract-change flag at the Pre-persist gate (Assumption Check and Output Format lines, the 3a trigger, option bullet and `<n>` count) and the skill's sweep bullet with its `.agent/companions.json` pointer. No budget breached; none raised. The agent row stays ¹-marked LIVE; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
@@ -748,7 +750,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `supervisor-readiness` | 14984 | 13621 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
-| `user-story-writing` | 5709 | 5535 |
+| `user-story-writing` | 6381 | 5801 |
 | `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
@@ -772,7 +774,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
-| `product-owner` | 11537 | 11004 |
+| `product-owner` | 12779 | 11617 |
 | `propose` | 6018 | 5471 |
 | `qa-executor` | 1337 | 1215 |
 | `qa-strategist` | 4411 | 4010 |
@@ -804,7 +806,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 
 | Gate | File / section | Contexts | Current can't-ask behaviour | New can't-ask behaviour |
 |---|---|---|---|---|
-| Product Owner pre-persist soft gate | `agents/product-owner.md` + `commands/product-owner.md` §"Soft gate with user confirmation", §"3a. Pre-persist house-rule check", Critical Rules, checklists; `skills/automate-loop/SKILL.md` §2 "Prompt source" | MI; MN (passed by `/automate --non-interactive-fallback`); HP (`/automate` under `/loop`); SA by auto-delegation only | undefined (the "never persist without confirmation" rule, no branch) | `po_gate: needs_owner (<n> flags)`; nothing persisted, and `/automate` intake stops. Step 4's can't-ask branch records its flags and continues; the Pre-persist house-rule check (Responsibilities 3a, after story drafting) asks per conflict (advisory: the same three options, Proceed = a recorded owner override; `must`: `PO-RULE-MUST`, no override option) and its can't-ask branch emits the run's one combined `po_gate` line |
+| Product Owner pre-persist soft gate | `agents/product-owner.md` + `commands/product-owner.md` §"Soft gate with user confirmation", §"3a. Pre-persist house-rule check", Critical Rules, checklists; `skills/automate-loop/SKILL.md` §2 "Prompt source" | MI; MN (passed by `/automate --non-interactive-fallback`); HP (`/automate` under `/loop`); SA by auto-delegation only | undefined (the "never persist without confirmation" rule, no branch) | `po_gate: needs_owner (<n> flags)`; nothing persisted, and `/automate` intake stops. Step 4's can't-ask branch records its flags and continues; the Pre-persist house-rule check (Responsibilities 3a, after story drafting) asks per conflict (advisory: the same three options, Proceed = a recorded owner override; `must`: `PO-RULE-MUST`, no override option; an unproven-defect flag: `PO-DEFECT`, Reproduce first / Write it as a probe / Proceed anyway) and its can't-ask branch emits the run's one combined `po_gate` line |
 | Launch Pad Phase 2 clarification (incl. step 0's unusable requirement file) | `agents/launch-pad.md` + `commands/launch-pad.md` Critical Rules ("Can't-ask rule"); agent Phase 2 DISCOVER | MI; MN (flag, forwarded by `/autonomous` PLAN step 1 under `--non-interactive-fallback`); HP (runner in print mode, or inline under headless `/automate --inline-phases`); HR (the `/automate` Launch Pad phase); SA by auto-delegation only | undefined | `status: aborted`, `status_reason: "clarification_needed_non_interactive"` |
 | Launch Pad Phase 2.5 NO-GO | agent §Phase 2.5 "Flow control"; command FEASIBILITY "Flow"; `skills/autonomous-loop/SKILL.md` PLAN step 3 | as above | undefined (still asked regardless of the flag) | `status: aborted`, `status_reason: "no_go_non_interactive"`, with no option auto-picked |
 | Launch Pad Phase 2.7 approach pick (`LP-APPROACH`, human-only) | agent Critical Rules ("Can't-ask rule"), §Phase 2.7 step 3; command Critical Rules, Phase 2.7; `skills/supervisor-readiness/design-decisions.md` §"The `LP-APPROACH` ask"; Plan Reviewer Criterion 23 (23d) | as above | new gate | the default pick recorded `status: unconfirmed`, never asked, never aborted; a T1 entry left `unconfirmed` makes Plan Review NEEDS_HUMAN |

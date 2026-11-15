@@ -156,6 +156,7 @@ A requirement set has ONE plan doc, `<folder>/_BACKLOG.md` (the name `/automate 
 - [ ] Nice-to-have - Future consideration
 
 ### Assumptions
+- [Defect stories only, first bullet: Defect evidence: observed | reproduced | read, unverified — <what shows it>]
 - [Assumption 1 that needs validation]
 - [Assumption 2 about user behavior or system state]
 
@@ -205,6 +206,7 @@ Keep them as the story's last sections (or follow them with another `##` heading
 - `### Owner decisions` — each decision the owner made in the session (an answered question, a stated constraint), in the owner's meaning; `none recorded` when no decision was made.
 - `## Validation (must pass before merge)` — **H2** in the persisted file, like `## Depends on` / `## Touches`, because the `/automate` validation gate reads only an H2 section; placed before `## Depends on`. A numbered list; each entry opens with a bold title: `N. **Static — <check>:** …` for tests, lint or a CI check (name the project's own test or CI command when CLAUDE.md names one), `N. **Running system — <what is shown>:** …` when the outcome can only be shown in a running system (a hook firing, an agent's live answer, a UI flow). The gate requires evidence before READY (the step's committed evidence file, per the Evidence item rule above) for every entry whose title or text says "running system", so a static entry never uses those words, and a story with static entries only reads `none` there. Validation names the proof (what must be shown), never how to build it.
 - **Never an empty Validation.** A story with no nameable proof is not persisted with an empty section: it is a missing-proof flag, raised at the confirmation gate (Product Owner: Responsibilities 3a).
+- **Defect evidence.** A story that fixes a defect opens its `### Assumptions` with `- Defect evidence: <class> — <source>`: `observed` (a run, a log or an event row shows it), `reproduced` (a test fails on today's code, or traced values show it) or `read, unverified` (only a code read or a static review says so). Finding the named code is not proof the defect happens. A `read, unverified` defect is never persisted silently: the owner reproduces it first, rewrites it as a probe ("check whether X happens; fix only what the check shows", with no AC that presumes the defect), or proceeds knowing (Product Owner: an unproven-defect flag at Responsibilities 3a). The line stays in the persisted story, so a planner reading it can tell a claim nobody has seen.
 
 ## Example: Staff Scheduling Story
 
