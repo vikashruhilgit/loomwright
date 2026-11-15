@@ -42,6 +42,52 @@ CI cost: `test-route-guard.sh` installs Playwright (`--with-deps` under `CI`) an
 branch's first CI run; locally, with a warm cache, the whole `bash selvedge/tests/run.sh` took about
 15 s.
 
+## qa-split/03 additions (2026-11-15)
+
+The criteria-to-frozen-plan item adds Node modules under `selvedge/lib/` (`criteria.mjs`,
+`plan-steps.mjs`, `plan-validate.mjs`, `plan.mjs`, `plan-runs.mjs`, `plan-planner.mjs`,
+`snapshot.mjs`, `snapshot-playwright.mjs`), the fixed prompt `selvedge/prompts/planner.md`, two
+schemas, and six shell files the shared gates can see: `selvedge/tests/test-criteria.sh`,
+`test-plan-validate.sh`, `test-snapshot.sh`, `test-plan.sh`, and the fixtures
+`tests/fixtures/stub-planner.sh` and `tests/fixtures/stub-claude.sh`. `check-locale-prefix.sh`
+scans all of them; none uses a temporary `LC_ALL=` assignment. Observed on this branch:
+`check-locale-prefix: OK — 552/552 scanned shell files (git mode) carry no temporary locale
+assignment at command position`. The fixtures are not named `test-*`, so `selvedge/tests/run.sh`
+runs only the top-level tests. No Loomwright count, budget, citation or prompt-history gate scans
+`selvedge/` (the scopes quoted above are unchanged); `prompts/planner.md` is a selvedge runtime
+prompt, outside `check-token-budget.sh`'s and `check-prompt-history-refs.sh`'s loomwright dirs.
+
+No model and no network beyond the pinned Playwright install: `test-plan.sh` runs the planner as a
+stub `SELVEDGE_PLANNER` and the default planner against a PATH-stub `claude` that records its argv.
+The default planner has never run against a real model in CI; that trial is item 06/06c's.
+
+CI cost: `test-snapshot.sh` and `test-plan.sh` reuse the same pinned Playwright cache as
+`test-route-guard.sh` (installed on each `static` run, no cache in CI yet). Locally, with a warm
+cache, the whole `bash selvedge/tests/run.sh` took about 40 s on this branch (`selvedge gate: PASS (release check + 9 test file(s))`).
+
+### Hand-off to item 04
+
+Owner decision LP-CLARIFY 2026-11-15 ("Prove what 03 owns") scoped two lines of the qa-split/03
+requirement out of this item, because they describe the runner and its verdict. Item 04 must
+deliver both:
+
+1. **The modal fixture plan's run PASSes.** This item proves the plan's locators resolve
+   (`test-plan.sh` AC8: the frozen plan's steps, minus `read`/`expect`, plus a `wait_for` visible on
+   the `read` locator, run as a `snapshot --steps` prefix and exit 0). Item 04 runs the same frozen
+   plan — the fixture app's `/cart` (`tests/fixtures/app-server.mjs`), the plan frozen by
+   `tests/fixtures/stub-planner.sh` mode `modal` (open the cart, fill Quantity 2, read the
+   `total` test id, expect `"12"`) — read from the run folder's `plan.json`, checked against its
+   `plan.sha256`, and its verdict is PASS.
+2. **`verdict.json` carries `plan_time_actions` when no `reset` hook ran.** The value is the one
+   frozen at plan time: the `plan_time_actions` key of the run folder's `freeze.json` (the same
+   number is in that folder's `event: "freeze"` line of `.selvedge/runs.jsonl`), the sum over the
+   folder's `snapshots.jsonl`. The requirement's reason: before `run`, an approved `reset` hook
+   runs; with none, the state the planner's snapshot actions left in the app is still there, and
+   `plan_time_actions: N` lets a surprising result be traced.
+
+Item 04 reuses `nextPlanRevision`, `readRunsLog` and `runsLogPath` from `selvedge/lib/plan-runs.mjs`
+for its own `event: "run"` lines.
+
 ## Release gates
 
 | Gate | Scope | Reaches `selvedge/`? | Observed |

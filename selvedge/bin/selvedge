@@ -61,9 +61,9 @@ Commands:
                        the accessibility tree of an allowed origin, opened in the guarded
                        browser after an optional step prefix (needs Node >= 18 and Playwright;
                        \`selvedge snapshot help\`)
-  plan --validate <plan.json>
-                       lint a plan.json: every problem, one line each (needs Node >= 18;
-                       \`selvedge plan help\`)
+  plan --validate <plan.json> | --init <criteria.json> | --freeze <run-dir> | <criteria.json>
+                       criteria to a linted, sha256-frozen plan.json in .selvedge/runs/<run-id>/
+                       (needs Node >= 18; the default planner needs claude; \`selvedge plan help\`)
   help, -h, --help     print this help
 EOF
 }
