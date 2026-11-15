@@ -351,7 +351,7 @@ defect_ok() {
     n="$(grep -F -- "$N_LINE" "$f")"
     grep -qF 'unproven-defect flags' <<<"$n" || { echo "the <n> formula in $f does not count unproven-defect flags"; return 1; }
   done
-  extract_story_template "$3" | grep -qF -- '- [Defect stories only, first bullet: Defect evidence:' \
+  grep -qF -- '- [Defect stories only, first bullet: Defect evidence:' <<<"$(extract_story_template "$3")" \
     || { echo "the skill's Story Template has no Defect evidence bullet"; return 1; }
   [ "$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' '$1 == "PO-DEFECT" { print $2 "|" $3 }')" \
     = "human-only|Reproduce first|Write it as a probe|Proceed anyway" ] || { echo "lane-policy.sh catalog has no matching PO-DEFECT row"; return 1; }
