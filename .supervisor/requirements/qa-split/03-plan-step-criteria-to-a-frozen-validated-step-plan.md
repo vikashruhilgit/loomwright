@@ -1,6 +1,7 @@
 # Criteria become a frozen, validated step plan before anything runs
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/924
 
 > Phase 1, item 03 of `qa-split/00-plan.md` (rev 2, approved 2026-11-12).
 > Decisions: D6 (only the plan step uses a model; plan hashed; rev 3 revisions), D7 (static PASS rule; rev 3
@@ -98,3 +99,9 @@ checkable before anything runs, and the hash makes the plan immutable once writt
 
 - `selvedge/bin/selvedge`, `selvedge/lib/criteria*`, `selvedge/lib/plan*`, `selvedge/lib/snapshot*`
 - `selvedge/schemas/{criteria,plan}.schema.json`, `selvedge/prompts/planner.md`, `selvedge/tests/**`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-15T13:19:49Z
+- **Brief:** .supervisor/jobs/done/2026-11-15-qa-split-03-frozen-validated-step-plan.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/924
