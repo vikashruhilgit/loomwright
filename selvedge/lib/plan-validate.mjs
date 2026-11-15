@@ -7,7 +7,7 @@
 // What it enforces (00-plan D6/D7):
 //  - the PASS rule: a criterion's steps end in `read` then `expect` — a value read after the last
 //    action — and that expect checks a value, not existence or visibility, and not a bound any read
-//    value meets (contains "", a pattern matching "" or any one character, read count then lt:
+//    value meets (contains "", a pattern matching "" or every probe text, read count then lt:
 //    vacuousExpect);
 //  - negative criteria read a baseline before their first action and do not check only that an
 //    element is absent or hidden;
@@ -92,17 +92,29 @@ function isCountAbsence(read, expect) {
 
 // A final expect that holds for any value read (so it checks nothing about the value): a detail
 // string, or null. `read` is the step before it (or null).
-//  - contains "" (or only whitespace): every text contains the empty string;
+//  - contains "" (or only whitespace): it checks no visible character of the value (every text
+//    contains "");
 //  - matches a pattern that matches "": it holds even when the read value is empty;
-//  - matches a pattern that matches single characters of two different kinds (of 'a', '0', '-',
-//    ' '), as ".", "\S", "\w" or "^.+$" do: it holds for any non-empty text, so it checks only
-//    that something is there (a pattern for one kind, as "^\d+$", states a format and passes);
+//  - matches a pattern that matches EVERY text of ANY_TEXT_PROBES, as ".", "\S", "\w", "^.+$",
+//    ".." or "^.{2,}$" do: it holds for any ordinary text, so it checks only that something is
+//    there. A format, as "^[a-z0-9-]+$" or "^\d+$", fails at least one probe and passes;
 //  - read count then lt N: an upper bound only, it holds when no element exists at all.
-const ANY_TEXT_PROBES = Object.freeze(['a', '0', '-', ' ']);
+// The probes are single-line texts of two or more characters, each with a letter or digit, that
+// differ in case, digits, spaces, punctuation and length. No probe has a newline: "^.+$" fails
+// a two-line text yet any one-line value meets it.
+export const ANY_TEXT_PROBES = Object.freeze([
+  'ab',
+  '00',
+  'x-',
+  'x y z',
+  'Hello, world!',
+  '#1 $%',
+  'Ab1 -_.,:;!?@#$%^&*()[]{}<>/\\|"\'`~+=',
+]);
 export function vacuousExpect(read, expect) {
   const { op, value } = expect;
   if (op === 'contains' && typeof value === 'string' && value.trim() === '') {
-    return `expect contains ${JSON.stringify(value)} holds for any text read; check a non-blank value`;
+    return `expect contains ${JSON.stringify(value)} checks no visible character of the value; check a non-blank value`;
   }
   if (op === 'matches' && typeof value === 'string') {
     let re = null;
@@ -112,8 +124,7 @@ export function vacuousExpect(read, expect) {
       re = null; // an invalid pattern is plan_schema_violation (validateSteps)
     }
     if (re && re.test('')) return `expect matches ${JSON.stringify(value)} also matches the empty string, so it holds even when nothing is read; anchor a non-empty value`;
-    const hits = re ? ANY_TEXT_PROBES.filter((c) => re.test(c)) : [];
-    if (hits.length >= 2) return `expect matches ${JSON.stringify(value)} matches any one character (${hits.map((c) => JSON.stringify(c)).join(', ')}), so it holds for any non-empty text; match the value itself`;
+    if (re && ANY_TEXT_PROBES.every((t) => re.test(t))) return `expect matches ${JSON.stringify(value)} matches every one of ${ANY_TEXT_PROBES.length} unlike probe texts ("ab", "00", "x y z", "Hello, world!", ...), so it holds for any ordinary text; match the value itself or its format`;
   }
   if (isPlainObject(read) && read.property === 'count' && op === 'lt') {
     return 'read count then expect lt holds when no element exists (an upper bound only); check the count with equals, a lower bound gt >= 1, or changed_from';

@@ -38,7 +38,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   is a usage error. A resolved `{{NAME}}` value is printed as `{{NAME}}` (tree, error, stderr; as given
   and as Playwright quotes it); any variable name still resolves (an open item, see the README). The lint
   also rejects a final expect any value meets (`contains` a blank string, `matches` a pattern
-  matching the empty string or any one character, `read count` then `lt`) as `existence_only_expect`.
+  matching the empty string or every one of a fixed set of unlike one-line texts, `read count` then
+  `lt`) as `existence_only_expect`.
 - Ten new reasons: `playwright_unavailable`, `placeholder_unset` (BLOCKED),
   `criterion_not_testable`, `side_effect_not_observable`, `exploration_budget` (NOT_VERIFIABLE, exit
   3), `already_frozen`, `plan_invalid`, `criteria_invalid`, `criteria_not_found`, `planner_failed`.

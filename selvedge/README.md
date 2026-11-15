@@ -316,7 +316,7 @@ A locator is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"
 Plan-lint problems (the codes after `plan_invalid:`):
 
 - `missing_final_read_expect` — a criterion's steps do not end in `read` then `expect` (a value read after the last action).
-- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or any one character, as `.` or `\S` do, or `read count` then `lt`).
+- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or every one of a fixed set of unlike one-line texts, as `.`, `\S`, `^.+$` or `..` do, while a format such as `^[a-z0-9-]+$` or `^\d+$` passes, or `read count` then `lt`).
 - `unknown_step_type` — a step `type` that is not one of the step types above.
 - `unknown_field` — a field a step, a criterion entry or the plan does not have.
 - `invalid_locator` — a locator that is not exactly one role, label, text or test-id form (CSS, XPath and any other key are refused).
