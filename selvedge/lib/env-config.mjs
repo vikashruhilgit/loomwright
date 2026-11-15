@@ -1,5 +1,5 @@
 // env-config.mjs — selvedge.json: origin parsing, the allowlist match, config load and validation,
-// and the closed list of reasons every selvedge env/guard emitter names.
+// and the closed list of reasons every selvedge emitter (env, guard, criteria, plan, snapshot) names.
 //
 // This is the ONE origin parser. The env commands, the forward proxy and the browser route layer all
 // import parseOrigin / isOriginAllowed from here; nothing re-implements them. Origins are compared as
@@ -12,7 +12,8 @@ import path from 'node:path';
 
 // The closed reason list. Every emitter imports a value from here; no reason is a string literal
 // anywhere else. BLOCKED reasons print as a stdout line `BLOCKED <reason>`; config/usage reasons print
-// on stderr. Both exit 2.
+// on stderr. Both exit 2. NOT_VERIFIABLE reasons print as a stdout line `NOT_VERIFIABLE <reason>` and
+// exit 3 when a command ends on one; a plan also carries them per criterion under `not_planned`.
 export const REASONS = Object.freeze({
   // BLOCKED outcomes
   host_not_allowed: 'host_not_allowed',
@@ -22,6 +23,12 @@ export const REASONS = Object.freeze({
   proxy_unavailable: 'proxy_unavailable',
   env_hooks_unapproved: 'env_hooks_unapproved',
   env_hooks_remote_origin: 'env_hooks_remote_origin',
+  playwright_unavailable: 'playwright_unavailable',
+  placeholder_unset: 'placeholder_unset',
+  // NOT_VERIFIABLE outcomes
+  criterion_not_testable: 'criterion_not_testable',
+  side_effect_not_observable: 'side_effect_not_observable',
+  exploration_budget: 'exploration_budget',
   // config / usage reasons
   origins_empty: 'origins_empty',
   origin_invalid: 'origin_invalid',
@@ -32,6 +39,11 @@ export const REASONS = Object.freeze({
   base_config_unreadable: 'base_config_unreadable',
   approve_requires_tty: 'approve_requires_tty',
   port_required: 'port_required',
+  already_frozen: 'already_frozen',
+  plan_invalid: 'plan_invalid',
+  criteria_invalid: 'criteria_invalid',
+  criteria_not_found: 'criteria_not_found',
+  planner_failed: 'planner_failed',
 });
 
 export const CONFIG_FILE = 'selvedge.json';
@@ -108,6 +120,43 @@ export function isOriginAllowed(config, candidate) {
     }
   }
   return false;
+}
+
+// A command-line usage problem (exit 2, the command's usage text follows).
+export class UsageError extends Error {}
+
+// parseCliArgs(args, { values, booleans }) → { flags, positional }.
+// `--name <v>` / `--name=<v>` for each name in `values` (an empty value is refused); a bare `--name`
+// for each name in `booleans` (true). Any other `--option` is a UsageError. Shared by the criteria
+// and plan commands (and the commands that follow them) so each parses its flags the same way.
+export function parseCliArgs(args, { values = [], booleans = [] } = {}) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (!a.startsWith('--')) {
+      positional.push(a);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
+    if (booleans.includes(name)) {
+      if (eq > 0) throw new UsageError(`--${name} takes no value`);
+      flags[name] = true;
+      continue;
+    }
+    if (!values.includes(name)) throw new UsageError(`unknown option --${name}`);
+    let value;
+    if (eq > 0) value = a.slice(eq + 1);
+    else {
+      i += 1;
+      if (i >= args.length) throw new UsageError(`--${name} needs a value`);
+      value = args[i];
+    }
+    if (value === '') throw new UsageError(`--${name} needs a value`);
+    flags[name] = value;
+  }
+  return { flags, positional };
 }
 
 function isPlainObject(v) {

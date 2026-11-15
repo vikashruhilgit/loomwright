@@ -6,10 +6,11 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# The `env` commands run lib/env.mjs and are the only ones that need Node (>= 18); --version,
-# help and install-cli stay bash-only.
+# The `env`, `criteria` and `plan` commands run lib/<command>.mjs and are the only ones that need
+# Node (>= 18); --version, help and install-cli stay bash-only.
 #
-# Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line).
+# Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line),
+# 3 NOT_VERIFIABLE (a named reason on its own line). Precedence when several apply: 1 > 2 > 3 > 0.
 set -uo pipefail
 
 die() { printf 'selvedge: %s\n' "$*" >&2; exit 1; }
@@ -52,13 +53,21 @@ Commands:
   env <check|init|approve|hook>
                        selvedge.json origin allowlist and approved env hooks (needs Node >= 18;
                        \`selvedge env help\` for details)
+  criteria <from-pr|from-md|from-text|check>
+                       acceptance criteria to criteria.json, and the testability pre-check
+                       (needs Node >= 18; \`selvedge criteria help\`)
+  plan --validate <plan.json>
+                       lint a plan.json: every problem, one line each (needs Node >= 18;
+                       \`selvedge plan help\`)
   help, -h, --help     print this help
 EOF
 }
 
-cmd_env() {
-  command -v node >/dev/null 2>&1 || die "the env commands need Node.js >= 18 on PATH (node not found)"
-  exec node "$BIN_DIR/../lib/env.mjs" "$@"
+# cmd_node <command> <args…> — exec lib/<command>.mjs under Node.
+cmd_node() {
+  local name="$1"; shift
+  command -v node >/dev/null 2>&1 || die "the $name commands need Node.js >= 18 on PATH (node not found)"
+  exec node "$BIN_DIR/../lib/$name.mjs" "$@"
 }
 
 cmd_version() {
@@ -95,7 +104,9 @@ case "${1:-}" in
   "") usage ;;
   --version|version) cmd_version ;;
   install-cli) cmd_install_cli ;;
-  env) shift; cmd_env "$@" ;;
+  env) shift; cmd_node env "$@" ;;
+  criteria) shift; cmd_node criteria "$@" ;;
+  plan) shift; cmd_node plan "$@" ;;
   help|-h|--help) usage ;;
   *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
 esac
