@@ -45,8 +45,9 @@
 // {{NAME}} values never reach stdout or stderr as given: before printing, every resolved value is
 // replaced by its `{{NAME}}` (longest first, empty values skipped) in aria_snapshot, error and
 // stderr (redactValues), and snapshots.jsonl keeps the steps as given. A short value (a "2") is
-// redacted wherever it occurs, so the tree can read oddly. Exact matches only: a page that shows a
-// value transformed (escaped, cut, re-cased, reversed) still shows it.
+// redacted wherever it occurs, so the tree can read oddly. The value is found as given and in each
+// form Playwright's YAML / JSON quoting and whitespace normalization give it (encodedForms); a page
+// that shows it otherwise transformed (cut, re-cased, reversed, HTML-escaped) still shows it.
 // OPEN (owner decision): any environment variable name is resolvable, not only names a plan
 // declares, so a planner that may run `snapshot` can make the page hold any variable's value; the
 // redaction above keeps the plain value off the output, nothing more.
@@ -105,7 +106,7 @@ press, wait_for; at most 15; a fill/select value may use {{NAME}} from the envir
   --base <ref>      read the allowlist from the committed <ref>:selvedge.json (as env check --base).
                     SELVEDGE_BASE (set by plan for its planner) pins it; a different --base is refused.
 
-A {{NAME}} value is printed as {{NAME}}, never as the value (exact matches only).
+A {{NAME}} value is printed as {{NAME}}, never as the value (as given or as Playwright quotes it).
 
 Playwright comes from SELVEDGE_PLAYWRIGHT_MODULE when set, else the repo's own node_modules.
 stdout: one JSON object {schema_version, url, steps_run, failed_step, error, aria_snapshot}.
@@ -187,14 +188,43 @@ export function placeholderValues(steps, env = process.env) {
     .map((n) => ({ name: n, value: env[n] }));
 }
 
-// redactValues(text, secrets) → text with every secret value replaced by its `{{NAME}}`, longest
-// value first, in one pass (a replacement is never re-scanned). Exact matches only: a page that
-// shows the value transformed (escaped, cut, re-cased) is not caught.
+// Playwright's aria-snapshot YAML encodes a string before printing it (playwright-core
+// packages/isomorphic/yaml.ts + ariaSnapshotRenderer.ts, 1.65.1): whitespace is normalized
+// (U+200B/U+00AD dropped, trimmed, runs of whitespace made one space); a text or value scalar that
+// needs quoting is double-quoted with \\ \" \b \f \n \r \t and \xNN for other control characters;
+// an accessible name is JSON.stringify'd into its key, and a key that needs quoting is
+// single-quoted with ' doubled. Each form below is what one of those steps leaves of a value.
+const yamlValueBody = (v) => v.replace(/[\\"\x00-\x1f\x7f-\x9f]/g, (c) => {
+  const named = { '\\': '\\\\', '"': '\\"', '\b': '\\b', '\f': '\\f', '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+  return named[c] || `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`;
+});
+const jsonBody = (v) => JSON.stringify(v).slice(1, -1);
+const normalizeSpace = (v) => v.replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
+
+// encodedForms(value) → every non-empty form the value can take in the printed tree or in an error
+// message (as given, whitespace-normalized, YAML-escaped, JSON-escaped, single-quote-doubled).
+export function encodedForms(value) {
+  const forms = new Set();
+  for (const base of [value, normalizeSpace(value)]) {
+    for (const enc of [base, yamlValueBody(base), jsonBody(base)]) {
+      forms.add(enc);
+      forms.add(enc.replace(/'/g, "''"));
+    }
+  }
+  forms.delete('');
+  return [...forms];
+}
+
+// redactValues(text, secrets) → text with every secret value, in every encodedForms() form,
+// replaced by its `{{NAME}}`, longest form first, in one pass (a replacement is never re-scanned).
+// A value the page shows otherwise transformed (cut, re-cased, reversed) is not caught.
 export function redactValues(text, secrets) {
   if (typeof text !== 'string' || !secrets.length) return text;
-  const sorted = [...secrets].sort((a, b) => b.value.length - a.value.length);
+  const forms = secrets.flatMap((s) => encodedForms(s.value).map((form) => ({ name: s.name, form })));
+  if (!forms.length) return text;
+  forms.sort((a, b) => b.form.length - a.form.length);
   const byValue = new Map();
-  for (const s of sorted) if (!byValue.has(s.value)) byValue.set(s.value, s.name);
+  for (const f of forms) if (!byValue.has(f.form)) byValue.set(f.form, f.name);
   const re = new RegExp([...byValue.keys()].map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
   return text.replace(re, (m) => `{{${byValue.get(m)}}}`);
 }
@@ -446,8 +476,9 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
     const seen = [...new Set(guard.blocks.map((b) => `${b.reason} ${b.host}`))];
     warn(`the guard refused ${guard.blocks.length} request(s): ${seen.join(', ')}`);
   }
-  // Redacted field by field before JSON escaping, so a value holding a quote or a backslash is
-  // still found. url is the caller's own argument (it holds no {{NAME}}).
+  // Redacted field by field BEFORE JSON.stringify (which would escape a quote or backslash a second
+  // time); redactValues covers the forms Playwright's own YAML and JSON quoting give a value.
+  // url is the caller's own argument (it holds no {{NAME}}).
   result.aria_snapshot = result.aria_snapshot === null ? null : redactValues(result.aria_snapshot, secrets);
   result.error = result.error === null ? null : redactValues(result.error, secrets);
   say(JSON.stringify(result, null, 2));

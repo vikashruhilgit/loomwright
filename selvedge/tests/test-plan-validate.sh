@@ -150,6 +150,14 @@ for v in "''" "'.*'" "'^\\\\d*\$'"; do
   validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: $v };"
   want_problem "a final expect matches $v (a pattern matching the empty string) is rejected existence_only_expect" "$c1" existence_only_expect
 done
+for v in "'.'" "'^.+\$'" "'\\\\S'" "'[\\\\s\\\\S]'" "'\\\\w'"; do
+  validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: $v };"
+  want_problem "a final expect matches $v (a pattern any non-empty text meets) is rejected existence_only_expect" "$c1" existence_only_expect
+done
+for v in "'^\\\\\$\\\\d+\\\\.\\\\d{2}\$'" "'Total: 12'" "'^\\\\d+\$'"; do
+  validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: $v };"
+  [ "$rc" -eq 0 ] && ok "control: a final expect matches $v (a value or a one-kind format) is accepted" || ko "matches $v: rc=$rc err='$err'"
+done
 validate "steps(c1).splice(3, 2, { type: 'read', property: 'count', locator: { testid: 'line' } }, { type: 'expect', op: 'lt', value: 1000000 });"
 want_problem "read count then expect lt 1000000 (holds when nothing exists) is rejected existence_only_expect" "$c1" existence_only_expect
 validate "steps(c1)[4] = { type: 'expect', op: 'contains', value: '12' };"

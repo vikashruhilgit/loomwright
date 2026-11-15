@@ -55,7 +55,7 @@ export GIT_CONFIG_NOSYSTEM=1
 mkdir -p "$HOME" "$TMP/o" "$TMP/logs"
 # Every variable an arm asserts the unset path of starts unset; arms that set one pass it explicitly.
 unset PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK SELVEDGE_RUN_DIR SELVEDGE_SNAPSHOT_BUDGET \
-  SELVEDGE_PLAYWRIGHT_MODULE NODE_PATH SHOP_USER
+  SELVEDGE_PLAYWRIGHT_MODULE SELVEDGE_BASE NODE_PATH SHOP_USER SOME_SECRET_TOKEN PW_SECRET STUB_MODE
 
 # The fixture app + the recorder U, in one background process.
 node "$APP" serve "$TMP/servers.json" "$TMP/logs" >"$TMP/servers.log" 2>&1 &
@@ -87,6 +87,28 @@ export const chromium = {
 };
 EOF
 export STUB_LOG="$TMP/stub-launches.log"
+
+# A stub Playwright that runs: a fake browser whose page answers goto with 200 and prints a fixed
+# tree, and throws an error carrying the resolved $PW_SECRET (raw and JSON-quoted, as Playwright's
+# own messages quote a value) from fill (STUB_MODE=fill: the step's `error`) or from
+# setDefaultTimeout (STUB_MODE=timeout: an error no step catches, so it reaches stderr).
+THROW="$TMP/stub-throw"
+mkdir -p "$THROW"
+printf '{"name":"playwright","version":"0.0.0-throw"}\n' > "$THROW/package.json"
+cat > "$THROW/index.mjs" <<'EOF'
+const v = () => process.env.PW_SECRET;
+const boom = (where) => new Error(`${where} failed for ${v()} (value ${JSON.stringify(v())})`);
+const locator = { fill: async () => { throw boom('locator.fill'); }, ariaSnapshot: async () => '- paragraph: stub tree' };
+const page = {
+  setDefaultTimeout: () => { if (process.env.STUB_MODE === 'timeout') throw boom('setDefaultTimeout'); },
+  setDefaultNavigationTimeout: () => {},
+  goto: async () => ({ status: () => 200, headers: () => ({}) }),
+  getByLabel: () => locator,
+  locator: () => locator,
+};
+const context = { addInitScript: async () => {}, route: async () => {}, on: () => {}, newPage: async () => page };
+export const chromium = { launch: async () => ({ newContext: async () => context, close: async () => {} }) };
+EOF
 
 # snap <label> [<env args>…] -- <snapshot args>…  runs `selvedge snapshot` in the target repo ($R,
 # or $SNAP_CWD) with `env <env args>` (BSD env: every `-u NAME` before any NAME=value); sets OUT / ERR (files) and RC, and empties the stub's log.
@@ -237,6 +259,40 @@ console.log(JSON.stringify([secrets.map((s) => s.name), S.redactValues('x ab\"c\
 [ "$out" = '[["TOK","LONG"],"x {{LONG}} y {{TOK}} z","kept"]' ] \
   && ok "redactValues: every resolved value becomes its {{NAME}}, the longest first, quotes and backslashes included; an empty value is never a secret" \
   || ko "redactValues: $out"
+# Each form Playwright's aria YAML / JSON quoting gives a value (playwright-core yaml.ts and
+# ariaSnapshotRenderer.ts): a quoted text scalar (\" \\ \xNN), a name JSON-quoted into its key, a
+# single-quoted key (' doubled), and whitespace normalized.
+cat > "$TMP/forms.mjs" <<'EOF'
+import { pathToFileURL } from 'node:url';
+const S = await import(pathToFileURL(process.env.SNAP_MODULE).href);
+const v = 'it\'s: "x\\y\u007f  z';
+const s = [{ name: 'PW', value: v }];
+const cases = [
+  ['- paragraph: "Hello, it\'s: \\"x\\\\y\\x7f  z"', '- paragraph: "Hello, {{PW}}"'],
+  ['- \'textbox "it\'\'s: \\"x\\\\y\u007f z"\'', '- \'textbox "{{PW}}"\''],
+  ['- paragraph: Hello, it\'s: "x\\y\u007f z', '- paragraph: Hello, {{PW}}'],
+  [`error: ${JSON.stringify(v)}`, 'error: "{{PW}}"'],
+];
+const bad = cases.map(([t, want]) => [S.redactValues(t, s), want]).filter(([got, want]) => got !== want);
+console.log(bad.length ? JSON.stringify(bad) : 'all');
+EOF
+out="$(SNAP_MODULE="$LIB/snapshot.mjs" node "$TMP/forms.mjs" 2>&1)"
+[ "$out" = all ] \
+  && ok "redactValues finds a value in each form Playwright prints it: YAML-escaped text, JSON-quoted name in a single-quoted key, whitespace-normalized, JSON-quoted in an error" \
+  || ko "redactValues forms: $out"
+
+echo "-- a resolved value never reaches the JSON error or stderr (stub Playwright that throws it)"
+TENV="SELVEDGE_PLAYWRIGHT_MODULE=$THROW/index.mjs"
+TSECRET='hunter2: "x\y'
+export TSECRET
+D="$(rundir throw-fill)"
+snap throw-fill "$TENV" STUB_MODE=fill PW_SECRET="$TSECRET" -- "$AURL/echo" --run-dir "$D" --steps "$(steps throwfill '[{"type":"fill","locator":{"label":"User"},"value":"{{PW_SECRET}}"}]')"
+check "a step error carrying the value: the JSON error shows {{PW_SECRET}} (raw and JSON-quoted forms), stdout never holds the value raw or JSON-escaped" \
+  'const j = json(); const esc = JSON.stringify(E.TSECRET).slice(1, -1); rc === 1 && j.failed_step === 0 && j.error === "locator.fill failed for {{PW_SECRET}} (value \"{{PW_SECRET}}\")" && !out.includes(E.TSECRET) && !out.includes(esc) && !out.includes("hunter2")'
+D="$(rundir throw-stderr)"
+snap throw-stderr "$TENV" STUB_MODE=timeout PW_SECRET="$TSECRET" -- "$AURL/echo" --run-dir "$D" --steps "$TMP/throwfill.json"
+check "an error no step catches, carrying the value: stderr shows {{PW_SECRET}} and never the value (raw or JSON-quoted)" \
+  'rc === 1 && err.includes("setDefaultTimeout failed for {{PW_SECRET}} (value \"{{PW_SECRET}}\")") && !err.includes("hunter2")'
 
 echo "-- a parent-set run folder and config source are pinned"
 D="$(rundir pinned-rd)"; D2="$(rundir pinned-elsewhere)"; export D2
@@ -376,8 +432,16 @@ check "AC16 snapshots.jsonl records the step with the literal {{SHOP_USER}}, nev
 D="$(rundir secret)"
 SECRET_FILL="$(steps secret '[{"type":"fill","locator":{"label":"User"},"value":"{{SOME_SECRET_TOKEN}}"},{"type":"select","locator":{"label":"Size"},"value":"{{SOME_SECRET_TOKEN}}"}]')"
 snap secret "$PWENV" SOME_SECRET_TOKEN=ghp_FAKE_s3cr3t_value -- "$AURL/echo" --run-dir "$D" --steps "$SECRET_FILL"
-check "a resolved secret never reaches stdout or stderr (tree, error, stderr): the tree shows textbox \"User\": {{SOME_SECRET_TOKEN}}, yet the page got the value (reversed echo)" \
+check "a resolved secret the page shows never reaches stdout or stderr: the tree shows textbox \"User\": {{SOME_SECRET_TOKEN}}, yet the page got the value (reversed echo)" \
   'rc === 1 && !out.includes("ghp_FAKE_s3cr3t_value") && !err.includes("ghp_FAKE_s3cr3t_value") && json().aria_snapshot.includes("{{SOME_SECRET_TOKEN}}") && json().failed_step === 1 && json().aria_snapshot.includes("Reversed: eulav_t3rc3s_EKAF_phg")'
+q=0
+for TSECRET in 'hunter2: "x\y' '#k3y\\val'; do
+  export TSECRET; q=$((q + 1))
+  D="$(rundir "quoted-$q")"
+  snap quoted "$PWENV" PW_SECRET="$TSECRET" -- "$AURL/echo" --run-dir "$D" --steps "$TMP/throwfill.json"
+  check "a value Playwright's tree prints YAML-quoted ($TSECRET): exit 0, the tree shows {{PW_SECRET}}, stdout holds neither the value nor its escaped forms" \
+    'const esc = JSON.stringify(E.TSECRET).slice(1, -1); const t = json().aria_snapshot; rc === 0 && t.includes("{{PW_SECRET}}") && !out.includes(E.TSECRET) && !out.includes(esc) && !out.includes(JSON.stringify(esc).slice(1, -1)) && !t.includes(esc) && !out.includes("hunter2") && !out.includes("k3y")'
+done
 echo "-- AC11a the snapshots.jsonl line"
 D="$(rundir ac11a)"
 snap ac11a "$PWENV" -- "$AURL/echo" --run-dir "$D" --steps "$(steps ac11a '[{"type":"goto","url":"'"$AURL"'/echo"},{"type":"click","locator":{"role":"button","name":"Reset"}},{"type":"fill","locator":{"label":"User"},"value":"bob"}]')"

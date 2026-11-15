@@ -7,7 +7,8 @@
 // What it enforces (00-plan D6/D7):
 //  - the PASS rule: a criterion's steps end in `read` then `expect` — a value read after the last
 //    action — and that expect checks a value, not existence or visibility, and not a bound any read
-//    value meets (contains "", a pattern matching "", read count then lt: vacuousExpect);
+//    value meets (contains "", a pattern matching "" or any one character, read count then lt:
+//    vacuousExpect);
 //  - negative criteria read a baseline before their first action and do not check only that an
 //    element is absent or hidden;
 //  - each planned criterion states its interpretation, polarity and unverified assumptions;
@@ -93,7 +94,11 @@ function isCountAbsence(read, expect) {
 // string, or null. `read` is the step before it (or null).
 //  - contains "" (or only whitespace): every text contains the empty string;
 //  - matches a pattern that matches "": it holds even when the read value is empty;
+//  - matches a pattern that matches single characters of two different kinds (of 'a', '0', '-',
+//    ' '), as ".", "\S", "\w" or "^.+$" do: it holds for any non-empty text, so it checks only
+//    that something is there (a pattern for one kind, as "^\d+$", states a format and passes);
 //  - read count then lt N: an upper bound only, it holds when no element exists at all.
+const ANY_TEXT_PROBES = Object.freeze(['a', '0', '-', ' ']);
 export function vacuousExpect(read, expect) {
   const { op, value } = expect;
   if (op === 'contains' && typeof value === 'string' && value.trim() === '') {
@@ -107,6 +112,8 @@ export function vacuousExpect(read, expect) {
       re = null; // an invalid pattern is plan_schema_violation (validateSteps)
     }
     if (re && re.test('')) return `expect matches ${JSON.stringify(value)} also matches the empty string, so it holds even when nothing is read; anchor a non-empty value`;
+    const hits = re ? ANY_TEXT_PROBES.filter((c) => re.test(c)) : [];
+    if (hits.length >= 2) return `expect matches ${JSON.stringify(value)} matches any one character (${hits.map((c) => JSON.stringify(c)).join(', ')}), so it holds for any non-empty text; match the value itself`;
   }
   if (isPlainObject(read) && read.property === 'count' && op === 'lt') {
     return 'read count then expect lt holds when no element exists (an upper bound only); check the count with equals, a lower bound gt >= 1, or changed_from';

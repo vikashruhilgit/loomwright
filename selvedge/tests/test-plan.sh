@@ -189,7 +189,7 @@ printf '{"schema_version":1,"origins":["%s","http://localhost:4999"]}\n' "$AURL"
 export LOGW="$TMP/log-wide"
 run wide "$RW" "$PLANNER" STUB_PLANNER_MODE=wide STUB_PLANNER_LOG="$LOGW" STUB_WIDE_URL=http://localhost:4999/ \
   STUB_WIDE_RUN_DIR="$TMP/elsewhere" STUB_WIDE_BASE=HEAD~0 -- "$CRITERIA" --base HEAD
-check "plan --base HEAD: the planner got SELVEDGE_BASE=HEAD and the plan froze against HEAD:selvedge.json (exit 0)" \
+check "plan --base HEAD: the plan freezes (exit 0) and the planner got SELVEDGE_BASE=HEAD" \
   'rc === 0 && has("plan.sha256") && JSON.parse(txt(E.LOGW + "/env.json")).SELVEDGE_BASE === "HEAD"'
 check "plan --base HEAD: the planner's snapshot of the working-tree-only origin is BLOCKED host_not_allowed (exit 2)" \
   'txt(E.LOGW + "/wide.rc").trim() === "2" && txt(E.LOGW + "/wide.out").split("\n").includes("BLOCKED host_not_allowed")'

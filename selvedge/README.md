@@ -189,8 +189,9 @@ writes locators: content that appears only after a click is not in the tree unti
   `check`, `press` and `wait_for` steps (never `read` or `expect`), checked by the same step
   validator as a plan. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
   unset name is `BLOCKED placeholder_unset`. The value is never printed: every resolved value is
-  shown as its `{{NAME}}` in `aria_snapshot`, `error` and on stderr (exact matches only — a page
-  that shows the value escaped, cut or otherwise transformed still shows it). **Open item:** any
+  shown as its `{{NAME}}` in `aria_snapshot`, `error` and on stderr (found as given and as
+  Playwright's YAML/JSON quoting and whitespace normalization print it — a page that shows the
+  value cut, re-cased or otherwise transformed still shows it). **Open item:** any
   environment variable name resolves, not only names a plan declares, so whoever may run
   `snapshot` (a planner included) can make the page hold any variable's value; the redaction keeps
   the plain value off the output, nothing more.
@@ -315,7 +316,7 @@ A locator is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"
 Plan-lint problems (the codes after `plan_invalid:`):
 
 - `missing_final_read_expect` — a criterion's steps do not end in `read` then `expect` (a value read after the last action).
-- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string, or `read count` then `lt`).
+- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or any one character, as `.` or `\S` do, or `read count` then `lt`).
 - `unknown_step_type` — a step `type` that is not one of the step types above.
 - `unknown_field` — a field a step, a criterion entry or the plan does not have.
 - `invalid_locator` — a locator that is not exactly one role, label, text or test-id form (CSS, XPath and any other key are refused).
