@@ -80,7 +80,7 @@ export const NAVIGATION_TIMEOUT_MS = 15000;
 // The outcome a snapshots.jsonl line records.
 export const OUTCOMES = Object.freeze({
   ok: 'ok', // the tree was printed, exit 0
-  step_failed: 'step_failed', // a prefix step failed, exit 1
+  step_failed: REASONS.step_failed, // a prefix step failed, exit 1
   failed: 'failed', // the url, the launch or the tree read failed, exit 1
   blocked: 'blocked', // BLOCKED before or at launch, exit 2
   invalid: 'invalid', // a prefix problem, a config or usage reason, exit 2

@@ -54,11 +54,12 @@ selvedge criteria <command>   # acceptance criteria to criteria.json, and the te
 selvedge snapshot <url> [--steps <prefix.json>] --run-dir <dir>   # an allowed page's accessibility tree
 selvedge plan <criteria.json>          # planner, lint and freeze into .selvedge/runs/<run-id>/
 selvedge plan --init | --validate | --freeze …   # the same steps one at a time
+selvedge verdict <run-dir>             # per-criterion verdicts from evidence.jsonl + plan.json
 ```
 
 `--version` and `install-cli` need only bash and standard userland tools (no `jq`, no Node); the
 CLI resolves its own real path through symlinks, so it works when run through the `install-cli`
-link. **The `env`, `criteria`, `snapshot` and `plan` commands need Node.js >= 18 on `PATH`**;
+link. **The `env`, `criteria`, `snapshot`, `plan` and `verdict` commands need Node.js >= 18 on `PATH`**;
 without it they exit 1 and say so. `snapshot` also needs Playwright (see
 [How Playwright is found](#how-playwright-is-found)), and the default planner needs the `claude`
 CLI.
@@ -422,7 +423,8 @@ What the guard does **not** cover:
 
 Every reason selvedge prints. `BLOCKED` reasons print as a stdout line `BLOCKED <reason>`; config
 and usage reasons print on stderr. Both exit 2. `NOT_VERIFIABLE` reasons print as a stdout line
-`NOT_VERIFIABLE <reason>` and exit 3; a plan also records them per criterion under `not_planned`.
+`NOT_VERIFIABLE <reason>` and exit 3; a plan also records them per criterion under `not_planned`,
+and `verdict.json` records each criterion's reason beside its verdict.
 
 | Reason | Kind | Meaning |
 |---|---|---|
@@ -435,9 +437,15 @@ and usage reasons print on stderr. Both exit 2. `NOT_VERIFIABLE` reasons print a
 | `env_hooks_remote_origin` | BLOCKED | a hook was asked to run while an origin is remote |
 | `playwright_unavailable` | BLOCKED | no `playwright` module was found: neither `SELVEDGE_PLAYWRIGHT_MODULE` nor the repo's own `node_modules` |
 | `placeholder_unset` | BLOCKED | a step uses `{{NAME}}` and `NAME` is not set in the environment |
+| `step_failed` | BLOCKED | a plan step (or a snapshot prefix step) could not be carried out: its locator matched nothing, or the element was hidden, covered or not ready in time; the failing step's index is recorded |
+| `stuck_screen` | BLOCKED | consecutive action steps left the page unchanged, so the criterion stopped before its check |
+| `budget_exceeded` | BLOCKED | the run's wall-clock or planner-token budget was spent before the criterion started |
+| `run_interrupted` | BLOCKED | `evidence.jsonl` has no end line for a planned criterion: the run stopped before the criterion finished |
 | `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
 | `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action; it is not planned |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
+| `no_value_read` | NOT_VERIFIABLE | the criterion's final `read` gave an empty value (`""` or none), so nothing was verified, even when the `expect` would hold |
+| `material_assumption` | NOT_VERIFIABLE | the `expect` held, but the plan records an assumption marked `material: true` for the criterion; `verdict.json` carries its text |
 | `origins_empty` | config | `origins` is absent or empty; add the app you test, e.g. `http://localhost:3000` |
 | `origin_invalid` | config | an origin is not exactly `scheme://host[:port]` |
 | `remote_origin_without_allow_remote` | config | a non-local origin is listed without `"allow_remote": true` |
@@ -452,6 +460,10 @@ and usage reasons print on stderr. Both exit 2. `NOT_VERIFIABLE` reasons print a
 | `criteria_invalid` | usage | a `criteria.json` is not valid JSON or does not match its schema (an id that is not its text's hash included) |
 | `criteria_not_found` | usage | no criteria were found in the input, or the `criteria.json` file is missing or empty |
 | `planner_failed` | usage | the planner exited non-zero, wrote no plan, or could not be started |
+| `plan_modified` | usage | the sha256 of a run folder's `plan.json` is not the one it was frozen (or run) with; nothing runs and no verdict is derived |
+| `already_run` | usage | the run folder already holds `evidence.jsonl`; a frozen plan runs once, a re-run goes through `--replay` |
+| `not_frozen` | usage | the run folder holds no frozen plan (no `plan.sha256`, or no `plan.json` for `verdict`); freeze it with `selvedge plan --freeze` |
+| `evidence_missing` | usage | `verdict` found no usable `evidence.jsonl` in the run folder: it is absent, or a line is not one of the known evidence line kinds |
 
 ## Releasing
 

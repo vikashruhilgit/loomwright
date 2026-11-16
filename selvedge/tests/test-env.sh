@@ -92,7 +92,7 @@ run "$TMP" env no-such; [ "$rc" -eq 2 ] && ok "unknown env command exits 2" || k
 
 echo "-- REASONS (the closed list)"
 out="$(node_eval '
-const want = ["host_not_allowed","remote_resolves_private","remote_mutation_refused","proxy_loopback_disabled","proxy_unavailable","env_hooks_unapproved","env_hooks_remote_origin","playwright_unavailable","placeholder_unset","criterion_not_testable","side_effect_not_observable","exploration_budget","origins_empty","origin_invalid","remote_origin_without_allow_remote","config_absent","config_invalid_json","config_schema_violation","base_config_unreadable","approve_requires_tty","port_required","already_frozen","plan_invalid","criteria_invalid","criteria_not_found","planner_failed"];
+const want = ["host_not_allowed","remote_resolves_private","remote_mutation_refused","proxy_loopback_disabled","proxy_unavailable","env_hooks_unapproved","env_hooks_remote_origin","playwright_unavailable","placeholder_unset","step_failed","stuck_screen","budget_exceeded","run_interrupted","criterion_not_testable","side_effect_not_observable","exploration_budget","no_value_read","material_assumption","origins_empty","origin_invalid","remote_origin_without_allow_remote","config_absent","config_invalid_json","config_schema_violation","base_config_unreadable","approve_requires_tty","port_required","already_frozen","plan_invalid","criteria_invalid","criteria_not_found","planner_failed","plan_modified","already_run","not_frozen","evidence_missing"];
 const keys = Object.keys(E.REASONS).sort();
 const okSet = JSON.stringify(keys) === JSON.stringify([...want].sort());
 const okVals = keys.every((k) => E.REASONS[k] === k);

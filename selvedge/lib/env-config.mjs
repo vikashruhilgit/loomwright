@@ -1,5 +1,6 @@
 // env-config.mjs — selvedge.json: origin parsing, the allowlist match, config load and validation,
-// and the closed list of reasons every selvedge emitter (env, guard, criteria, plan, snapshot) names.
+// and the closed list of reasons every selvedge emitter (env, guard, criteria, plan, snapshot, run,
+// verdict) names.
 //
 // This is the ONE origin parser. The env commands, the forward proxy and the browser route layer all
 // import parseOrigin / isOriginAllowed from here; nothing re-implements them. Origins are compared as
@@ -26,10 +27,16 @@ export const REASONS = Object.freeze({
   env_hooks_remote_origin: 'env_hooks_remote_origin',
   playwright_unavailable: 'playwright_unavailable',
   placeholder_unset: 'placeholder_unset',
+  step_failed: 'step_failed',
+  stuck_screen: 'stuck_screen',
+  budget_exceeded: 'budget_exceeded',
+  run_interrupted: 'run_interrupted',
   // NOT_VERIFIABLE outcomes
   criterion_not_testable: 'criterion_not_testable',
   side_effect_not_observable: 'side_effect_not_observable',
   exploration_budget: 'exploration_budget',
+  no_value_read: 'no_value_read',
+  material_assumption: 'material_assumption',
   // config / usage reasons
   origins_empty: 'origins_empty',
   origin_invalid: 'origin_invalid',
@@ -45,6 +52,10 @@ export const REASONS = Object.freeze({
   criteria_invalid: 'criteria_invalid',
   criteria_not_found: 'criteria_not_found',
   planner_failed: 'planner_failed',
+  plan_modified: 'plan_modified',
+  already_run: 'already_run',
+  not_frozen: 'not_frozen',
+  evidence_missing: 'evidence_missing',
 });
 
 export const CONFIG_FILE = 'selvedge.json';
