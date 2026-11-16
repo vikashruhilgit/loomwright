@@ -19,6 +19,239 @@ jobs:
       issues: read
       id-token: write
 
+    env:
+      # Which Claude login a review tries first: the CLAUDE_AUTH_FIRST repository
+      # VARIABLE (Settings → Secrets and variables → Actions → Variables), `api`
+      # (the default, also when unset) or `oauth`. The other login is the fallback.
+      #   api   = the ANTHROPIC_API_KEY secret (billed per token, no weekly cap)
+      #   oauth = the CLAUDE_CODE_OAUTH_TOKEN secret from `claude setup-token`
+      #           (subscription; shares the weekly cap, revoked by "log out everywhere")
+      # Secrets cannot appear in a step `if:`, so their presence is read here.
+      AUTH_FIRST: ${{ vars.CLAUDE_AUTH_FIRST == 'oauth' && 'oauth' || 'api' }}
+      AUTH_SECOND: ${{ vars.CLAUDE_AUTH_FIRST == 'oauth' && 'api' || 'oauth' }}
+      FIRST_READY: ${{ (vars.CLAUDE_AUTH_FIRST == 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN != '') || (vars.CLAUDE_AUTH_FIRST != 'oauth' && secrets.ANTHROPIC_API_KEY != '') }}
+      SECOND_READY: ${{ (vars.CLAUDE_AUTH_FIRST == 'oauth' && secrets.ANTHROPIC_API_KEY != '') || (vars.CLAUDE_AUTH_FIRST != 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN != '') }}
+      # The review instructions and tool allowlist, shared by both attempts below.
+      REVIEW_PROMPT: |
+        REPO: ${{ github.repository }}
+        PR NUMBER: ${{ github.event.pull_request.number }}
+
+        PROJECT CONTEXT:
+        - This is a Claude Code plugin made of specialized agents and skills — current counts are documented in CLAUDE.md
+        - Agents live in loomwright/agents/, skills in loomwright/skills/
+        - Key config files: .claude-plugin/marketplace.json, loomwright/.claude-plugin/plugin.json
+        - No build step — this is a markdown/config plugin, not a compiled app
+
+        Please review this pull request and provide feedback on:
+        - Agent/skill prompt quality and clarity
+        - Configuration correctness (plugin.json, marketplace.json)
+        - Documentation accuracy
+        - Potential issues or improvements
+
+        Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+
+        Additionally, watch for these recurring behavioral/doc miss-classes (defined in loomwright/skills/quality-checklist/SKILL.md "Self-Heal Miss-Class Checklist") and call out any you see, mapping the signal to this repo's languages where relevant:
+        - validation parity — a client/frontend-enforced rule with no equivalent server/API-boundary check
+        - numeric falsy coercion — `||`/`!x`/truthiness on a numeric or boolean field where 0/false/"" is legitimate
+        - positional args vs options object misuse — a call site whose argument shape doesn't match an options-object callee
+        - missing branch coverage — a new if/else/switch/ternary/error path with no test exercising each branch
+        - count/version/restated-list drift — a count, version, or restated list changed in one file but not the others that mirror it
+        - cross-reference precision drift — a "see X" / file:line / canonical-name reference that no longer points where it claims
+
+        This is your own independent checklist as a reviewer — apply your own judgment; do not try to match or converge with any other reviewer's findings.
+
+        On a large PR, `gh pr diff` alone will not fit and is not enough to judge
+        anything. Read the changed files directly, and compare a file against its
+        base version with `git show HEAD^1:<path>` — on a pull_request event CI
+        checks out the PR's merge commit, whose FIRST parent is the base branch tip.
+        You have the full history and the working tree.
+
+        Two command shapes are REFUSED by the tool-permission layer no matter what
+        the allowlist says, so do not reach for them — each attempt costs a turn and
+        returns nothing:
+          * COMMAND SUBSTITUTION. `git diff $(git merge-base HEAD origin/main)` and
+            `git show "$(...)":<path>` are denied on the substitution itself. Use
+            `HEAD^1`, which needs no substitution and no remote-tracking ref. If you
+            genuinely need a computed SHA, run the inner command as its own call and
+            paste the value into the next one.
+          * `git fetch`. The checkout is already complete (`fetch-depth: 0` above),
+            so nothing needs fetching; the ref you want is already local.
+          * SHELL LOOPS. `for f in a b c; do ...; done` is refused as a construct.
+            Expand it: one call per file, or a single `ls`/`grep` that covers them.
+        Chaining allowed commands with `;` or `|` IS permitted — it is substitution
+        and control-flow constructs that are refused, not compounding.
+
+        Use `gh pr comment` with your Bash tool to leave your review as a comment on
+        the PR. Posting is not optional and it is the LAST thing you do: if you run
+        low on turns, or could not examine everything you wanted to, post what you
+        DO have plus an explicit note about what you could not cover. A run that
+        ends without a posted comment is indistinguishable from no review at all —
+        the workflow still goes green, so silence reads as "clean" to everyone.
+
+        EVERY completed run posts exactly one comment — including when you find
+        nothing. "No new findings" is a review result, not an excuse to stay
+        silent; a re-review run whose commits merely address your own earlier
+        findings still posts. In that case post a short comment that starts with
+        `Reviewed <sha>: no new findings` (use `git rev-parse HEAD^2` for the PR
+        head sha — HEAD is the merge commit, its SECOND parent is the PR tip) and
+        then, in a sentence or two, say what you examined and, if this is a
+        re-review, confirm which earlier findings the new commits addressed. Do
+        not compress this to a bare one-liner: a completion check on this workflow
+        only counts comments longer than 200 characters as a posted review, so a
+        one-line "no new findings" still registers as silence.
+
+        The LAST line of EVERY comment you post — finding-bearing and no-findings
+        alike — is exactly this line, verbatim, on a line of its own:
+        execution: none — static review; this reviewer cannot run code in CI, so runtime behavior is NOT verified by this review.
+        It is informational, not a gate: it tells every reader (and the drain that
+        consumes this comment) that this lens reads code and never runs it.
+
+        Finally, ALSO return that exact comment body in the structured output field
+        `review` — the same text you posted with `gh pr comment`, ending with the
+        `execution: none` line. Fill it even though you already posted. Returning the
+        review does NOT replace posting it: `gh pr comment` stays mandatory on every
+        run, and the returned field is only a backup copy, not a second way to deliver.
+
+      # Honest limit of the execution: none marker (v15.108.0): it is ~121 chars of
+      # mandated boilerplate, so the assert step's ">200 chars = a substantive review"
+      # floor now admits ~80 chars of real content (a bare "Reviewed <sha>: no new
+      # findings" + marker is still 188 < 200, a 12-char margin). Follow-up: strip a
+      # trailing execution: none line before measuring length in the assert step.
+      #
+      # No --model or --effort pin: inherit the action's defaults.
+      #
+      # --allowed-tools REPLACES the defaults, it does not extend them. Until
+      # 2026-08-12 this list held only the seven `gh` entries, which left the
+      # reviewer with no Read, no Grep, no Glob and no git — its only window into
+      # the code was `gh pr diff`. That silently starved it on any PR big enough to
+      # need file-level verification: on PR #140 (35 files, +7,387) nine runs of
+      # this workflow all concluded `success` and eight of them posted NOTHING —
+      # the PR carries exactly one claude-authored comment and zero reviews — while
+      # the check showed green throughout. Note that
+      # `fetch-depth: 0` above was added so the reviewer could run `git cat-file` /
+      # `git show <base>:<path>` — commands the allowlist never actually permitted,
+      # so that intent had never once worked. Read/Grep/Glob and read-only git are
+      # therefore explicit here.
+      #
+      # What this list guarantees is narrow, and it is NOT "read-only": there is no
+      # Write tool, no Edit tool, and no bare `Bash(...)` wildcard — that is all.
+      # Every entry is a PREFIX glob, so each one admits whatever flags its command
+      # accepts, and several accept flags that write. Known paths that survive:
+      #   1. `--output=<file>` is a standard diff option accepted by `git diff`,
+      #      `git log` AND `git show` (all three prefix-globbed here) and overwrites
+      #      an arbitrary file with no shell chaining — verified rc=0 on git 2.50.1.
+      #   2. `sort -o <file>` writes its output to an arbitrary file, same shape.
+      #   3. `gh pr comment --delete-last` removes a comment.
+      #   4. `cat` and `jq` reach the environment (`jq -n 'env.FOO'`,
+      #      `cat /proc/self/environ`), and `gh pr comment` can publish whatever
+      #      they read — on a public repo that is an egress channel, not just a
+      #      local read. The Claude login (API key or OAuth token) is the thing worth guarding there.
+      # The blast radius is bounded by the environment rather than by the allowlist:
+      # the runner is ephemeral, and the job token is `contents: read`, so nothing
+      # written to the checkout can be pushed.
+      # Two entries were deliberately dropped rather than left to that bound:
+      # `Bash(git branch:*)`, whose prefix glob admitted `-d/-D`, `-m/-M`, `-c/-C`,
+      # `-f`, `--set-upstream-to` and `--edit-description` (which spawns
+      # core.editor); and `Bash(find:*)`, which is strictly worse — `find . -name X
+      # -exec sh -c '<anything>' \;` runs an ARBITRARY command (verified) and
+      # `-delete` removes files, which would make every other entry on this list
+      # decorative. Neither is needed: file-level verification is covered by
+      # show/cat-file/log/diff/blame/ls-files/rev-parse/merge-base, and file
+      # discovery by `Glob` plus `Bash(git ls-files:*)`.
+      #
+      # 2026-09-04 — `Bash(grep:*)` added, plus `cmp`/`comm`/`basename`/`dirname`.
+      # The list granted the `Grep` TOOL but not the `grep` COMMAND, and on a diff that is
+      # mostly bash and jq a reviewer reaches for `grep -c` in Bash constantly; every such
+      # call is refused and burns a turn. That much is a real gap in the list and is what
+      # this change fixes.
+      #
+      # What it is NOT is a proven explanation of the intermittent silence. Seven runs on
+      # PR #177, in commit order:
+      #
+      #   head      result   turns  denials  productive  duration
+      #   f7983cf   silent      16        5          11      119s
+      #   2337397   silent      27       12          15      113s
+      #   7efb64d   POSTED      53       12          41      280s
+      #   0abd91e   silent      44       39           5      248s
+      #   43feb6f   POSTED      52       10          42      259s
+      #   8a74fba   POSTED      36       24          12      646s
+      #   4793850   silent      36       13          23      174s
+      #
+      # NOTHING in that table separates posted from silent:
+      #   * denial RATIO does not — 8a74fba POSTED at 67% while 4793850 was silent at 36%.
+      #     (An earlier version of this comment, and of the guard below, claimed a ratio
+      #     band from PR #147. Discard it.)
+      #   * PRODUCTIVE TURNS does not — 8a74fba POSTED on 12 while 4793850 was silent on 23.
+      #     An earlier version of this comment claimed a ~20 threshold on the first four
+      #     rows; the last three break it. Discard that too.
+      #   * duration very nearly does (posted 259-646s, silent 113-248s) but 0abd91e is
+      #     silent at 248s, so it is a correlation with one counterexample, not a rule.
+      # Every run ends `is_error: false`. Treat the cause as UNEXPLAINED by the telemetry
+      # this job records, and do not let a green check stand in for a posted review.
+      #
+      # Each addition was checked against the write/exec test this list already applies,
+      # and the ones that FAIL it were deliberately NOT added, for the same reason
+      # `Bash(find:*)` was dropped above:
+      #   * `awk` — `awk 'BEGIN{system("...")}'` executes arbitrary commands.
+      #   * `xargs` — executes arbitrary commands by construction.
+      #   * `sed`  — `sed -i` rewrites files in place.
+      #   * `bash`/`sh`/`python3`/`node` — arbitrary execution, obviously.
+      # `grep`, `cmp`, `comm`, `basename` and `dirname` write only to stdout and have no
+      # exec primitive, so they add reach without widening the blast radius.
+      #
+      # 2026-09-04 (second pass) — the intermittent silence was finally REPRODUCED
+      # LOCALLY rather than inferred, by running this exact prompt and this exact
+      # allowlist under `claude -p --permission-mode default --output-format json`.
+      # That result JSON carries a `permission_denials[]` ARRAY naming every refused
+      # command — the data this job's log reduces to a bare count. Seven denials in
+      # one 26-turn local run, and they were NOT the missing `grep`:
+      #   4x  `git fetch ...`                     — not on the allowlist
+      #   3x  commands containing `$(...)`        — refused on the SUBSTITUTION itself
+      # Re-running the SAME allowlist against the CORRECTED prompt took denials from
+      # 7 to 2 over 26 turns, which is the measurement that justifies this change. The
+      # 2 that remain are a `for f in ...; do ... done` loop (control flow is refused
+      # as a construct, so the warning names loops too) and one `gh pr view` variant
+      # that was not isolated further.
+      # Both were then isolated one shape at a time:
+      #   `git diff --stat $(git merge-base HEAD origin/main)`  -> DENIED
+      #   `git log --oneline -3; echo sep; ls loomwright`       -> ALLOWED
+      #   `git fetch origin main`                              -> DENIED
+      # So chaining allowed commands is fine; SUBSTITUTION is what is refused. The
+      # prompt above was itself recommending `git show "$(git merge-base ...)"` — it
+      # instructed the reviewer to run a shape that can never be permitted, which is
+      # why the failures cluster on runs that die early: obey, get denied, retry a
+      # variant, get denied, give up before the mandated post. That line is rewritten
+      # above and `Bash(git fetch:*)` is NOT added — `fetch-depth: 0` already gives a
+      # complete checkout, so the honest fix is to stop asking for it rather than to
+      # widen the allowlist for a call that is unnecessary.
+      #
+      # Diagnosability gap, and why it is LEFT OPEN rather than closed (2026-09-04):
+      # this job's log records only the aggregate `permission_denials_count` — never WHICH
+      # command was refused — so the allowlist fix above is INFERRED, not read off a run.
+      # The obvious levers were checked against the action's documented inputs and rejected:
+      #   * `display_report: true` prints the Claude-authored report to the Step Summary. It
+      #     is not documented to name denied tool calls.
+      #   * `show_full_output: true` prints full tool RESULTS (successes), is likewise not
+      #     documented to name denials, and the action's own security guide warns it can
+      #     surface secrets and API keys.
+      #   * `--debug` / `ACTIONS_STEP_DEBUG` enable deeper logging and auto-enable
+      #     show_full_output; also not documented to name denials.
+      # THIS REPOSITORY IS PUBLIC, so all three would publish that content into
+      # world-readable logs in exchange for a diagnostic none of them promises. Do not
+      # enable any of them here to chase a denial list. If this needs solving properly,
+      # reproduce locally with `claude --debug --allowed-tools "<this list>"`, or ask
+      # upstream (anthropics/claude-code-action) whether denials can be surfaced.
+      #
+      # Self-test caveat: claude-code-action SKIPS any PR that modifies a workflow
+      # file (it exits 0 with a "workflow validation failed" annotation and posts
+      # nothing), so a change to this file can never be validated by its own PR.
+      # Validate it on the next NON-workflow PR, and assert on a posted comment —
+      # a green check is exactly the signal this change exists to stop trusting.
+      # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
+      # with a space, which would inject a leading space into every wrapped tool
+      # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
+      REVIEW_ARGS: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(grep:*),Bash(cmp:*),Bash(comm:*),Bash(basename:*),Bash(dirname:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)" --json-schema ''{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'''
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -37,233 +270,103 @@ jobs:
         id: stamp
         run: echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-      - name: Run Claude Code Review
-        id: claude-review
+      # Two-login fallback (2026-11-16). One job, up to two attempts of the SAME review:
+      # attempt 1 uses the login named by the CLAUDE_AUTH_FIRST repo variable (`api`,
+      # the default, or `oauth`); attempt 2 uses the other login and runs ONLY when
+      # attempt 1 was skipped (its login is not saved) or died at STARTUP. A startup
+      # death — revoked/expired login, API key out of credit, the subscription's
+      # weekly cap, a transient API rejection — has one signature: `is_error: true`
+      # on turn 1 with $0 spent (2026-11-16: an account-wide "log out everywhere"
+      # revoked CLAUDE_CODE_OAUTH_TOKEN and every review died this way). A review
+      # that ran and THEN failed is NOT retried: that would pay for a second full
+      # review and could post duplicate comments.
+      # The action itself has no fallback: base-action/src/validate-env.ts only
+      # requires that one login is present, and Claude Code uses one login per run.
+      # Each attempt is handed exactly ONE login (the other input is ''), never both.
+      - name: Run Claude Code Review (attempt 1)
+        id: review-1
+        if: env.FIRST_READY == 'true'
+        continue-on-error: true
         # Pinned to v1.0.231's commit SHA (2026-09-23, red-team-hardening item 08) —
         # @v1 floats a major tag; a silent upstream rename/behavior change under that
         # tag would be invisible until it broke something downstream.
         uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+          anthropic_api_key: ${{ env.AUTH_FIRST == 'api' && secrets.ANTHROPIC_API_KEY || '' }}
+          claude_code_oauth_token: ${{ env.AUTH_FIRST == 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          claude_args: ${{ env.REVIEW_ARGS }}
 
-            PROJECT CONTEXT:
-            - This is a Claude Code plugin made of specialized agents and skills — current counts are documented in CLAUDE.md
-            - Agents live in loomwright/agents/, skills in loomwright/skills/
-            - Key config files: .claude-plugin/marketplace.json, loomwright/.claude-plugin/plugin.json
-            - No build step — this is a markdown/config plugin, not a compiled app
+      # Reads attempt 1's run log (the action writes it before it marks itself
+      # failed — src/entrypoints/run.ts @ cfc3eb22) and decides whether to fall back.
+      - name: Decide whether to fall back to the other login
+        id: decide
+        env:
+          OUTCOME: ${{ steps.review-1.outcome }}
+          EXEC_FILE: ${{ steps.review-1.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          fallback=0
+          case "$OUTCOME" in
+            success) echo "attempt 1 ($AUTH_FIRST) succeeded — no fallback" ;;
+            skipped|'') echo "::notice::attempt 1 skipped — the $AUTH_FIRST login is not saved; trying $AUTH_SECOND"; fallback=1 ;;
+            *)
+              if [ -z "$EXEC_FILE" ] || [ ! -s "$EXEC_FILE" ]; then
+                echo "::warning::attempt 1 ($AUTH_FIRST) failed before Claude ran (no run log) — trying $AUTH_SECOND"; fallback=1
+              # Startup death = the final result is is_error on turn <= 1 at $0, or there is
+              # no result at all AND no assistant turn (it died before doing any work).
+              # Unparseable log => not startup: never risk paying for a second review.
+              elif startup="$(jq -r '([.[] | select(.type? == "result")] | last) as $r
+                    | if $r == null then ([.[] | select(.type? == "assistant")] | length == 0)
+                      else (($r.is_error == true) and (($r.num_turns // 0) <= 1) and (($r.total_cost_usd // 0) == 0)) end
+                    | tostring' "$EXEC_FILE" 2>/dev/null)" && [ "$startup" = "true" ]; then
+                echo "::warning::attempt 1 ($AUTH_FIRST) died at startup (is_error on turn 1, \$0) — login rejected, out of credit, capped or a transient API error; trying $AUTH_SECOND"; fallback=1
+              else
+                echo "::error::attempt 1 ($AUTH_FIRST) ran and then failed — not retrying with the other login (that would pay for a second full review)"
+              fi ;;
+          esac
+          echo "fallback=$fallback" >> "$GITHUB_OUTPUT"
 
-            Please review this pull request and provide feedback on:
-            - Agent/skill prompt quality and clarity
-            - Configuration correctness (plugin.json, marketplace.json)
-            - Documentation accuracy
-            - Potential issues or improvements
+      - name: Run Claude Code Review (attempt 2)
+        id: review-2
+        if: steps.decide.outputs.fallback == '1' && env.SECOND_READY == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
+        with:
+          anthropic_api_key: ${{ env.AUTH_SECOND == 'api' && secrets.ANTHROPIC_API_KEY || '' }}
+          claude_code_oauth_token: ${{ env.AUTH_SECOND == 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          claude_args: ${{ env.REVIEW_ARGS }}
 
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
-
-            Additionally, watch for these recurring behavioral/doc miss-classes (defined in loomwright/skills/quality-checklist/SKILL.md "Self-Heal Miss-Class Checklist") and call out any you see, mapping the signal to this repo's languages where relevant:
-            - validation parity — a client/frontend-enforced rule with no equivalent server/API-boundary check
-            - numeric falsy coercion — `||`/`!x`/truthiness on a numeric or boolean field where 0/false/"" is legitimate
-            - positional args vs options object misuse — a call site whose argument shape doesn't match an options-object callee
-            - missing branch coverage — a new if/else/switch/ternary/error path with no test exercising each branch
-            - count/version/restated-list drift — a count, version, or restated list changed in one file but not the others that mirror it
-            - cross-reference precision drift — a "see X" / file:line / canonical-name reference that no longer points where it claims
-
-            This is your own independent checklist as a reviewer — apply your own judgment; do not try to match or converge with any other reviewer's findings.
-
-            On a large PR, `gh pr diff` alone will not fit and is not enough to judge
-            anything. Read the changed files directly, and compare a file against its
-            base version with `git show HEAD^1:<path>` — on a pull_request event CI
-            checks out the PR's merge commit, whose FIRST parent is the base branch tip.
-            You have the full history and the working tree.
-
-            Two command shapes are REFUSED by the tool-permission layer no matter what
-            the allowlist says, so do not reach for them — each attempt costs a turn and
-            returns nothing:
-              * COMMAND SUBSTITUTION. `git diff $(git merge-base HEAD origin/main)` and
-                `git show "$(...)":<path>` are denied on the substitution itself. Use
-                `HEAD^1`, which needs no substitution and no remote-tracking ref. If you
-                genuinely need a computed SHA, run the inner command as its own call and
-                paste the value into the next one.
-              * `git fetch`. The checkout is already complete (`fetch-depth: 0` above),
-                so nothing needs fetching; the ref you want is already local.
-              * SHELL LOOPS. `for f in a b c; do ...; done` is refused as a construct.
-                Expand it: one call per file, or a single `ls`/`grep` that covers them.
-            Chaining allowed commands with `;` or `|` IS permitted — it is substitution
-            and control-flow constructs that are refused, not compounding.
-
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on
-            the PR. Posting is not optional and it is the LAST thing you do: if you run
-            low on turns, or could not examine everything you wanted to, post what you
-            DO have plus an explicit note about what you could not cover. A run that
-            ends without a posted comment is indistinguishable from no review at all —
-            the workflow still goes green, so silence reads as "clean" to everyone.
-
-            EVERY completed run posts exactly one comment — including when you find
-            nothing. "No new findings" is a review result, not an excuse to stay
-            silent; a re-review run whose commits merely address your own earlier
-            findings still posts. In that case post a short comment that starts with
-            `Reviewed <sha>: no new findings` (use `git rev-parse HEAD^2` for the PR
-            head sha — HEAD is the merge commit, its SECOND parent is the PR tip) and
-            then, in a sentence or two, say what you examined and, if this is a
-            re-review, confirm which earlier findings the new commits addressed. Do
-            not compress this to a bare one-liner: a completion check on this workflow
-            only counts comments longer than 200 characters as a posted review, so a
-            one-line "no new findings" still registers as silence.
-
-            The LAST line of EVERY comment you post — finding-bearing and no-findings
-            alike — is exactly this line, verbatim, on a line of its own:
-            execution: none — static review; this reviewer cannot run code in CI, so runtime behavior is NOT verified by this review.
-            It is informational, not a gate: it tells every reader (and the drain that
-            consumes this comment) that this lens reads code and never runs it.
-
-            Finally, ALSO return that exact comment body in the structured output field
-            `review` — the same text you posted with `gh pr comment`, ending with the
-            `execution: none` line. Fill it even though you already posted. Returning the
-            review does NOT replace posting it: `gh pr comment` stays mandatory on every
-            run, and the returned field is only a backup copy, not a second way to deliver.
-
-          # Honest limit of the execution: none marker (v15.108.0): it is ~121 chars of
-          # mandated boilerplate, so the assert step's ">200 chars = a substantive review"
-          # floor now admits ~80 chars of real content (a bare "Reviewed <sha>: no new
-          # findings" + marker is still 188 < 200, a 12-char margin). Follow-up: strip a
-          # trailing execution: none line before measuring length in the assert step.
-          #
-          # No --model or --effort pin: inherit the action's defaults.
-          #
-          # --allowed-tools REPLACES the defaults, it does not extend them. Until
-          # 2026-08-12 this list held only the seven `gh` entries, which left the
-          # reviewer with no Read, no Grep, no Glob and no git — its only window into
-          # the code was `gh pr diff`. That silently starved it on any PR big enough to
-          # need file-level verification: on PR #140 (35 files, +7,387) nine runs of
-          # this workflow all concluded `success` and eight of them posted NOTHING —
-          # the PR carries exactly one claude-authored comment and zero reviews — while
-          # the check showed green throughout. Note that
-          # `fetch-depth: 0` above was added so the reviewer could run `git cat-file` /
-          # `git show <base>:<path>` — commands the allowlist never actually permitted,
-          # so that intent had never once worked. Read/Grep/Glob and read-only git are
-          # therefore explicit here.
-          #
-          # What this list guarantees is narrow, and it is NOT "read-only": there is no
-          # Write tool, no Edit tool, and no bare `Bash(...)` wildcard — that is all.
-          # Every entry is a PREFIX glob, so each one admits whatever flags its command
-          # accepts, and several accept flags that write. Known paths that survive:
-          #   1. `--output=<file>` is a standard diff option accepted by `git diff`,
-          #      `git log` AND `git show` (all three prefix-globbed here) and overwrites
-          #      an arbitrary file with no shell chaining — verified rc=0 on git 2.50.1.
-          #   2. `sort -o <file>` writes its output to an arbitrary file, same shape.
-          #   3. `gh pr comment --delete-last` removes a comment.
-          #   4. `cat` and `jq` reach the environment (`jq -n 'env.FOO'`,
-          #      `cat /proc/self/environ`), and `gh pr comment` can publish whatever
-          #      they read — on a public repo that is an egress channel, not just a
-          #      local read. The OAuth token is the thing worth guarding there.
-          # The blast radius is bounded by the environment rather than by the allowlist:
-          # the runner is ephemeral, and the job token is `contents: read`, so nothing
-          # written to the checkout can be pushed.
-          # Two entries were deliberately dropped rather than left to that bound:
-          # `Bash(git branch:*)`, whose prefix glob admitted `-d/-D`, `-m/-M`, `-c/-C`,
-          # `-f`, `--set-upstream-to` and `--edit-description` (which spawns
-          # core.editor); and `Bash(find:*)`, which is strictly worse — `find . -name X
-          # -exec sh -c '<anything>' \;` runs an ARBITRARY command (verified) and
-          # `-delete` removes files, which would make every other entry on this list
-          # decorative. Neither is needed: file-level verification is covered by
-          # show/cat-file/log/diff/blame/ls-files/rev-parse/merge-base, and file
-          # discovery by `Glob` plus `Bash(git ls-files:*)`.
-          #
-          # 2026-09-04 — `Bash(grep:*)` added, plus `cmp`/`comm`/`basename`/`dirname`.
-          # The list granted the `Grep` TOOL but not the `grep` COMMAND, and on a diff that is
-          # mostly bash and jq a reviewer reaches for `grep -c` in Bash constantly; every such
-          # call is refused and burns a turn. That much is a real gap in the list and is what
-          # this change fixes.
-          #
-          # What it is NOT is a proven explanation of the intermittent silence. Seven runs on
-          # PR #177, in commit order:
-          #
-          #   head      result   turns  denials  productive  duration
-          #   f7983cf   silent      16        5          11      119s
-          #   2337397   silent      27       12          15      113s
-          #   7efb64d   POSTED      53       12          41      280s
-          #   0abd91e   silent      44       39           5      248s
-          #   43feb6f   POSTED      52       10          42      259s
-          #   8a74fba   POSTED      36       24          12      646s
-          #   4793850   silent      36       13          23      174s
-          #
-          # NOTHING in that table separates posted from silent:
-          #   * denial RATIO does not — 8a74fba POSTED at 67% while 4793850 was silent at 36%.
-          #     (An earlier version of this comment, and of the guard below, claimed a ratio
-          #     band from PR #147. Discard it.)
-          #   * PRODUCTIVE TURNS does not — 8a74fba POSTED on 12 while 4793850 was silent on 23.
-          #     An earlier version of this comment claimed a ~20 threshold on the first four
-          #     rows; the last three break it. Discard that too.
-          #   * duration very nearly does (posted 259-646s, silent 113-248s) but 0abd91e is
-          #     silent at 248s, so it is a correlation with one counterexample, not a rule.
-          # Every run ends `is_error: false`. Treat the cause as UNEXPLAINED by the telemetry
-          # this job records, and do not let a green check stand in for a posted review.
-          #
-          # Each addition was checked against the write/exec test this list already applies,
-          # and the ones that FAIL it were deliberately NOT added, for the same reason
-          # `Bash(find:*)` was dropped above:
-          #   * `awk` — `awk 'BEGIN{system("...")}'` executes arbitrary commands.
-          #   * `xargs` — executes arbitrary commands by construction.
-          #   * `sed`  — `sed -i` rewrites files in place.
-          #   * `bash`/`sh`/`python3`/`node` — arbitrary execution, obviously.
-          # `grep`, `cmp`, `comm`, `basename` and `dirname` write only to stdout and have no
-          # exec primitive, so they add reach without widening the blast radius.
-          #
-          # 2026-09-04 (second pass) — the intermittent silence was finally REPRODUCED
-          # LOCALLY rather than inferred, by running this exact prompt and this exact
-          # allowlist under `claude -p --permission-mode default --output-format json`.
-          # That result JSON carries a `permission_denials[]` ARRAY naming every refused
-          # command — the data this job's log reduces to a bare count. Seven denials in
-          # one 26-turn local run, and they were NOT the missing `grep`:
-          #   4x  `git fetch ...`                     — not on the allowlist
-          #   3x  commands containing `$(...)`        — refused on the SUBSTITUTION itself
-          # Re-running the SAME allowlist against the CORRECTED prompt took denials from
-          # 7 to 2 over 26 turns, which is the measurement that justifies this change. The
-          # 2 that remain are a `for f in ...; do ... done` loop (control flow is refused
-          # as a construct, so the warning names loops too) and one `gh pr view` variant
-          # that was not isolated further.
-          # Both were then isolated one shape at a time:
-          #   `git diff --stat $(git merge-base HEAD origin/main)`  -> DENIED
-          #   `git log --oneline -3; echo sep; ls loomwright`       -> ALLOWED
-          #   `git fetch origin main`                              -> DENIED
-          # So chaining allowed commands is fine; SUBSTITUTION is what is refused. The
-          # prompt above was itself recommending `git show "$(git merge-base ...)"` — it
-          # instructed the reviewer to run a shape that can never be permitted, which is
-          # why the failures cluster on runs that die early: obey, get denied, retry a
-          # variant, get denied, give up before the mandated post. That line is rewritten
-          # above and `Bash(git fetch:*)` is NOT added — `fetch-depth: 0` already gives a
-          # complete checkout, so the honest fix is to stop asking for it rather than to
-          # widen the allowlist for a call that is unnecessary.
-          #
-          # Diagnosability gap, and why it is LEFT OPEN rather than closed (2026-09-04):
-          # this job's log records only the aggregate `permission_denials_count` — never WHICH
-          # command was refused — so the allowlist fix above is INFERRED, not read off a run.
-          # The obvious levers were checked against the action's documented inputs and rejected:
-          #   * `display_report: true` prints the Claude-authored report to the Step Summary. It
-          #     is not documented to name denied tool calls.
-          #   * `show_full_output: true` prints full tool RESULTS (successes), is likewise not
-          #     documented to name denials, and the action's own security guide warns it can
-          #     surface secrets and API keys.
-          #   * `--debug` / `ACTIONS_STEP_DEBUG` enable deeper logging and auto-enable
-          #     show_full_output; also not documented to name denials.
-          # THIS REPOSITORY IS PUBLIC, so all three would publish that content into
-          # world-readable logs in exchange for a diagnostic none of them promises. Do not
-          # enable any of them here to chase a denial list. If this needs solving properly,
-          # reproduce locally with `claude --debug --allowed-tools "<this list>"`, or ask
-          # upstream (anthropics/claude-code-action) whether denials can be surfaced.
-          #
-          # Self-test caveat: claude-code-action SKIPS any PR that modifies a workflow
-          # file (it exits 0 with a "workflow validation failed" annotation and posts
-          # nothing), so a change to this file can never be validated by its own PR.
-          # Validate it on the next NON-workflow PR, and assert on a posted comment —
-          # a green check is exactly the signal this change exists to stop trusting.
-          # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
-          # with a space, which would inject a leading space into every wrapped tool
-          # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
-          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(grep:*),Bash(cmp:*),Bash(comm:*),Bash(basename:*),Bash(dirname:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)" --json-schema ''{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'''
+      # Both attempts carry continue-on-error, so a failed attempt never skips the
+      # steps after it; a real earlier failure (checkout) still skips all of them.
+      # One place that says which attempt (and login) produced the review. Later
+      # steps read `steps.review.outputs.ok`, never an attempt's outcome directly.
+      - name: Record which login reviewed
+        id: review
+        env:
+          R1: ${{ steps.review-1.outcome }}
+          R2: ${{ steps.review-2.outcome }}
+          FALLBACK: ${{ steps.decide.outputs.fallback }}
+        run: |
+          set -uo pipefail
+          if [ "$R1" = "success" ]; then
+            echo "reviewed with: $AUTH_FIRST (attempt 1)"; echo "ok=true" >> "$GITHUB_OUTPUT"
+          elif [ "$R2" = "success" ]; then
+            echo "::notice::reviewed with: $AUTH_SECOND (attempt 2 — fallback)"; echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            if [ "$FIRST_READY" != "true" ] && [ "$SECOND_READY" != "true" ]; then
+              echo "::error::no Claude login is saved — set the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN repo secret"
+            elif [ "$FALLBACK" = "1" ] && [ "$SECOND_READY" != "true" ]; then
+              echo "::error::attempt 1 ($AUTH_FIRST) could not start and no $AUTH_SECOND login is saved to fall back to"
+            elif [ "$FALLBACK" = "1" ]; then
+              echo "::error::both logins failed — attempt 1 ($AUTH_FIRST) and attempt 2 ($AUTH_SECOND)"
+            else
+              echo "::error::the review failed (attempt 1, $AUTH_FIRST) — see that step's log"
+            fi
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
 
       # pa/19 (2026-10-06): post the RETURNED review when the reviewer did not post it.
       # Evidence: the S3 wave PR #397 (34 files) ended `success` with no comment, twice
@@ -273,7 +376,7 @@ jobs:
       # review was done; the missing piece was the model's LAST action, the post. That
       # matches the #177 table above: no telemetry separates posted from silent runs.
       # So the review is now also RETURNED as structured output (--json-schema above,
-      # `steps.claude-review.outputs.structured_output`), and this step posts it when no
+      # the structured_output of whichever attempt ran), and this step posts it when no
       # substantive claude[bot] comment exists since this run's start.
       # It posts as github-actions[bot] (GITHUB_TOKEN; the job has pull-requests: write):
       # the action REVOKES the Claude app token in its own last step ("Revoke app token"),
@@ -290,12 +393,13 @@ jobs:
       # The structured output is passed through env, never interpolated into the script.
       - name: Post the returned review if the reviewer did not
         id: fallback
-        if: steps.claude-review.outcome == 'success'
+        if: steps.review.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           SINCE: ${{ steps.stamp.outputs.since }}
-          STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
+          # Only the attempt that succeeded has a structured_output; a failed attempt's is empty.
+          STRUCTURED: ${{ steps.review-2.outputs.structured_output || steps.review-1.outputs.structured_output }}
         run: |
           set -uo pipefail
           # Change together: the Assert step's jq `startswith(...)` prefix matches this marker.
@@ -367,7 +471,7 @@ jobs:
       # run into a spurious "posted NO comment" error.
       # ---------------------------------------------------------------------
       - name: Assert a review was actually posted
-        if: steps.claude-review.outcome == 'success'
+        if: steps.review.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -386,9 +490,9 @@ jobs:
           fi
           # claude-code-action SELF-SKIPS any PR that modifies a workflow file (it warns
           # "Skipping action due to workflow validation", exits 0, and posts nothing) — the
-          # header above already documents this. That skip leaves steps.claude-review.outcome
-          # == 'success', so without this branch the assertion reports a false "not reviewed"
-          # on every workflow PR. Caught by this very step on its own first run (PR #148).
+          # header above already documents this. That skip leaves the attempt's outcome
+          # == 'success' (so steps.review.outputs.ok == 'true'), so without this branch
+          # the assertion reports a false "not reviewed" on every workflow PR. Caught by this very step on its own first run (PR #148).
           # No pipe into grep here: `producer | grep -q` returns 141 under `pipefail` EVEN ON
           # A MATCH, which would silently turn this guard into a no-op.
           # Match PER LINE against an ANCHORED pattern, not `case "$changed" in
