@@ -13,8 +13,11 @@ What ships today:
   `criteria.json` and flags vague ones; `selvedge snapshot` shows a planner an allowed page's
   accessibility tree; `selvedge plan` has a planner write typed steps, lints them statically, and
   freezes the plan with its sha256 in a run folder before anything runs.
-
-Running a frozen plan and reporting the verdict arrive in later releases.
+- **A verdict no model wrote** — `selvedge run` executes the frozen plan's typed steps in the
+  guarded browser with no model call and writes every evidence line itself; `selvedge verdict`
+  derives PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion from those lines and the plan only.
+  `run --replay` re-runs a frozen plan unchanged for regression; `run --trace` keeps a redacted
+  Playwright trace.
 
 ## Install
 
@@ -54,13 +57,15 @@ selvedge criteria <command>   # acceptance criteria to criteria.json, and the te
 selvedge snapshot <url> [--steps <prefix.json>] --run-dir <dir>   # an allowed page's accessibility tree
 selvedge plan <criteria.json>          # planner, lint and freeze into .selvedge/runs/<run-id>/
 selvedge plan --init | --validate | --freeze …   # the same steps one at a time
+selvedge run [--trace] <run-dir>       # execute a frozen plan, no model: evidence and verdict
+selvedge run --replay <run-dir> [--trace]   # the same frozen plan again, in a new run folder
 selvedge verdict <run-dir>             # per-criterion verdicts from evidence.jsonl + plan.json
 ```
 
 `--version` and `install-cli` need only bash and standard userland tools (no `jq`, no Node); the
 CLI resolves its own real path through symlinks, so it works when run through the `install-cli`
-link. **The `env`, `criteria`, `snapshot`, `plan` and `verdict` commands need Node.js >= 18 on `PATH`**;
-without it they exit 1 and say so. `snapshot` also needs Playwright (see
+link. **The `env`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands need Node.js >= 18 on
+`PATH`**; without it they exit 1 and say so. `snapshot` and `run` also need Playwright (see
 [How Playwright is found](#how-playwright-is-found)), and the default planner needs the `claude`
 CLI.
 
@@ -127,7 +132,11 @@ selvedge env hook <name> [--base <ref>]
 - **`init`** writes `schema_version: 1`, exactly one origin `http://localhost:<port>`, both
   `allow_*` keys `false` and no hooks. The port comes from `--port`, else from a `--port N`, `-p N`
   or `PORT=N` in `package.json`'s `scripts.dev` / `scripts.start`, else from a prompt on a TTY; with
-  none of those it exits 2 `port_required`. It never writes a non-local origin.
+  none of those it exits 2 `port_required`. It never writes a non-local origin. First of all,
+  before it looks for `selvedge.json` or a port, it appends the line `.selvedge/` to the repo's
+  `.gitignore` (creating the file), unless a line there already ignores `.selvedge` — so the run
+  folders and `runs.jsonl` are never committed, even when `selvedge.json` already exists or init
+  then fails. The line never changes init's exit code.
 - **`approve`** needs an interactive terminal (`approve_requires_tty` otherwise, nothing written).
   It prints every hook and the sha256 of the canonical `hooks` object (sorted keys, no whitespace)
   and records it only on an explicit `y`.
@@ -215,7 +224,7 @@ writes locators: content that appears only after a click is not in the tree unti
 
 ### How Playwright is found
 
-Selvedge ships no `node_modules`. `snapshot` loads Playwright from `SELVEDGE_PLAYWRIGHT_MODULE` (the
+Selvedge ships no `node_modules`. `snapshot` and `run` load Playwright from `SELVEDGE_PLAYWRIGHT_MODULE` (the
 path of an importable entry, e.g. `<dir>/node_modules/playwright/index.mjs`) when it is set, and
 from nowhere else; otherwise from the target project's own `node_modules`, resolved from the repo
 root's `package.json` as the project's own code would. Neither ⇒ `BLOCKED playwright_unavailable`.
@@ -336,6 +345,114 @@ Plan-lint problems (the codes after `plan_invalid:`):
 - `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, or `criterion_not_testable` without a rewrite.
 - `plan_schema_violation` — the plan or a step is malformed: not JSON, a missing or wrongly typed value, an unknown `op`, `state` or `read` property.
 
+## `run` and `verdict`
+
+```
+selvedge run [--trace] <run-dir>                  execute a frozen run folder's plan.json
+selvedge run --replay <frozen-run-dir> [--trace]  run that frozen plan again, in a new run folder
+selvedge verdict <run-dir>                        re-derive verdict.json from the folder's files
+```
+
+**`selvedge run`** executes the frozen `plan.json` in the guarded browser. No model is called:
+every step is a typed plan step, and the runner writes every evidence line itself. A folder runs
+once. Each of these exits 2 before anything is written or launched, in this order: a usage error
+(including a bad `SELVEDGE_ENTRY`, `SELVEDGE_RUN_BUDGET_MS` or `SELVEDGE_STEP_TIMEOUT_MS`),
+`not_frozen` (no `plan.sha256`), `already_run` (`evidence.jsonl` exists), `plan_modified` (the
+sha256 of `plan.json`'s bytes is not the one `plan.sha256` records), then a `selvedge.json` reason.
+After that, the planner-token budget (`freeze.json`'s planner tokens above
+`SELVEDGE_PLANNER_TOKEN_BUDGET`) or a hook that is not approved makes every criterion BLOCKED
+(`budget_exceeded`, `env_hooks_unapproved`) and nothing launches. Approved `reset` then `seed`
+hooks run before the first browser, each through `selvedge env hook`, and the run's `data_state`
+is `managed`; with neither hook it is `unmanaged` and `plan_time_actions` (what the planner's
+snapshots did to the app) is carried into the verdict. A hook that runs and fails exits 1 and
+writes nothing, so the folder can run again.
+
+Each criterion runs in its own fresh guarded context: no cookie or storage carries from one to the
+next. A `goto` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, an unset
+`{{NAME}}` is BLOCKED `placeholder_unset`, and a criterion under the plan's `not_planned` is
+NOT_VERIFIABLE with the plan's reason. A step that throws (a locator matching nothing or more than
+one element, a hidden or covered click target, a step timeout) is BLOCKED `step_failed` with its
+0-based `failed_step`, and nothing after it runs; three action steps in a row that leave the page
+unchanged (same url and accessibility tree) are BLOCKED `stuck_screen`. The other criteria still
+run.
+
+**The stable wait.** An `expect` that would FAIL is checked once more before it counts: first the
+network goes idle (no request in flight for 500 ms), then the DOM settles (two equal reads of the
+page 500 ms apart), both within 5 s; the criterion's last `read` then runs again and the `expect`
+is judged on that value. Its evidence lines say `stable_wait: true`. Honest limit: a value that
+arrives by a timer alone, with no request and a DOM unchanged for longer than the settle time, is
+not waited for.
+
+**What a run leaves in its run folder** (beside the files `plan` wrote):
+
+- `evidence.jsonl` — one JSON object per line, written only by the runner (every `{{NAME}}` value
+  is written back as `{{NAME}}`). The line kinds, in order:
+  - `run_start` — `ts`, `run_id`, `plan_sha256`, `playwright_version`, `data_state`, `hooks_run`,
+    `plan_time_actions`, `replay_of`; exactly one, the first line.
+  - `step` — `criterion`, `step` (the 0-based index), `type`, `locator`, `outcome` (`ok` or
+    `failed`; `matched` or `mismatched` for an `expect`), `value` (the read value for `read`, the
+    plan's own value for `fill` / `select`, else null), `duration_ms`, and `error` / `stable_wait`
+    when they apply; one per executed step (the stable wait's re-read is a second `read` line).
+  - `criterion_end` — `criterion`, `outcome` (`completed`, `step_failed`, `stuck_screen`,
+    `budget_exceeded`, `blocked`, `not_planned`), `reason`, `failed_step`, `screenshot`; one per
+    criterion.
+  - `run_end` — `ts`, `duration_ms`; the last line.
+- `screenshots/<criterion-id>.png` — the end-state screenshot of each criterion that opened a page.
+- `verdict.json` — the verdict ([`schemas/verdict.schema.json`](schemas/verdict.schema.json)):
+  `schema_version`, `target`, `plan_sha256`, `playwright_version`, `plan_revision`,
+  `prior_revisions` (for each earlier revision of the same criteria, ascending, the verdict of its
+  own run, or null when it never ran), `replay_of`, `data_state`, `hooks_run`, `plan_time_actions`
+  (when `data_state` is `unmanaged`), and per criterion `verdict`, `evidence_class`
+  (`structured-read`), `read_value`, `matched`, `expected`, `reason`, `failed_step`,
+  `interpretation`, `unverified_assumptions` and `steps` (each step's index, type, outcome and
+  duration).
+- `traces/<criterion-id>.zip` — with `--trace` only (below).
+
+**`.selvedge/runs.jsonl` gains exactly one run line per run**: `{"event": "run", ts, run_id, entry,
+counts, verdict, planner_tokens, duration_ms, plan_sha256, criteria_sha256, plan_revision,
+replay_of}`. `entry` is `SELVEDGE_ENTRY` (`session` by default, or `ci` / `loomwright`);
+`counts` holds the number of criteria per verdict; `verdict` is the run's overall verdict;
+`planner_tokens` is the plan's own planner cost from `freeze.json` (the run itself spends none).
+
+**`selvedge verdict <run-dir>`** turns `evidence.jsonl` and `plan.json` into `verdict.json` and
+nothing else decides a verdict: `run` calls the same derivation once its evidence is closed. Per
+criterion, the first match wins: no `criterion_end` line is BLOCKED `run_interrupted`; a
+`not_planned` end is NOT_VERIFIABLE with its reason; any other end but `completed` is BLOCKED with
+its reason; an empty final read is NOT_VERIFIABLE `no_value_read` (even for `equals ""`); a final
+`expect` that mismatched after the stable wait is FAIL, with `read_value` and `expected`; a match
+with a `material: true` assumption is NOT_VERIFIABLE `material_assumption`; else PASS. Re-running
+`verdict` re-derives the same file and appends nothing to `runs.jsonl`. It exits 2
+`evidence_missing` when there is no `evidence.jsonl` (or a line cannot be trusted), and
+`plan_modified` when `plan.json` is not the plan the run executed.
+
+**Exit precedence** for `run` and `verdict`: `1` any FAIL, else `2` any BLOCKED (or a refusal
+above), else `3` any NOT_VERIFIABLE, else `0`. stdout holds one line per criterion,
+`<VERDICT> [<reason>] <criterion-id>`, then `verdict <VERDICT> <path to verdict.json>`.
+
+**`--replay <frozen-run-dir>`** runs a frozen plan again, for regression. Every check above runs
+against the frozen folder first, except `already_run` (a folder that ran is the one being
+replayed), and one more: `plan.json`'s sha256 must also equal the `plan_sha256` of that run's own
+`event: "freeze"` line in `runs.jsonl`, so a `plan.json` and `plan.sha256` edited together are
+still `plan_modified`, as is a folder with no freeze line (a replay folder: replay the folder it
+replayed). Only then is a new run folder created, holding byte copies of `criteria.json`,
+`plan.json`, `plan.sha256` and `freeze.json`, and the plan runs there unchanged: `replay_of` (in
+`run_start`, `verdict.json` and the run line) is the frozen run id, `plan_revision` is the plan's
+own, and `planner_tokens` is 0 (no planner-token budget applies). A replay never repairs a plan: a
+renamed button the frozen locator no longer matches is BLOCKED `step_failed` at that step. A
+replay that writes no evidence (a refusal, a failing hook) leaves no new folder behind.
+
+**`--trace`** keeps a Playwright trace of each criterion as `traces/<criterion-id>.zip`, redacted
+before it is written: every `Cookie`, `Set-Cookie` and `Authorization` header value reads
+`[redacted]`; every cookie value seen in any of those headers, and every `Authorization` value, is
+replaced by `[redacted]` wherever it appears in the trace (a page's HTML or script included); and
+every resolved `{{NAME}}` value goes back to `{{NAME}}`. The raw trace is written to a private
+temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
+and a trace it cannot redact whole (zip64, encryption, an unknown compression method, a bad
+checksum, a binary entry holding a secret) is dropped, never kept: stderr says
+`trace: dropped (<why>)`. Traces carry DOM snapshots but no screenshots (an image of a typed value
+cannot be redacted). Honest limit: a value the page shows transformed (cut, re-cased, reversed) is
+not caught. Without `--trace` nothing is traced.
+
 ## Environment variables
 
 Read by the CLI only, never from a file in the repo:
@@ -343,9 +460,17 @@ Read by the CLI only, never from a file in the repo:
 - `SELVEDGE_PLANNER` — the planner command (`/bin/sh -c`); unset, `claude -p`.
 - `SELVEDGE_PLANNER_MODEL` — the default planner's `--model` (default `sonnet`).
 - `SELVEDGE_PLANNER_TOKEN_BUDGET` — a whole number of tokens, given to the planner and recorded in
-  `freeze.json` (not enforced at plan time).
+  `freeze.json` (not enforced at plan time); `run` makes every criterion BLOCKED `budget_exceeded`
+  when the plan's planner tokens exceed it.
 - `SELVEDGE_SNAPSHOT_BUDGET` — `snapshot` calls per run folder (default 20).
-- `SELVEDGE_PLAYWRIGHT_MODULE` — the Playwright entry `snapshot` loads (above).
+- `SELVEDGE_PLAYWRIGHT_MODULE` — the Playwright entry `snapshot` and `run` load (above).
+- `SELVEDGE_ENTRY` — how `run` was started, recorded in its `runs.jsonl` line: `session` (the
+  default), `ci` or `loomwright`; any other value is a usage error.
+- `SELVEDGE_RUN_BUDGET_MS` — the wall clock a `run` may spend, in milliseconds (default 600000),
+  checked before each criterion starts: once it is spent, every criterion not yet started is
+  BLOCKED `budget_exceeded` and gets no browser.
+- `SELVEDGE_STEP_TIMEOUT_MS` — the time one action of a `run` may take, in milliseconds (default
+  5000); a step that runs out is BLOCKED `step_failed`.
 - `SELVEDGE_RUN_DIR` — the run folder `snapshot` records in, when `--run-dir` is not given.
 - `SELVEDGE_BASE` — the config source `snapshot` reads (a ref, or empty for the working tree);
   set by `plan` for its planner, and a `--base` naming another is refused.

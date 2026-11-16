@@ -1,4 +1,5 @@
-// runner/run.mjs — `selvedge run <run-dir>`, run by selvedge/bin/selvedge.
+// runner/run.mjs — `selvedge run [--trace] <run-dir>` and `selvedge run --replay <frozen-run-dir>
+// [--trace]`, run by selvedge/bin/selvedge.
 //
 // Executes a frozen run folder's plan.json through the guarded browser. No model is called: every
 // step is a typed plan step (runner/steps.mjs), every evidence line is written by this runner
@@ -46,14 +47,28 @@
 // 1 any FAIL, else 2 any BLOCKED (or a refusal above), else 3 any NOT_VERIFIABLE, else 0.
 // Every reason comes from REASONS in env-config.mjs.
 //
+// --replay <frozen-run-dir> (replayRun) re-runs a frozen plan unchanged, for regression. Every check
+// above runs against the frozen folder before anything is created, except already_run (a folder that
+// ran is what a replay replays), plus one more: plan.json's sha256 must also equal the plan_sha256 of
+// the frozen run's own `event: "freeze"` line in runs.jsonl, so a plan.json and plan.sha256 edited
+// together are still plan_modified (as is a folder with no freeze line, such as a replay folder:
+// replay the folder it replayed). Then a NEW run folder gets criteria.json, plan.json (the very bytes
+// that were hashed), plan.sha256 and freeze.json copied, and runs as above with replay_of = the frozen
+// run id (in run_start, verdict.json and the run line), the plan's own plan_revision, planner_tokens 0
+// and no planner-token budget check (the replay spends none). A replay that writes no evidence (a
+// refusal, a failing hook) leaves no new folder behind.
+//
+// --trace: each criterion's context is traced and kept, redacted, as traces/<criterion-id>.zip
+// (runner/execute.mjs, runner/trace-redact.mjs). Without it nothing is traced.
+//
 // Node >= 18, standard library only (Playwright is resolved at run time, never imported here).
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs } from '../env-config.mjs';
+import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, repoRoot } from '../env-config.mjs';
 import { PLANNER_TOKEN_BUDGET_ENV } from '../plan-planner.mjs';
-import { RUN_FILES, runsLogPath } from '../plan-runs.mjs';
+import { FREEZE_EVENT, RUN_FILES, initRun, readRunsLog, runsLogPath } from '../plan-runs.mjs';
 import { SELVEDGE_BIN, plannerTokenBudget } from '../plan.mjs';
 import { resolvePlaceholders } from '../plan-steps.mjs';
 import { STEP_TIMEOUT_MS, placeholderValues } from '../snapshot.mjs';
@@ -72,12 +87,20 @@ export const RUN_HOOKS = Object.freeze(['reset', 'seed']);
 
 const BLOCKED_LINE = /^BLOCKED ([a-z_]+)$/m;
 
-const USAGE = `Usage: selvedge run <run-dir>
+const USAGE = `Usage: selvedge run [--trace] <run-dir>
+       selvedge run --replay <frozen-run-dir> [--trace]
 
 Execute a frozen run folder's plan.json in the guarded browser (no model is called), write
 <run-dir>/evidence.jsonl, screenshots/<criterion-id>.png and verdict.json, and append one line to
 .selvedge/runs.jsonl. A folder runs once (already_run); a plan.json whose sha256 is not plan.sha256's
 is refused (plan_modified).
+
+  --replay <frozen-run-dir>  run the frozen plan again, byte for byte, in a NEW run folder
+                             (replay_of = the frozen run id); also refused (plan_modified) when the
+                             sha256 is not the one runs.jsonl's freeze line for that run records
+  --trace                    keep a redacted Playwright trace per criterion, traces/<criterion-id>.zip
+                             (Cookie, Set-Cookie, Authorization and {{NAME}} values removed; a trace
+                             that cannot be redacted is dropped)
 
 Environment: SELVEDGE_ENTRY (session | ci | loomwright, recorded in the run line; default session),
 SELVEDGE_RUN_BUDGET_MS (wall clock for the run, default ${DEFAULT_RUN_BUDGET_MS}),
@@ -114,9 +137,21 @@ export function runEntry(env = process.env) {
 
 const sha256Hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-// The frozen folder's plan, checked: { plan, planSha256, freeze }. Throws EnvError not_frozen,
-// already_run, plan_modified or plan_invalid (the header's order).
-export function readFrozenRun(runDir) {
+// The usage checks on the environment, before anything is read: { entry, runBudgetMs,
+// stepTimeoutMs, tokenBudget }. Throws UsageError.
+function runOptions(env) {
+  return {
+    entry: runEntry(env),
+    runBudgetMs: wholeMs(env, RUN_BUDGET_ENV, DEFAULT_RUN_BUDGET_MS),
+    stepTimeoutMs: wholeMs(env, STEP_TIMEOUT_ENV, STEP_TIMEOUT_MS, { min: 1 }),
+    tokenBudget: plannerTokenBudget(env),
+  };
+}
+
+// The frozen folder's plan, checked: { plan, planBytes, planSha256, freeze }. Throws EnvError
+// not_frozen, already_run, plan_modified or plan_invalid (the header's order). With `replay`, a
+// folder that already ran is not refused (it is the one being replayed).
+export function readFrozenRun(runDir, { replay = false } = {}) {
   const shaFile = path.join(runDir, RUN_FILES.planSha);
   let recorded;
   try {
@@ -125,7 +160,7 @@ export function readFrozenRun(runDir) {
     if (e && e.code === 'ENOENT') throw new EnvError(REASONS.not_frozen, `${runDir} holds no ${RUN_FILES.planSha}: the plan is not frozen; freeze it first: selvedge plan --freeze ${runDir}`);
     throw e;
   }
-  if (existsSync(path.join(runDir, EVIDENCE_FILE))) {
+  if (!replay && existsSync(path.join(runDir, EVIDENCE_FILE))) {
     throw new EnvError(REASONS.already_run, `${path.join(runDir, EVIDENCE_FILE)} exists: this folder has already run; nothing in it is changed`);
   }
   const want = recorded.trim().split(/\s+/)[0];
@@ -157,7 +192,21 @@ export function readFrozenRun(runDir) {
     throw new EnvError(REASONS.not_frozen, `${path.join(runDir, RUN_FILES.freeze)} cannot be read (${e && e.code ? e.code : firstLine(e)}): the freeze record is missing`);
   }
   if (!isPlainObject(freeze)) throw new EnvError(REASONS.not_frozen, `${path.join(runDir, RUN_FILES.freeze)} is not a freeze record`);
-  return { plan, planSha256: have, freeze };
+  return { plan, planBytes: bytes, planSha256: have, freeze };
+}
+
+// Throws plan_modified unless runs.jsonl (at `root`) holds the `event: "freeze"` line of run `runId`
+// and every such line records `planSha256` (the sha256 of plan.json's bytes as read now).
+export function assertFreezeLine(root, runId, planSha256, freeze) {
+  const lines = readRunsLog(root).entries.filter((e) => e.event === FREEZE_EVENT && e.run_id === runId);
+  if (!lines.length) {
+    const hint = typeof freeze.run_id === 'string' && freeze.run_id !== runId ? ` (it was copied from run ${freeze.run_id}: replay that folder)` : '';
+    throw new EnvError(REASONS.plan_modified, `${runsLogPath(root)} holds no freeze line for run ${runId}${hint}: the plan cannot be shown to be the one frozen; nothing was created`);
+  }
+  const bad = lines.find((l) => l.plan_sha256 !== planSha256);
+  if (bad) {
+    throw new EnvError(REASONS.plan_modified, `plan.json has sha256 ${planSha256}, but the freeze line for run ${runId} in ${runsLogPath(root)} records ${bad.plan_sha256}: the frozen plan was edited; nothing was created`);
+  }
 }
 
 // The plan's planner tokens from freeze.json (input + output), or null when unreported.
@@ -195,13 +244,11 @@ function refusedGoto(config, steps) {
   return bad ? bad.url : null;
 }
 
-// runPlan(runDir, { env, started }) → Promise<exit code>. Writes the CLI's stdout / stderr itself;
-// `started` (ms) is when the run began, what SELVEDGE_RUN_BUDGET_MS counts from.
-export async function runPlan(runDir, { env = process.env, started = Date.now() } = {}) {
-  const entry = runEntry(env);
-  const runBudgetMs = wholeMs(env, RUN_BUDGET_ENV, DEFAULT_RUN_BUDGET_MS);
-  const stepTimeoutMs = wholeMs(env, STEP_TIMEOUT_ENV, STEP_TIMEOUT_MS, { min: 1 });
-  const tokenBudget = plannerTokenBudget(env);
+// runPlan(runDir, { env, started, replayOf, trace }) → Promise<exit code>. Writes the CLI's stdout /
+// stderr itself; `started` (ms) is when the run began, what SELVEDGE_RUN_BUDGET_MS counts from;
+// `replayOf` is the frozen run id a replay folder copies (replayRun), null otherwise.
+export async function runPlan(runDir, { env = process.env, started = Date.now(), replayOf = null, trace = false } = {}) {
+  const { entry, runBudgetMs, stepTimeoutMs, tokenBudget } = runOptions(env);
 
   const { plan, planSha256, freeze } = readFrozenRun(runDir);
   // selvedge.json of the repo that holds the run folder; the same root holds runs.jsonl.
@@ -212,7 +259,8 @@ export async function runPlan(runDir, { env = process.env, started = Date.now() 
 
   const secrets = placeholderValues(planned.flatMap(([, c]) => c.steps), env);
   const ends = new Map(); // criterion id → criterion_end line, for the ones decided before launch
-  const tokens = plannerTokens(freeze);
+  // a replay spends no planner tokens (its plan's own cost was its freeze's)
+  const tokens = replayOf === null ? plannerTokens(freeze) : 0;
   let blockAll = null;
   let hooksRun = [];
 
@@ -276,7 +324,7 @@ export async function runPlan(runDir, { env = process.env, started = Date.now() 
     data_state: hooksRun.length ? DATA_STATES.managed : DATA_STATES.unmanaged,
     hooks_run: hooksRun,
     plan_time_actions: Number.isInteger(freeze.plan_time_actions) && freeze.plan_time_actions >= 0 ? freeze.plan_time_actions : null,
-    replay_of: null,
+    replay_of: replayOf,
   }, { first: true });
   for (const np of notPlanned) {
     write({ kind: EVIDENCE_KINDS.criterion_end, criterion: np.id, outcome: CRITERION_OUTCOMES.not_planned, reason: np.reason, failed_step: null, screenshot: null });
@@ -295,7 +343,7 @@ export async function runPlan(runDir, { env = process.env, started = Date.now() 
       continue;
     }
     err(`${id}: running ${c.steps.length} step(s)`);
-    const end = await executeCriterion({ id, steps: c.steps, resolved: resolvedById.get(id), chromium, config, runDir, secrets, stepTimeoutMs, write });
+    const end = await executeCriterion({ id, steps: c.steps, resolved: resolvedById.get(id), chromium, config, runDir, secrets, stepTimeoutMs, write, trace });
     write(end);
   }
   write({ kind: EVIDENCE_KINDS.run_end, ts: new Date().toISOString(), duration_ms: Date.now() - started });
@@ -314,7 +362,7 @@ export async function runPlan(runDir, { env = process.env, started = Date.now() 
     plan_sha256: planSha256,
     criteria_sha256: typeof plan.criteria_sha256 === 'string' ? plan.criteria_sha256 : null,
     plan_revision: Number.isInteger(plan.plan_revision) ? plan.plan_revision : null,
-    replay_of: null,
+    replay_of: replayOf,
   };
   mkdirSync(path.dirname(runsLogPath(root)), { recursive: true });
   appendFileSync(runsLogPath(root), `${JSON.stringify(line)}\n`);
@@ -326,18 +374,51 @@ export async function runPlan(runDir, { env = process.env, started = Date.now() 
   return result.exitCode;
 }
 
-function cmdRun(argv, started) {
-  const { positional } = parseCliArgs(argv);
-  if (positional.length !== 1) throw new UsageError(positional.length === 0 ? 'a <run-dir> is required' : `one <run-dir> only (got ${positional.length})`);
-  const runDir = positional[0];
+// replayRun(frozenDir, { env, started, trace }) → Promise<exit code>: the header's --replay.
+export async function replayRun(frozenDir, { env = process.env, started = Date.now(), trace = false } = {}) {
+  runOptions(env); // usage first: a bad value creates nothing
+  const { planBytes, planSha256, freeze } = readFrozenRun(frozenDir, { replay: true });
+  const frozenId = path.basename(path.resolve(frozenDir));
+  // the root loadConfig({ cwd: frozenDir }) resolves, read before selvedge.json is (the header's order)
+  assertFreezeLine(repoRoot(frozenDir) || frozenDir, frozenId, planSha256, freeze);
+  const criteriaFile = path.join(frozenDir, RUN_FILES.criteria);
+  if (!existsSync(criteriaFile)) throw new EnvError(REASONS.not_frozen, `${frozenDir} holds no ${RUN_FILES.criteria}: not a complete frozen run folder; nothing was created`);
+  const { root } = loadConfig({ cwd: frozenDir });
+
+  const { runDir } = initRun({ root, criteriaFile });
+  try {
+    writeFileSync(path.join(runDir, RUN_FILES.plan), planBytes); // the bytes hashed above, unchanged
+    copyFileSync(path.join(frozenDir, RUN_FILES.freeze), path.join(runDir, RUN_FILES.freeze));
+    writeFileSync(path.join(runDir, RUN_FILES.planSha), `${planSha256}  ${RUN_FILES.plan}\n`, { flag: 'wx' });
+    err(`replay of ${frozenId} in ${runDir}`);
+    return await runPlan(runDir, { env, started, replayOf: frozenId, trace });
+  } finally {
+    // a replay that wrote no evidence leaves nothing behind
+    if (!existsSync(path.join(runDir, EVIDENCE_FILE))) rmSync(runDir, { recursive: true, force: true });
+  }
+}
+
+function assertDir(dir) {
   let isDir = false;
   try {
-    isDir = statSync(runDir).isDirectory();
+    isDir = statSync(dir).isDirectory();
   } catch {
     isDir = false;
   }
-  if (!isDir) throw new UsageError(`${runDir} is not a directory`);
-  return runPlan(runDir, { started });
+  if (!isDir) throw new UsageError(`${dir} is not a directory`);
+}
+
+function cmdRun(argv, started) {
+  const { flags, positional } = parseCliArgs(argv, { values: ['replay'], booleans: ['trace'] });
+  const trace = flags.trace === true;
+  if (flags.replay !== undefined) {
+    if (positional.length) throw new UsageError(`--replay takes the frozen run folder; no other <run-dir> (got ${positional[0]})`);
+    assertDir(flags.replay);
+    return replayRun(flags.replay, { started, trace });
+  }
+  if (positional.length !== 1) throw new UsageError(positional.length === 0 ? 'a <run-dir> is required' : `one <run-dir> only (got ${positional.length})`);
+  assertDir(positional[0]);
+  return runPlan(positional[0], { started, trace });
 }
 
 async function main(argv) {

@@ -1,7 +1,7 @@
 {
   "name": "selvedge",
-  "version": "0.3.0",
-  "description": "Selvedge checks finished work against its brief and reports an evidenced PASS/FAIL per acceptance criterion. Target safety: a committed selvedge.json origin allowlist, the env commands with user-approved hooks, and a browser guard that refuses unlisted origins. Criteria to a frozen plan: criteria (extraction and a vague-criterion check), snapshot (an allowed page's accessibility tree) and plan (a planner, a static lint, and a sha256-frozen plan.json); running a plan arrives in later releases.",
+  "version": "0.4.0",
+  "description": "Selvedge checks finished work against its brief and reports an evidenced PASS/FAIL per acceptance criterion. Target safety: a committed selvedge.json origin allowlist, the env commands with user-approved hooks, and a browser guard that refuses unlisted origins. Criteria to a frozen plan: criteria (extraction and a vague-criterion check), snapshot (an allowed page's accessibility tree) and plan (a planner, a static lint, and a sha256-frozen plan.json). Running it: run (no model call; --replay, a redacted --trace) and verdict (a verdict per criterion from the evidence alone).",
   "author": {
     "name": "vikash ruhil"
   },

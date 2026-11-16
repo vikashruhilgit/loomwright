@@ -24,8 +24,16 @@
 // that arrives by a timer alone, with no request and a DOM unchanged for longer than the settle
 // time, is not waited for (a documented limit).
 //
+// Trace (`run --trace`): the context is traced (DOM snapshots, no screenshots: an image of a typed
+// value cannot be redacted, no sources) and, before it closes, the trace is written to a private
+// temp folder, redacted by redactTraceZip (trace-redact.mjs) into traces/<criterion-id>.zip in the
+// run folder, and the raw zip deleted. A trace that cannot be redacted whole is dropped, never kept;
+// stderr says `trace: <path> (redacted)` or `trace: dropped (<why>)`. Without --trace nothing is
+// traced.
+//
 // Node >= 18, standard library only (Playwright is the caller's).
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { EnvError, REASONS } from '../env-config.mjs';
 import { ACTION_TYPES } from '../plan-steps.mjs';
@@ -34,6 +42,7 @@ import { firstLine } from '../snapshot-playwright.mjs';
 import { CRITERION_OUTCOMES, EVIDENCE_KINDS, STEP_OUTCOMES, stepLine } from './evidence.mjs';
 import { openGuardedContext } from './route-guard.mjs';
 import { expectMatches, readValue, runStep } from './steps.mjs';
+import { redactTraceZip } from './trace-redact.mjs';
 
 // Consecutive no-change action steps that make a criterion stuck_screen.
 export const STUCK_SCREEN_ACTIONS = 3;
@@ -41,6 +50,7 @@ export const STABLE_TIMEOUT_MS = 5000;
 export const NETWORK_QUIET_MS = 500;
 export const DOM_SETTLE_MS = 500;
 export const SCREENSHOTS_DIR = 'screenshots';
+export const TRACES_DIR = 'traces';
 
 const POLL_MS = 50;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,16 +102,37 @@ async function screenState(page, timeout) {
 }
 
 // A file name for a criterion id (ids are c-<12 hex>; anything else is made safe).
-function screenshotName(id) {
-  return `${String(id).replace(/[^A-Za-z0-9._-]/g, '_')}.png`;
+function fileName(id, ext) {
+  return `${String(id).replace(/[^A-Za-z0-9._-]/g, '_')}.${ext}`;
 }
 
-// executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets, stepTimeoutMs, write })
-//   → Promise<criterion_end line>
+// Stops the context's tracing into a private temp folder and keeps only the redacted copy,
+// traces/<criterion-id>.zip. Never throws: a failure drops the trace.
+async function keepTrace({ context, id, runDir, secrets }) {
+  const say = (line) => process.stderr.write(`selvedge run: ${id}: trace: ${redactValues(line, secrets)}\n`);
+  let tmp = null;
+  try {
+    tmp = mkdtempSync(path.join(os.tmpdir(), 'selvedge-trace-'));
+    const raw = path.join(tmp, 'raw.zip');
+    await context.tracing.stop({ path: raw });
+    const rel = path.join(TRACES_DIR, fileName(id, 'zip'));
+    mkdirSync(path.join(runDir, TRACES_DIR), { recursive: true });
+    const res = redactTraceZip(raw, path.join(runDir, rel), { secrets });
+    say(res.kept ? `${rel} (redacted)` : `dropped (${res.why})`);
+  } catch (e) {
+    say(`dropped (${firstLine(e)})`);
+  } finally {
+    if (tmp !== null) rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets, stepTimeoutMs, write,
+//                    trace }) → Promise<criterion_end line>
 //   steps     the plan's steps AS GIVEN (what the evidence records)
 //   resolved  the same steps with {{NAME}} resolved (what drives the page)
 //   write     appends one evidence line (the run's appendEvidence)
-export async function executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets = [], stepTimeoutMs, write }) {
+//   trace     true for `run --trace` (the header's Trace paragraph)
+export async function executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets = [], stepTimeoutMs, write, trace = false }) {
   const end = (outcome, reason = null, failedStep = null, screenshot = null) => ({
     kind: EVIDENCE_KINDS.criterion_end,
     criterion: id,
@@ -117,6 +148,16 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
   } catch (e) {
     process.stderr.write(`selvedge run: ${id}: the guarded browser did not open: ${redactValues(firstLine(e), secrets)}\n`);
     return end(CRITERION_OUTCOMES.blocked, e instanceof EnvError ? e.reason : REASONS.playwright_unavailable);
+  }
+
+  let tracing = false;
+  if (trace) {
+    try {
+      await guard.context.tracing.start({ screenshots: false, snapshots: true, sources: false });
+      tracing = true;
+    } catch (e) {
+      process.stderr.write(`selvedge run: ${id}: trace: dropped (tracing did not start: ${redactValues(firstLine(e), secrets)})\n`);
+    }
   }
 
   let result = null;
@@ -214,7 +255,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
     if (result === null) result = end(CRITERION_OUTCOMES.completed);
 
     // the end-state screenshot (a failure to take it leaves screenshot null)
-    const rel = path.join(SCREENSHOTS_DIR, screenshotName(id));
+    const rel = path.join(SCREENSHOTS_DIR, fileName(id, 'png'));
     try {
       mkdirSync(path.join(runDir, SCREENSHOTS_DIR), { recursive: true });
       await page.screenshot({ path: path.join(runDir, rel), timeout: stepTimeoutMs });
@@ -223,6 +264,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
       process.stderr.write(`selvedge run: ${id}: no end-state screenshot: ${redactValues(firstLine(e), secrets)}\n`);
     }
   } finally {
+    if (tracing) await keepTrace({ context: guard.context, id, runDir, secrets });
     await guard.close();
   }
   if (guard.blocks.length) {

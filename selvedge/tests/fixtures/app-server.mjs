@@ -1,5 +1,5 @@
 // app-server.mjs — a small web app for selvedge's snapshot, plan and run tests (test-snapshot.sh,
-// test-plan.sh, test-run.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
+// test-plan.sh, test-run.sh, test-replay.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
 //
 // Pages (every page is a complete HTML document; scripts are inline, nothing loads from elsewhere):
 //   /             a plain page: heading "Plain page", no controls
@@ -7,6 +7,9 @@
 //                 "Cart" holding a "Quantity" spinbutton (a number input, value 1) and a "Total"
 //                 value (data-testid "total": 6 × the quantity), plus a "Close" button. The dialog
 //                 is `hidden` until the click, so it is absent from the accessibility tree before it.
+//                 After a /control/cart-label request the button's accessible name (aria-label) is
+//                 that label while its visible text still reads "Open cart" (a renamed control a
+//                 role locator no longer matches, though a text match still would).
 //   /echo         a "User" text field, a "Reset" button and a paragraph (data-testid "echo") that
 //                 reads "Hello, <the field's value>" ("Hello, nobody" when empty) on every input,
 //                 and one (data-testid "echo-reversed") reading "Reversed: <the value reversed>"
@@ -24,6 +27,12 @@
 //                 (data-testid "empty", no text), a hidden "Hidden action" button, a "Covered action"
 //                 button under an overlay that takes its clicks, and a side-effect counter
 //                 (data-testid "count", "0") that an "Add one" button increments
+//   /silent-cookie  sets the cookie selvedge_secret=SILENT_COOKIE_VALUE (path /, HttpOnly) and
+//                 never prints it; its script fetches /api/whoami with the header
+//                 `Authorization: Bearer <BEARER_TOKEN>` and shows the answer (data-testid "whoami")
+//   /api/whoami   text/plain "signed in" when the Authorization header is that bearer, else "anonymous"
+//   /control/cart-label?name=<label>  sets the /cart button's aria-label (above); with no name it is
+//                 reset. Server state, reset on every server start; answers text "ok"
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
@@ -42,6 +51,9 @@ import { startServer } from './servers.mjs';
 const UNIT_PRICE = 6;
 const SLOW_PRICE_MS = 1500;
 const SLOW_PRICE = '42';
+// What a trace must never keep (test-replay.sh greps for both).
+export const SILENT_COOKIE_VALUE = 'ckv-7Q2mZp4Lr9Xs';
+export const BEARER_TOKEN = 'tok-Hb81Vd3Nq6Wf';
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -53,10 +65,11 @@ function page(title, body) {
 
 const PLAIN = page('Plain', '<main><h1>Plain page</h1><p>Nothing to open here.</p></main>');
 
-const CART = page(
+// The /cart page; `label` (a /control/cart-label name) becomes the Open cart button's aria-label.
+const cartPage = (label) => page(
   'Shop',
   `<main><h1>Shop</h1>
-<button type="button" id="open">Open cart</button>
+<button type="button" id="open"${label ? ` aria-label="${escapeHtml(label)}"` : ''}>Open cart</button>
 <div role="dialog" aria-label="Cart" id="cart" hidden>
   <label>Quantity <input type="number" id="qty" min="0" value="1"></label>
   <p>Total: <span data-testid="total" id="total">${UNIT_PRICE}</span></p>
@@ -135,9 +148,20 @@ document.getElementById('covered').addEventListener('click', () => { count.textC
 </script>`,
 );
 
+const SILENT = page(
+  'Account',
+  `<main><h1>Account</h1>
+<p>Session: <span data-testid="whoami" id="whoami">checking</span></p></main>
+<script>
+fetch('/api/whoami', { headers: { Authorization: 'Bearer ${BEARER_TOKEN}' } })
+  .then((r) => r.text()).then((t) => { document.getElementById('whoami').textContent = t; });
+</script>`,
+);
+
 // startAppServer() → Promise<{ port, origin, events, close() }>
 export async function startAppServer() {
   const events = [];
+  let cartLabel = null; // /control/cart-label; null: the button's name is its text
   const sockets = new Set();
   const server = http.createServer((req, res) => {
     events.push({ method: req.method, path: req.url, cookie: req.headers.cookie || null });
@@ -152,7 +176,19 @@ export async function startAppServer() {
         send(200, PLAIN);
         return;
       case '/cart':
-        send(200, CART);
+        send(200, cartPage(cartLabel));
+        return;
+      case '/control/cart-label':
+        cartLabel = url.searchParams.get('name') || null;
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end('ok\n');
+        return;
+      case '/silent-cookie':
+        send(200, SILENT, { 'set-cookie': `selvedge_secret=${SILENT_COOKIE_VALUE}; Path=/; HttpOnly` });
+        return;
+      case '/api/whoami':
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(req.headers.authorization === `Bearer ${BEARER_TOKEN}` ? 'signed in' : 'anonymous');
         return;
       case '/echo':
         send(200, ECHO);

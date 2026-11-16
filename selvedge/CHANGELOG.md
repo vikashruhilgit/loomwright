@@ -8,6 +8,44 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.4.0 — 2026-11-16
+
+- `selvedge run <run-dir>` executes a frozen `plan.json` in the guarded browser with no model call.
+  It refuses, before anything is written or launched, a folder with no `plan.sha256`
+  (`not_frozen`), one that already ran (`already_run`) and a `plan.json` whose sha256 changed
+  (`plan_modified`). Each criterion runs in a fresh guarded context. The runner writes every line of
+  `evidence.jsonl` itself (`run_start`, one `step` line per executed step, `criterion_end`,
+  `run_end`; every `{{NAME}}` value written back as `{{NAME}}`) and one end-state screenshot per
+  criterion. An `expect` that would FAIL gets a stable wait (network idle, then a settled DOM, within
+  5 s) and one re-read. A step that throws is BLOCKED `step_failed` (with its index), three no-change
+  actions in a row are BLOCKED `stuck_screen`, and `SELVEDGE_RUN_BUDGET_MS`,
+  `SELVEDGE_PLANNER_TOKEN_BUDGET` and `SELVEDGE_STEP_TIMEOUT_MS` bound the run. Approved `reset` /
+  `seed` hooks run before the first browser (`data_state: managed`); an unapproved one blocks every
+  criterion (`env_hooks_unapproved`). Each run appends exactly one `event: "run"` line to
+  `.selvedge/runs.jsonl` (`entry` from `SELVEDGE_ENTRY`: `session`, `ci` or `loomwright`).
+- `selvedge verdict <run-dir>` derives PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion from
+  `evidence.jsonl` and `plan.json` only, into `verdict.json` (schema in
+  `schemas/verdict.schema.json`): an empty read is NOT_VERIFIABLE `no_value_read`, never PASS; a FAIL
+  carries `read_value` and `expected`; a material assumption is NOT_VERIFIABLE
+  `material_assumption`; an interrupted criterion is BLOCKED `run_interrupted`; `prior_revisions`
+  lists earlier revisions' verdicts. Exit precedence: 1 FAIL, 2 BLOCKED, 3 NOT_VERIFIABLE, 0. `run`
+  calls the same derivation; re-running `verdict` appends nothing.
+- `selvedge run --replay <frozen-run-dir>` runs a frozen plan again, byte for byte, in a new run
+  folder (`replay_of` the frozen run id, the same `plan_revision`, `planner_tokens` 0). A
+  `plan.json` that differs from `plan.sha256` or from the run's freeze line in `runs.jsonl` is
+  `plan_modified` and no folder is created; a control the frozen locator no longer matches is
+  BLOCKED `step_failed`.
+- `selvedge run --trace` keeps a Playwright trace per criterion as `traces/<criterion-id>.zip`, with
+  `Cookie` / `Set-Cookie` / `Authorization` values, every cookie value seen and every resolved
+  `{{NAME}}` value removed. Selvedge rewrites the zip itself on `node:zlib`; a trace it cannot redact
+  whole is dropped, never kept.
+- `selvedge env init` first adds `.selvedge/` to the repo's `.gitignore` (once, even when
+  `selvedge.json` exists or init fails).
+- Ten new reasons: `step_failed`, `stuck_screen`, `budget_exceeded`, `run_interrupted` (BLOCKED),
+  `no_value_read`, `material_assumption` (NOT_VERIFIABLE), `plan_modified`, `already_run`,
+  `not_frozen`, `evidence_missing` (usage). The plan-step executor moved from `lib/snapshot.mjs` to
+  `lib/runner/steps.mjs` (one executor for `snapshot` and `run`).
+
 ## 0.3.0 — 2026-11-15
 
 - Criteria become a frozen, validated step plan. `selvedge criteria from-pr|from-md|from-text`

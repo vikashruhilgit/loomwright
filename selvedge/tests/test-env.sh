@@ -379,6 +379,33 @@ printf '{"scripts":{"dev":"vite","start":"serve -p 7001"}}' > "$D/package.json"
 run "$D" env init
 { [ "$rc" -eq 0 ] && grep -qF '"http://localhost:7001"' "$D/selvedge.json"; } && ok "AC8 falls back to scripts.start" || ko "AC8 scripts.start: rc=$rc err='$err'"
 
+echo "-- env init adds .selvedge/ to .gitignore (item 04 AC26)"
+# ignore_count <dir> — the number of .gitignore lines that are exactly .selvedge/ (0 when absent).
+ignore_count() { if [ -f "$1/.gitignore" ]; then grep -cxF '.selvedge/' "$1/.gitignore"; else echo 0; fi; }
+G="$TMP/r-ignore"; mkrepo "$G"
+run "$G" env init --port 4100
+{ [ "$rc" -eq 0 ] && [ -f "$G/.gitignore" ] && [ "$(cat "$G/.gitignore")" = ".selvedge/" ]; } \
+  && ok "AC26 no .gitignore: env init creates it holding the line .selvedge/ (exit 0)" || ko "AC26 create: rc=$rc gitignore='$(cat "$G/.gitignore" 2>/dev/null)'"
+run "$G" env init --port 4100
+{ [ "$rc" -eq 1 ] && grep -qF 'refusing to overwrite' <<<"$err" && [ "$(ignore_count "$G")" = "1" ]; } \
+  && ok "AC26 a re-run never duplicates the line; init's exit code is unchanged (1, selvedge.json exists)" || ko "AC26 re-run: rc=$rc count=$(ignore_count "$G")"
+G2="$TMP/r-ignore-existing"; mkrepo "$G2"
+printf 'node_modules/\ndist' > "$G2/.gitignore"
+printf '{"schema_version":1,"origins":["http://localhost:3000"]}\n' > "$G2/selvedge.json"
+run "$G2" env init --port 4100
+{ [ "$rc" -eq 1 ] && [ "$(cat "$G2/.gitignore")" = "$(printf 'node_modules/\ndist\n.selvedge/')" ]; } \
+  && ok "AC26 selvedge.json already exists: the line is still appended (after the last line, which had no newline); exit 1 as before" \
+  || ko "AC26 existing selvedge.json: rc=$rc gitignore='$(cat "$G2/.gitignore")'"
+G3="$TMP/r-ignore-noport"; mkrepo "$G3"
+run "$G3" env init
+{ [ "$rc" -eq 2 ] && grep -qF 'port_required' <<<"$err" && [ ! -e "$G3/selvedge.json" ] && [ "$(ignore_count "$G3")" = "1" ]; } \
+  && ok "AC26 init fails port_required: the line is still added; exit 2 port_required as before" || ko "AC26 port_required: rc=$rc count=$(ignore_count "$G3") err='$err'"
+G4="$TMP/r-ignore-bare"; mkrepo "$G4"
+printf '# build\n/.selvedge\n' > "$G4/.gitignore"
+run "$G4" env init --port 4100
+{ [ "$rc" -eq 0 ] && [ "$(cat "$G4/.gitignore")" = "$(printf '# build\n/.selvedge')" ]; } \
+  && ok "AC26 a .gitignore that already ignores /.selvedge is left unchanged" || ko "AC26 bare form: gitignore='$(cat "$G4/.gitignore")'"
+
 echo "-- env check output (AC9)"
 C="$TMP/r-check"; mkrepo "$C"
 printf '{"schema_version":1,"origins":["http://localhost:3000"]}' > "$C/selvedge.json"
