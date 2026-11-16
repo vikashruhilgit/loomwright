@@ -1,7 +1,8 @@
 // runner/evidence.mjs — the evidence.jsonl line contract: the frozen line kinds, each kind's
-// fields, and the one reader. `selvedge verdict` (lib/verdict.mjs) reads a run folder's evidence
-// only through readEvidence; the runner's writer belongs in this module too, and checks every line
-// with evidenceLineProblem before it is appended, so the writer and the reader share one contract.
+// fields, the one reader and the one writer. `selvedge verdict` (lib/verdict.mjs) reads a run
+// folder's evidence only through readEvidence; the runner (`selvedge run`) writes it only through appendEvidence, which
+// checks every line with evidenceLineProblem before it is appended, so the writer and the reader
+// share one contract.
 //
 // A run folder's evidence.jsonl holds, in this order:
 //   {"kind":"run_start", ts, run_id, plan_sha256, playwright_version, data_state, hooks_run,
@@ -22,11 +23,19 @@
 // lines are out of order — throws evidence_missing: no verdict is derived from it (fail closed; a
 // torn last line included).
 //
+// The writer (appendEvidence) is the only code that writes evidence.jsonl. It passes every string
+// of a line through redactValues (snapshot.mjs) with the run's resolved {{NAME}} values, checks the
+// line with evidenceLineProblem, and creates the file exclusively with the run_start line (an
+// existing file is already_run: one run per folder). stepLine builds a step line from the plan step
+// AS GIVEN, so a fill / select value is written as the plan wrote it ({{NAME}} kept), never the
+// value the page received.
+//
 // Node >= 18, standard library only.
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS } from '../env-config.mjs';
 import { STEP_TYPES } from '../plan-steps.mjs';
+import { redactValues } from '../snapshot.mjs';
 
 export const EVIDENCE_FILE = 'evidence.jsonl';
 
@@ -207,4 +216,61 @@ export function readEvidence(runDir) {
     }
   }
   return { file, runStart: lines[0], steps, ends, runEnd, lines };
+}
+
+// Every string in a value (nested in arrays and objects) passed through redactValues.
+function redactDeep(value, secrets) {
+  if (typeof value === 'string') return redactValues(value, secrets);
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, secrets));
+  if (isPlainObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, secrets)]));
+  return value;
+}
+
+// stepLine({ criterion, index, step, outcome, value, durationMs, error, stableWait }) → a step line.
+//   step   the plan step AS GIVEN (never the resolved copy): its type, locator and, for fill /
+//          select, its value ({{NAME}} kept)
+//   value  the value a read step read (ignored for every other type)
+// error and stableWait are written only when given.
+export function stepLine({ criterion, index, step, outcome, value = null, durationMs, error, stableWait }) {
+  let written = null;
+  if (step.type === 'read') written = value;
+  else if (step.type === 'fill' || step.type === 'select') written = step.value;
+  const line = {
+    kind: EVIDENCE_KINDS.step,
+    criterion,
+    step: index,
+    type: step.type,
+    locator: isPlainObject(step.locator) ? step.locator : null,
+    outcome,
+    value: written === undefined ? null : written,
+    duration_ms: durationMs,
+  };
+  if (error !== undefined) line.error = error;
+  if (stableWait !== undefined) line.stable_wait = stableWait;
+  return line;
+}
+
+// appendEvidence(runDir, line, { secrets, first }) — redacts, checks and appends one line to
+// <runDir>/evidence.jsonl. `secrets` is [{ name, value }] (placeholderValues). With `first` (the
+// run_start line) the file is created exclusively: an existing one throws EnvError already_run and
+// nothing is written. A line that fails evidenceLineProblem is never written (an Error: the
+// writer and the reader disagree, a bug).
+export function appendEvidence(runDir, line, { secrets = [], first = false } = {}) {
+  const out = redactDeep(line, secrets);
+  const problem = evidenceLineProblem(out);
+  if (problem) throw new Error(`refusing to write an evidence line the reader would refuse (${problem})`);
+  const file = path.join(runDir, EVIDENCE_FILE);
+  const text = `${JSON.stringify(out)}\n`;
+  if (!first) {
+    appendFileSync(file, text);
+    return;
+  }
+  try {
+    writeFileSync(file, text, { flag: 'wx' });
+  } catch (e) {
+    if (e && e.code === 'EEXIST') {
+      throw new EnvError(REASONS.already_run, `${file} exists: this run folder has already run; a new run needs a new run folder`);
+    }
+    throw e;
+  }
 }

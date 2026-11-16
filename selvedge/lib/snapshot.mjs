@@ -67,7 +67,8 @@ import path from 'node:path';
 import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
 import { ACTION_TYPES, placeholderNames, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
 import { problemLine } from './plan-validate.mjs';
-import { openGuardedContext, reasonOfResponse } from './runner/route-guard.mjs';
+import { openGuardedContext } from './runner/route-guard.mjs';
+import { navigate, runStep } from './runner/steps.mjs';
 import { firstLine, resolvePlaywright } from './snapshot-playwright.mjs';
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
@@ -229,58 +230,14 @@ export function redactValues(text, secrets) {
   return text.replace(re, (m) => `{{${byValue.get(m)}}}`);
 }
 
-// The Playwright locator for a plan-step locator (role / label / text / testid; never CSS).
-function locate(page, loc) {
-  if ('role' in loc) {
-    const opts = {};
-    if ('name' in loc) opts.name = loc.name;
-    if ('exact' in loc) opts.exact = loc.exact;
-    return page.getByRole(loc.role, opts);
+// A prefix step runs through the one executor (runner/steps.mjs). read and expect are never a
+// prefix step: validateSteps (prefix mode) refuses them before launch, and this refuses rather than
+// skips should one reach it.
+async function runPrefixStep(page, step) {
+  if (step.type === 'read' || step.type === 'expect') {
+    throw new Error(`step type ${JSON.stringify(step.type)} cannot run in a snapshot prefix`);
   }
-  if ('label' in loc) return page.getByLabel(loc.label);
-  if ('text' in loc) return page.getByText(loc.text);
-  return page.getByTestId(loc.testid);
-}
-
-// Navigate, and fail on an HTTP error status (naming the guard's reason when the guard refused it).
-async function navigate(page, url) {
-  const response = await page.goto(url);
-  if (response && response.status() >= 400) {
-    const reason = reasonOfResponse(response);
-    throw new Error(`${url} answered HTTP ${response.status()}${reason ? ` (the guard refused it: ${reason})` : ''}`);
-  }
-}
-
-// Run one validated, resolved prefix step. Playwright's strict mode makes a locator that matches
-// more than one element fail the step, as a locator matching nothing does (after the timeout).
-async function runStep(page, step) {
-  switch (step.type) {
-    case 'goto':
-      await navigate(page, step.url);
-      return;
-    case 'click':
-      await locate(page, step.locator).click();
-      return;
-    case 'fill':
-      await locate(page, step.locator).fill(step.value);
-      return;
-    case 'select':
-      await locate(page, step.locator).selectOption(step.value);
-      return;
-    case 'check':
-      await locate(page, step.locator).setChecked(step.checked !== false);
-      return;
-    case 'press':
-      if (step.locator) await locate(page, step.locator).press(step.key);
-      else await page.keyboard.press(step.key);
-      return;
-    case 'wait_for':
-      await locate(page, step.locator).waitFor({ state: step.state });
-      return;
-    default:
-      // validateSteps (prefix mode) admits nothing else; refuse rather than skip.
-      throw new Error(`step type ${JSON.stringify(step.type)} cannot run in a snapshot prefix`);
-  }
+  await runStep(page, step);
 }
 
 // The prefix file: a JSON array of steps, or plan_invalid problems when it cannot be read as one.
@@ -454,7 +411,7 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
       for (const [i, step] of resolved.entries()) {
         if (ACTION_TYPES.includes(step.type)) record.plan_time_actions += 1;
         try {
-          await runStep(page, step);
+          await runPrefixStep(page, step);
           result.steps_run += 1;
         } catch (e) {
           result.failed_step = i;

@@ -1,5 +1,5 @@
-// app-server.mjs — a small web app for selvedge's snapshot and plan tests (test-snapshot.sh,
-// test-plan.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
+// app-server.mjs — a small web app for selvedge's snapshot, plan and run tests (test-snapshot.sh,
+// test-plan.sh, test-run.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
 //
 // Pages (every page is a complete HTML document; scripts are inline, nothing loads from elsewhere):
 //   /             a plain page: heading "Plain page", no controls
@@ -16,6 +16,14 @@
 //                 last key pressed anywhere on the page)
 //   /cookie       a paragraph "cookie: <the request's Cookie header, or none>"; with ?set=1 the
 //                 response also sets the cookie selvedge_fixture=seen (path /)
+//   /slow         a "Load price" button and a value (data-testid "price") reading "pending"; the
+//                 click fetches /api/price, which the server answers only after SLOW_PRICE_MS
+//                 (1.5 s) with "42", and only then does the value read "42"
+//   /api/price    the slow answer above (text/plain "42")
+//   /controls     a "Do nothing" button (no handler: clicking it changes nothing), an empty value
+//                 (data-testid "empty", no text), a hidden "Hidden action" button, a "Covered action"
+//                 button under an overlay that takes its clicks, and a side-effect counter
+//                 (data-testid "count", "0") that an "Add one" button increments
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
@@ -32,6 +40,8 @@ import { renameSync, writeFileSync } from 'node:fs';
 import { startServer } from './servers.mjs';
 
 const UNIT_PRICE = 6;
+const SLOW_PRICE_MS = 1500;
+const SLOW_PRICE = '42';
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -93,6 +103,38 @@ document.addEventListener('keydown', (e) => { lastKey = e.key; showOrder(); });
 </script>`,
 );
 
+const SLOW = page(
+  'Slow',
+  `<main><h1>Slow</h1>
+<button type="button" id="load">Load price</button>
+<p>Price: <span data-testid="price" id="price">pending</span></p></main>
+<script>
+const price = document.getElementById('price');
+document.getElementById('load').addEventListener('click', () => {
+  fetch('/api/price').then((r) => r.text()).then((t) => { price.textContent = t; });
+});
+</script>`,
+);
+
+const CONTROLS = page(
+  'Controls',
+  `<main><h1>Controls</h1>
+<button type="button" id="dead">Do nothing</button>
+<p>Empty: <span data-testid="empty" id="empty"></span></p>
+<button type="button" id="hidden" hidden>Hidden action</button>
+<div style="position: relative; width: 240px; height: 48px;">
+  <button type="button" id="covered">Covered action</button>
+  <div id="overlay" style="position: absolute; inset: 0; background: #fff;"></div>
+</div>
+<p>Count: <span data-testid="count" id="count">0</span></p>
+<button type="button" id="add">Add one</button></main>
+<script>
+const count = document.getElementById('count');
+document.getElementById('add').addEventListener('click', () => { count.textContent = String(Number(count.textContent) + 1); });
+document.getElementById('covered').addEventListener('click', () => { count.textContent = 'covered clicked'; });
+</script>`,
+);
+
 // startAppServer() → Promise<{ port, origin, events, close() }>
 export async function startAppServer() {
   const events = [];
@@ -114,6 +156,20 @@ export async function startAppServer() {
         return;
       case '/echo':
         send(200, ECHO);
+        return;
+      case '/slow':
+        send(200, SLOW);
+        return;
+      case '/api/price': {
+        const timer = setTimeout(() => {
+          res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(SLOW_PRICE);
+        }, SLOW_PRICE_MS);
+        res.once('close', () => clearTimeout(timer));
+        return;
+      }
+      case '/controls':
+        send(200, CONTROLS);
         return;
       case '/cookie': {
         const headers = url.searchParams.get('set') === '1' ? { 'set-cookie': 'selvedge_fixture=seen; Path=/' } : {};

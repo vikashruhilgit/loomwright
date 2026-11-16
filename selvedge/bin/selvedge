@@ -6,9 +6,9 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# The `env`, `criteria`, `snapshot`, `plan` and `verdict` commands run lib/<command>.mjs and are
-# the only ones that need Node (>= 18; `snapshot` also needs Playwright, found at run time);
-# --version, help and install-cli stay bash-only.
+# The `env`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands run lib/<command>.mjs
+# (`run`: lib/runner/run.mjs) and are the only ones that need Node (>= 18; `snapshot` and `run` also
+# need Playwright, found at run time); --version, help and install-cli stay bash-only.
 #
 # Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line),
 # 3 NOT_VERIFIABLE (a named reason on its own line). Precedence when several apply: 1 > 2 > 3 > 0.
@@ -64,6 +64,9 @@ Commands:
   plan --validate <plan.json> | --init <criteria.json> | --freeze <run-dir> | <criteria.json>
                        criteria to a linted, sha256-frozen plan.json in .selvedge/runs/<run-id>/
                        (needs Node >= 18; the default planner needs claude; \`selvedge plan help\`)
+  run <run-dir>        execute a frozen plan.json in the guarded browser, no model: evidence.jsonl,
+                       screenshots and verdict.json in the run folder, one .selvedge/runs.jsonl
+                       line (needs Node >= 18 and Playwright; \`selvedge run help\`)
   verdict <run-dir>    PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion, derived from the run
                        folder's evidence.jsonl + plan.json into verdict.json (needs Node >= 18;
                        \`selvedge verdict help\`)
@@ -71,11 +74,15 @@ Commands:
 EOF
 }
 
-# cmd_node <command> <args…> — exec lib/<command>.mjs under Node.
+# cmd_node <command> <args…> — exec lib/<command>.mjs under Node (`run` lives in lib/runner/).
 cmd_node() {
   local name="$1"; shift
+  local module="$name"
+  case "$name" in
+    run) module="runner/run" ;;
+  esac
   command -v node >/dev/null 2>&1 || die "the $name commands need Node.js >= 18 on PATH (node not found)"
-  exec node "$BIN_DIR/../lib/$name.mjs" "$@"
+  exec node "$BIN_DIR/../lib/$module.mjs" "$@"
 }
 
 cmd_version() {
@@ -116,6 +123,7 @@ case "${1:-}" in
   criteria) shift; cmd_node criteria "$@" ;;
   snapshot) shift; cmd_node snapshot "$@" ;;
   plan) shift; cmd_node plan "$@" ;;
+  run) shift; cmd_node run "$@" ;;
   verdict) shift; cmd_node verdict "$@" ;;
   help|-h|--help) usage ;;
   *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
