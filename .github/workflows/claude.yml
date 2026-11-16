@@ -24,30 +24,121 @@ jobs:
       issues: read
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
+    env:
+      # Which Claude login a review tries first: the CLAUDE_AUTH_FIRST repository
+      # VARIABLE (Settings → Secrets and variables → Actions → Variables), `api`
+      # (the default, also when unset) or `oauth`. The other login is the fallback.
+      #   api   = the ANTHROPIC_API_KEY secret (billed per token, no weekly cap)
+      #   oauth = the CLAUDE_CODE_OAUTH_TOKEN secret from `claude setup-token`
+      #           (subscription; shares the weekly cap, revoked by "log out everywhere")
+      # Secrets cannot appear in a step `if:`, so their presence is read here.
+      AUTH_FIRST: ${{ vars.CLAUDE_AUTH_FIRST == 'oauth' && 'oauth' || 'api' }}
+      AUTH_SECOND: ${{ vars.CLAUDE_AUTH_FIRST == 'oauth' && 'api' || 'oauth' }}
+      FIRST_READY: ${{ (vars.CLAUDE_AUTH_FIRST == 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN != '') || (vars.CLAUDE_AUTH_FIRST != 'oauth' && secrets.ANTHROPIC_API_KEY != '') }}
+      SECOND_READY: ${{ (vars.CLAUDE_AUTH_FIRST == 'oauth' && secrets.ANTHROPIC_API_KEY != '') || (vars.CLAUDE_AUTH_FIRST != 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN != '') }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Run Claude Code
-        id: claude
+      # Two-login fallback (2026-11-16). One job, up to two attempts of the SAME @claude run:
+      # attempt 1 uses the login named by the CLAUDE_AUTH_FIRST repo variable (`api`,
+      # the default, or `oauth`); attempt 2 uses the other login and runs ONLY when
+      # attempt 1 was skipped (its login is not saved) or died at STARTUP. A startup
+      # death — revoked/expired login, API key out of credit, the subscription's
+      # weekly cap, a transient API rejection — has one signature: `is_error: true`
+      # on turn 1 with $0 spent (2026-11-16: an account-wide "log out everywhere"
+      # revoked CLAUDE_CODE_OAUTH_TOKEN and every review died this way). A run that
+      # did real work and THEN failed is NOT retried: that would pay twice and could
+      # post duplicate comments. (The action posts a tracking comment per attempt,
+      # so a fallback leaves one failed tracking comment from attempt 1.)
+      # The action itself has no fallback: base-action/src/validate-env.ts only
+      # requires that one login is present, and Claude Code uses one login per run.
+      # Each attempt is handed exactly ONE login (the other input is ''), never both.
+      - name: Run Claude Code (attempt 1)
+        id: claude-1
+        if: env.FIRST_READY == 'true'
+        continue-on-error: true
         # Pinned to v1.0.231's commit SHA (2026-09-23, red-team-hardening item 08) —
         # @v1 floats a major tag; a silent upstream rename/behavior change under that
         # tag would be invisible until it broke something downstream.
         uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
+          anthropic_api_key: ${{ env.AUTH_FIRST == 'api' && secrets.ANTHROPIC_API_KEY || '' }}
+          claude_code_oauth_token: ${{ env.AUTH_FIRST == 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          # Lets Claude read CI results on PRs.
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
+      # Reads attempt 1's run log (the action writes it before it marks itself
+      # failed — src/entrypoints/run.ts @ cfc3eb22) and decides whether to fall back.
+      - name: Decide whether to fall back to the other login
+        id: decide
+        env:
+          OUTCOME: ${{ steps.claude-1.outcome }}
+          EXEC_FILE: ${{ steps.claude-1.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          fallback=0
+          case "$OUTCOME" in
+            success) echo "attempt 1 ($AUTH_FIRST) succeeded — no fallback" ;;
+            skipped|'') echo "::notice::attempt 1 skipped — the $AUTH_FIRST login is not saved; trying $AUTH_SECOND"; fallback=1 ;;
+            *)
+              if [ -z "$EXEC_FILE" ] || [ ! -s "$EXEC_FILE" ]; then
+                echo "::warning::attempt 1 ($AUTH_FIRST) failed before Claude ran (no run log) — trying $AUTH_SECOND"; fallback=1
+              # Startup death = the final result is is_error on turn <= 1 at $0, or there is
+              # no result at all AND no assistant turn (it died before doing any work).
+              # Unparseable log => not startup: never risk paying for a second review.
+              elif startup="$(jq -r '([.[] | select(.type? == "result")] | last) as $r
+                    | if $r == null then ([.[] | select(.type? == "assistant")] | length == 0)
+                      else (($r.is_error == true) and (($r.num_turns // 0) <= 1) and (($r.total_cost_usd // 0) == 0)) end
+                    | tostring' "$EXEC_FILE" 2>/dev/null)" && [ "$startup" = "true" ]; then
+                echo "::warning::attempt 1 ($AUTH_FIRST) died at startup (is_error on turn 1, \$0) — login rejected, out of credit, capped or a transient API error; trying $AUTH_SECOND"; fallback=1
+              else
+                echo "::error::attempt 1 ($AUTH_FIRST) ran and then failed — not retrying with the other login (that would pay for a second full run)"
+              fi ;;
+          esac
+          echo "fallback=$fallback" >> "$GITHUB_OUTPUT"
 
-          # No claude_args: inherit the action's default model and effort
-          # (matches the auto-review workflow).
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+      - name: Run Claude Code (attempt 2)
+        id: claude-2
+        if: steps.decide.outputs.fallback == '1' && env.SECOND_READY == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
+        with:
+          anthropic_api_key: ${{ env.AUTH_SECOND == 'api' && secrets.ANTHROPIC_API_KEY || '' }}
+          claude_code_oauth_token: ${{ env.AUTH_SECOND == 'oauth' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          # Lets Claude read CI results on PRs.
+          additional_permissions: |
+            actions: read
 
+      # Both attempts carry continue-on-error, so a failed attempt never skips the
+      # steps after it; a real earlier failure (checkout) still skips all of them.
+      # One place that says which attempt (and login) ran, and fails the job when none did.
+      - name: Record which login ran
+        id: claude
+        env:
+          R1: ${{ steps.claude-1.outcome }}
+          R2: ${{ steps.claude-2.outcome }}
+          FALLBACK: ${{ steps.decide.outputs.fallback }}
+        run: |
+          set -uo pipefail
+          if [ "$R1" = "success" ]; then
+            echo "ran with: $AUTH_FIRST (attempt 1)"; echo "ok=true" >> "$GITHUB_OUTPUT"
+          elif [ "$R2" = "success" ]; then
+            echo "::notice::ran with: $AUTH_SECOND (attempt 2 — fallback)"; echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            if [ "$FIRST_READY" != "true" ] && [ "$SECOND_READY" != "true" ]; then
+              echo "::error::no Claude login is saved — set the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN repo secret"
+            elif [ "$FALLBACK" = "1" ] && [ "$SECOND_READY" != "true" ]; then
+              echo "::error::attempt 1 ($AUTH_FIRST) could not start and no $AUTH_SECOND login is saved to fall back to"
+            elif [ "$FALLBACK" = "1" ]; then
+              echo "::error::both logins failed — attempt 1 ($AUTH_FIRST) and attempt 2 ($AUTH_SECOND)"
+            else
+              echo "::error::the run failed (attempt 1, $AUTH_FIRST) — see that step's log"
+            fi
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
