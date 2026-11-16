@@ -12,7 +12,7 @@
 #      tests/lib/playwright-cache.sh: AC11–AC17, AC21. Under CI an install failure is a hard FAIL
 #      (playwright_install_failed); outside CI it is a SKIP and part 1 decides.
 #
-# Plans are hand-written (a generator below) and frozen with `selvedge plan --init` + `--freeze`
+# Plans are hand-written (the generator in tests/lib/run-helpers.sh) and frozen with `selvedge plan --init` + `--freeze`
 # (no planner), except AC21's, which tests/fixtures/stub-planner.sh mode `modal` writes. Every run
 # gets a recording SELVEDGE_PLANNER and a PATH-stub `claude`; AC17 asserts neither was ever called.
 # Hermetic: a fresh temp HOME (PLAYWRIGHT_BROWSERS_PATH is exported by the helper BEFORE HOME moves),
@@ -60,67 +60,12 @@ unset SELVEDGE_PLANNER SELVEDGE_PLAYWRIGHT_MODULE SELVEDGE_ENTRY SELVEDGE_RUN_BU
   PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK STUB_PW_GOTO_MS STUB_PW_TEXT STUB_PLANNER_MODE \
   STUB_PLANNER_LOG SHOP_USER SHOP_BLANK SHOP_UNSET
 
-node "$APP" serve "$TMP/servers.json" >"$TMP/servers.log" 2>&1 &
-SRV_PID=$!
-i=0
-while [ ! -s "$TMP/servers.json" ] && [ "$i" -lt 100 ]; do i=$((i + 1)); sleep 0.1; done
-A="$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).app.port))' "$TMP/servers.json" 2>/dev/null)"
-[ -n "$A" ] && ok "setup: fixture app on localhost:$A" || { ko "setup: app-server.mjs did not start: $(cat "$TMP/servers.log")"; finish; }
-export AURL="http://localhost:$A"
-
-newrepo() { mkdir -p "$1" && git -C "$1" init -q && printf '{"schema_version":1,"origins":["%s"]}\n' "$AURL" > "$1/selvedge.json"; }
+# shellcheck source=lib/run-helpers.sh
+. "$TESTS_DIR/lib/run-helpers.sh"   # the fixture app, newrepo, folder, stub_spec, the planner shims
+rh_start_app
+rh_setup
 R="$TMP/repo"; newrepo "$R"
-
-# The recording planner shims: neither may ever be called by `run` (AC17).
-export PLANNER_CALLS="$TMP/planner-calls.log" CLAUDE_CALLS="$TMP/claude-calls.log"
-printf '#!/bin/sh\necho "$*" >> "%s"\nexit 1\n' "$PLANNER_CALLS" > "$TMP/planner-shim.sh"
-mkdir -p "$TMP/stubbin"
-printf '#!/bin/sh\necho "$*" >> "%s"\nexit 1\n' "$CLAUDE_CALLS" > "$TMP/stubbin/claude"
-chmod +x "$TMP/stubbin/claude"
 export STUB_PW_LOG="$TMP/launches.log"
-
-# The plan generator: node gen.mjs <criteria.json> <spec.json> <run-dir> writes <run-dir>/plan.json
-# for spec.criteria[i] = {text, polarity?, assumptions?, steps} or {text, not_planned: {reason, …}}
-# (every "$O" in a string becomes the fixture origin; spec.origins overrides the plan's origins),
-# and, before the freeze, snapshots.jsonl (spec.plan_time_actions) and planner-usage.json
-# (spec.usage).
-cat > "$TMP/gen.mjs" <<'EOF'
-import { readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-const { criteriaSha256 } = await import(pathToFileURL(path.join(process.env.SELVEDGE_LIB, 'criteria.mjs')).href);
-const [critFile, specFile, dir] = process.argv.slice(2);
-const crit = JSON.parse(readFileSync(critFile, 'utf8'));
-const spec = JSON.parse(readFileSync(specFile, 'utf8'), (k, v) => (typeof v === 'string' ? v.split('$O').join(process.env.AURL) : v));
-const plan = { schema_version: 1, target: 'web', criteria_sha256: criteriaSha256(crit.criteria), origins: spec.origins || [process.env.AURL], steps_by_criterion: {} };
-spec.criteria.forEach((c, i) => {
-  if (c.not_planned) {
-    (plan.not_planned = plan.not_planned || []).push({ id: crit.criteria[i].id, ...c.not_planned });
-    return;
-  }
-  plan.steps_by_criterion[crit.criteria[i].id] = {
-    interpretation: `The page shows what criterion ${i + 1} names.`,
-    polarity: c.polarity || 'positive',
-    unverified_assumptions: c.assumptions || [],
-    steps: c.steps,
-  };
-});
-writeFileSync(path.join(dir, 'plan.json'), `${JSON.stringify(plan, null, 2)}\n`);
-if (spec.plan_time_actions) writeFileSync(path.join(dir, 'snapshots.jsonl'), `${JSON.stringify({ plan_time_actions: spec.plan_time_actions })}\n`);
-if (spec.usage) writeFileSync(path.join(dir, 'planner-usage.json'), `${JSON.stringify(spec.usage)}\n`);
-EOF
-
-# folder <label> <repo> <spec JSON> — a frozen run folder for the spec; prints its path ("" on failure).
-folder() {
-  local label="$1" repo="$2" dir
-  printf '%s\n' "$3" > "$TMP/spec-$label.json"
-  node -e 'for (const c of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).criteria) console.log("- " + c.text)' "$TMP/spec-$label.json" \
-    | (cd "$repo" && bash "$CLI" criteria from-text) > "$TMP/crit-$label.json" 2>"$TMP/o/crit-$label.err"
-  dir="$(cd "$repo" && bash "$CLI" plan --init "$TMP/crit-$label.json" 2>"$TMP/o/init-$label.err")"
-  [ -d "$dir" ] && node "$TMP/gen.mjs" "$TMP/crit-$label.json" "$TMP/spec-$label.json" "$dir" \
-    && (cd "$repo" && bash "$CLI" plan --freeze "$dir" >/dev/null 2>"$TMP/o/freeze-$label.err") \
-    && printf '%s' "$dir"
-}
 
 # run <label> <run-dir> [<env args>…] — `selvedge run <run-dir>` in $R (or $RUN_CWD) with the
 # recording planner shims and `env <env args>`; sets OUT / ERR (files), RC and DIR; empties the
@@ -170,9 +115,6 @@ else process.stdout.write("false (" + String(v).slice(0, 80) + ") rc=" + E.RC + 
 }
 
 STUB="SELVEDGE_PLAYWRIGHT_MODULE=$STUB_PW"
-# A criterion the stub page passes: its every read is $STUB_PW_TEXT ("stub").
-STUB_C='{"text":"TEXT reads \"stub\"","steps":[{"type":"goto","url":"$O/"},{"type":"read","property":"text","locator":{"testid":"x"}},{"type":"expect","op":"equals","value":"stub"}]}'
-stub_spec() { local out="" n; for n in "$@"; do out="$out${out:+,}${STUB_C/TEXT/Criterion $n}"; done; printf '{"criteria":[%s]%s}' "$out" "${SPEC_EXTRA:-}"; }
 
 echo "-- static: one executor, no Playwright import, no string-literal reason, guarded main()"
 reasons="$(node --input-type=module -e "
@@ -275,6 +217,32 @@ F20c="$(folder ac20c "$RU" "$(stub_spec 12 13)")"
 RUN_CWD="$RU" run ac20-unapproved "$F20c" "$STUB"
 check "AC20 a reset hook not approved: every criterion BLOCKED env_hooks_unapproved, the hook did not run, no browser launched" \
   'rc === 2 && ids.every((id) => vj.criteria[id].reason === "env_hooks_unapproved") && txt(E.STUB_PW_LOG) === "" && JSON.stringify(vj.hooks_run) === "[]"'
+
+echo "-- changed_from compares the previous read of the same locator and property"
+cf="$(node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const S = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/runner/steps.mjs').href);
+const count = { type: 'read', property: 'text', locator: { testid: 'count' } };
+const other = { type: 'read', property: 'text', locator: { testid: 'other' } };
+const no = { op: 'changed_from', value: false }, yes = { op: 'changed_from', value: true };
+const r = (st, v) => S.readEntry(st, v);
+const out = [
+  S.expectMatches(no, [r(count, '0'), r(other, '1'), r(count, '1')]) === false,
+  S.expectMatches(yes, [r(count, '0'), r(other, '1'), r(count, '1')]) === true,
+  S.expectMatches(no, [r(count, '0'), r(other, '7'), r(count, '0')]) === true,
+  S.expectMatches(no, [r(other, '1'), r(count, '1')]) === false,
+  S.expectMatches(no, [r({ type: 'read', property: 'text', locator: { role: 'button', name: 'A' } }, '1'), r({ type: 'read', property: 'text', locator: { name: 'A', role: 'button' } }, '1')]) === true,
+  S.expectMatches(no, [r({ type: 'read', property: 'value', locator: { testid: 'count' } }, '1'), r(count, '1')]) === false,
+];
+process.stdout.write(out.join(','));")"
+[ "$cf" = "true,true,true,true,true,true" ] \
+  && ok "expectMatches changed_from: baseline 0, an unrelated read 1, counter 1 is changed (false does not match); no earlier read of that locator+property never matches; key order of a locator does not matter" \
+  || ko "changed_from over reads: $cf"
+FCF="$(folder changed-from "$R" '{"criteria":[{"text":"Opening page two leaves the url unchanged","polarity":"negative","steps":[{"type":"goto","url":"$O/"},{"type":"read","property":"url"},{"type":"read","property":"text","locator":{"testid":"x"}},{"type":"goto","url":"$O/two"},{"type":"read","property":"url"},{"type":"expect","op":"changed_from","value":false}]}]}')"
+[ -n "$FCF" ] && ok "setup: a frozen changed_from folder" || ko "setup: folder changed-from: $(cat "$TMP/o/freeze-changed-from.err" 2>/dev/null)"
+run changed-from "$FCF" "$STUB" "STUB_PW_TEXT=$AURL/two"
+check "a run whose url changes (/ → /two) with an unrelated read equal to the new url in between: changed_from false is mismatched, FAIL (never PASS)" \
+  'const x = ev.find((l) => l.type === "expect"); rc === 1 && vc(0).verdict === "FAIL" && x.outcome === "mismatched" && vc(0).read_value === E.AURL + "/two"'
 
 echo "-- per-criterion and pre-launch refusals (stub browser)"
 RB="$TMP/repo-branches"; newrepo "$RB"

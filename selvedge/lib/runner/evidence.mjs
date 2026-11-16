@@ -78,7 +78,7 @@ export const STEP_OUTCOMES = Object.freeze({
 
 // A criterion_end line's outcome. The three that are also reasons are taken from REASONS.
 export const CRITERION_OUTCOMES = Object.freeze({
-  completed: 'completed', // every step ran; the verdict comes from the final read and expect
+  completed: 'completed', // every step ran; the verdict comes from its reads and expects
   step_failed: REASONS.step_failed,
   stuck_screen: REASONS.stuck_screen,
   budget_exceeded: REASONS.budget_exceeded,

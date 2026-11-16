@@ -13,9 +13,11 @@
 //   readValue(page, step)      one `read` step's value: text (innerText, trimmed), value
 //                              (inputValue), checked (boolean), count (number), url, or
 //                              attribute:<name> (string, or null when the attribute is absent)
+//   readEntry(step, value)     one read as expectMatches takes it: { key, value }, the key naming
+//                              the read's locator and property
 //   expectMatches(step, reads) whether an `expect` step holds over the criterion's reads so far
 //                              (the last read is the value checked; changed_from compares it with
-//                              the read before it)
+//                              the previous read of the same locator and property)
 //
 // Playwright's own actionability checks stay on (no `force`): a click on a hidden or covered
 // element, or a locator that matches nothing or more than one element (strict mode), fails the step
@@ -99,14 +101,28 @@ export async function readValue(page, step) {
 
 const isNumberLike = (v) => (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// JSON with object keys sorted, so {role, name} and {name, role} are one locator.
+const canonical = (v) => {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (v !== null && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+  return JSON.stringify(v === undefined ? null : v);
+};
 
-// expectMatches(step, reads) → true when the expect holds. `reads` is every value the criterion's
-// read steps returned so far, in order; the last one is checked. No read, or a null last read,
-// never matches (except changed_from, which compares two reads).
+// readEntry(step, value) → { key, value }: what a `read` step returned, keyed by its locator and
+// property (a `url` read has no locator).
+export function readEntry(step, value) {
+  return { key: canonical({ locator: step.locator === undefined ? null : step.locator, property: step.property }), value };
+}
+
+// expectMatches(step, reads) → true when the expect holds. `reads` is every read the criterion's
+// read steps returned so far, in order, as readEntry built them; the last one is checked. No read,
+// or a null last read, never matches (except changed_from, which compares the last read with the
+// previous read of the same locator and property; with no such read it never matches).
 export function expectMatches(step, reads) {
   const list = Array.isArray(reads) ? reads : [];
   if (list.length === 0) return false;
-  const last = list[list.length - 1];
+  const lastEntry = list[list.length - 1];
+  const last = lastEntry.value;
   const { op, value } = step;
   switch (op) {
     case 'equals':
@@ -120,8 +136,15 @@ export function expectMatches(step, reads) {
     case 'lt':
       return isNumberLike(last) && Number(last) < value;
     case 'changed_from': {
-      if (list.length < 2) return false;
-      const changed = !same(last, list[list.length - 2]);
+      let previous = null;
+      for (let i = list.length - 2; i >= 0; i -= 1) {
+        if (list[i].key === lastEntry.key) {
+          previous = list[i];
+          break;
+        }
+      }
+      if (previous === null) return false;
+      const changed = !same(last, previous.value);
       return changed === value;
     }
     default:

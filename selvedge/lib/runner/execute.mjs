@@ -7,7 +7,7 @@
 // storage or page state carries from one criterion to the next.
 //
 // How a criterion ends (its criterion_end outcome):
-//   completed     every step ran; the verdict comes from the final read and expect
+//   completed     every step ran; the verdict comes from its reads and expects (verdict.mjs)
 //   step_failed   a step threw (a locator matching nothing or more than one element, a hidden or
 //                 covered click target, a navigation answered >= 400, a step timeout); failed_step
 //                 is its 0-based index and nothing after it runs
@@ -41,7 +41,7 @@ import { NAVIGATION_TIMEOUT_MS, redactValues } from '../snapshot.mjs';
 import { firstLine } from '../snapshot-playwright.mjs';
 import { CRITERION_OUTCOMES, EVIDENCE_KINDS, STEP_OUTCOMES, stepLine } from './evidence.mjs';
 import { openGuardedContext } from './route-guard.mjs';
-import { expectMatches, readValue, runStep } from './steps.mjs';
+import { expectMatches, readEntry, readValue, runStep } from './steps.mjs';
 import { redactTraceZip } from './trace-redact.mjs';
 
 // Consecutive no-change action steps that make a criterion stuck_screen.
@@ -188,7 +188,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
           result = failed(i, t0, e);
           break;
         }
-        reads.push(value);
+        reads.push(readEntry(step, value));
         lastRead = i;
         write(stepLine({ criterion: id, index: i, step: steps[i], outcome: STEP_OUTCOMES.ok, value, durationMs: Date.now() - t0 }));
         continue;
@@ -214,7 +214,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
             result = failed(lastRead, tr, e);
             break;
           }
-          reads[reads.length - 1] = again;
+          reads[reads.length - 1] = readEntry(resolved[lastRead], again);
           write(stepLine({ criterion: id, index: lastRead, step: steps[lastRead], outcome: STEP_OUTCOMES.ok, value: again, durationMs: Date.now() - tr, stableWait: true }));
           matched = expectMatches(step, reads);
         }

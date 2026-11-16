@@ -418,9 +418,12 @@ replay_of}`. `entry` is `SELVEDGE_ENTRY` (`session` by default, or `ci` / `loomw
 nothing else decides a verdict: `run` calls the same derivation once its evidence is closed. Per
 criterion, the first match wins: no `criterion_end` line is BLOCKED `run_interrupted`; a
 `not_planned` end is NOT_VERIFIABLE with its reason; any other end but `completed` is BLOCKED with
-its reason; an empty final read is NOT_VERIFIABLE `no_value_read` (even for `equals ""`); a final
+its reason; an empty judged read is NOT_VERIFIABLE `no_value_read` (even for `equals ""`); an
 `expect` that mismatched after the stable wait is FAIL, with `read_value` and `expected`; a match
-with a `material: true` assumption is NOT_VERIFIABLE `material_assumption`; else PASS. Re-running
+with a `material: true` assumption is NOT_VERIFIABLE `material_assumption`; else PASS. Every
+`expect` in a criterion is a check: the judged one is the first that mismatched, else the last one,
+and the judged read is the read it checked, so an earlier failed check is never outweighed by a
+later one that held. Re-running
 `verdict` re-derives the same file and appends nothing to `runs.jsonl`. It exits 2
 `evidence_missing` when there is no `evidence.jsonl` (or a line cannot be trusted), and
 `plan_modified` when `plan.json` is not the plan the run executed.

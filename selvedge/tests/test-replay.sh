@@ -17,7 +17,7 @@
 #      AC25 (a kept trace holds no cookie, bearer or {{NAME}} value). Under CI an install failure is a
 #      hard FAIL (playwright_install_failed); outside CI it is a SKIP and parts 1 and 2 decide.
 #
-# Plans are hand-written (a generator below, the same shape test-run.sh's writes) and frozen with
+# Plans are hand-written (the generator in tests/lib/run-helpers.sh, shared with test-run.sh) and frozen with
 # `selvedge plan --init` + `--freeze` (no planner), except AC22/AC23's modal plan, which
 # tests/fixtures/stub-planner.sh mode `modal` writes. Every run gets a recording SELVEDGE_PLANNER and
 # a PATH-stub `claude`; AC17/AC22 assert neither was ever called. Hermetic: a fresh temp HOME
@@ -189,55 +189,12 @@ for spec in 'garbage|not a zip' 'encrypted|encrypted' 'bzip2|compression method 
     && ok "a zip it cannot redact whole ($kind) is dropped, never written: $why" || ko "drop $kind: res=$res"
 done
 
-node "$APP" serve "$TMP/servers.json" >"$TMP/servers.log" 2>&1 &
-SRV_PID=$!
-i=0
-while [ ! -s "$TMP/servers.json" ] && [ "$i" -lt 100 ]; do i=$((i + 1)); sleep 0.1; done
-A="$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).app.port))' "$TMP/servers.json" 2>/dev/null)"
-[ -n "$A" ] && ok "setup: fixture app on localhost:$A" || { ko "setup: app-server.mjs did not start: $(cat "$TMP/servers.log")"; finish; }
-export AURL="http://localhost:$A"
-
-newrepo() { mkdir -p "$1" && git -C "$1" init -q && printf '{"schema_version":1,"origins":["%s"]}\n' "$AURL" > "$1/selvedge.json"; }
+# shellcheck source=lib/run-helpers.sh
+. "$TESTS_DIR/lib/run-helpers.sh"   # the fixture app, newrepo, folder, stub_spec, the planner shims
+rh_start_app
+rh_setup
 R="$TMP/repo"; newrepo "$R"; export R
-
-# The recording planner shims: neither may ever be called by `run` or `run --replay`.
-export PLANNER_CALLS="$TMP/planner-calls.log" CLAUDE_CALLS="$TMP/claude-calls.log"
-printf '#!/bin/sh\necho "$*" >> "%s"\nexit 1\n' "$PLANNER_CALLS" > "$TMP/planner-shim.sh"
-mkdir -p "$TMP/stubbin"
-printf '#!/bin/sh\necho "$*" >> "%s"\nexit 1\n' "$CLAUDE_CALLS" > "$TMP/stubbin/claude"
-chmod +x "$TMP/stubbin/claude"
 export STUB_PW_LOG="$TMP/launches.log"
-
-# The plan generator (test-run.sh's shape): node gen.mjs <criteria.json> <spec.json> <run-dir> writes
-# <run-dir>/plan.json for spec.criteria[i] = {text, steps}; every "$O" becomes the fixture origin;
-# spec.usage becomes planner-usage.json before the freeze.
-cat > "$TMP/gen.mjs" <<'EOF'
-import { readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-const { criteriaSha256 } = await import(pathToFileURL(path.join(process.env.SELVEDGE_LIB, 'criteria.mjs')).href);
-const [critFile, specFile, dir] = process.argv.slice(2);
-const crit = JSON.parse(readFileSync(critFile, 'utf8'));
-const spec = JSON.parse(readFileSync(specFile, 'utf8'), (k, v) => (typeof v === 'string' ? v.split('$O').join(process.env.AURL) : v));
-const plan = { schema_version: 1, target: 'web', criteria_sha256: criteriaSha256(crit.criteria), origins: [process.env.AURL], steps_by_criterion: {} };
-spec.criteria.forEach((c, i) => {
-  plan.steps_by_criterion[crit.criteria[i].id] = { interpretation: `The page shows what criterion ${i + 1} names.`, polarity: 'positive', unverified_assumptions: [], steps: c.steps };
-});
-writeFileSync(path.join(dir, 'plan.json'), `${JSON.stringify(plan, null, 2)}\n`);
-if (spec.usage) writeFileSync(path.join(dir, 'planner-usage.json'), `${JSON.stringify(spec.usage)}\n`);
-EOF
-
-# folder <label> <repo> <spec JSON> — a frozen run folder for the spec; prints its path ("" on failure).
-folder() {
-  local label="$1" repo="$2" dir
-  printf '%s\n' "$3" > "$TMP/spec-$label.json"
-  node -e 'for (const c of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).criteria) console.log("- " + c.text)' "$TMP/spec-$label.json" \
-    | (cd "$repo" && bash "$CLI" criteria from-text) > "$TMP/crit-$label.json" 2>"$TMP/o/crit-$label.err"
-  dir="$(cd "$repo" && bash "$CLI" plan --init "$TMP/crit-$label.json" 2>"$TMP/o/init-$label.err")"
-  [ -d "$dir" ] && node "$TMP/gen.mjs" "$TMP/crit-$label.json" "$TMP/spec-$label.json" "$dir" \
-    && (cd "$repo" && bash "$CLI" plan --freeze "$dir" >/dev/null 2>"$TMP/o/freeze-$label.err") \
-    && printf '%s' "$dir"
-}
 
 # runs_list <repo> — the run folders under <repo>/.selvedge/runs, one per line, sorted.
 runs_list() { ls -1 "$1/.selvedge/runs" 2>/dev/null | sort; }
@@ -293,8 +250,6 @@ hash_file() {
 }
 
 STUB="SELVEDGE_PLAYWRIGHT_MODULE=$STUB_PW"
-STUB_C='{"text":"TEXT reads \"stub\"","steps":[{"type":"goto","url":"$O/"},{"type":"read","property":"text","locator":{"testid":"x"}},{"type":"expect","op":"equals","value":"stub"}]}'
-stub_spec() { local out="" n; for n in "$@"; do out="$out${out:+,}${STUB_C/TEXT/Criterion $n}"; done; printf '{"criteria":[%s]%s}' "$out" "${SPEC_EXTRA:-}"; }
 
 echo "-- CLI surface"
 sel help run help

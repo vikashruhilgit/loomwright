@@ -64,15 +64,15 @@
         "verdict": { "$ref": "#/$defs/verdict" },
         "evidence_class": { "enum": ["structured-read", "in-process-assert", "model-judged"] },
         "read_value": {
-          "description": "The final read's value as evidence.jsonl recorded it ({{NAME}} values kept as {{NAME}}), or null.",
+          "description": "The judged read's value (the read the judged expect checked, else the final read) as evidence.jsonl recorded it ({{NAME}} values kept as {{NAME}}), or null.",
           "type": ["string", "number", "boolean", "null"]
         },
         "matched": {
-          "description": "Whether the final expect held, or null when no expect ran.",
+          "description": "Whether the judged expect (the first that mismatched, else the last) held, or null when no expect ran.",
           "type": ["boolean", "null"]
         },
         "expected": {
-          "description": "The plan's final expect, or null for a criterion the plan does not plan.",
+          "description": "The plan's judged expect (the first that mismatched, else the final one), or null for a criterion the plan does not plan.",
           "oneOf": [
             {
               "type": "object",

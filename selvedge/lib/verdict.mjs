@@ -13,12 +13,16 @@
 //   no criterion_end line (the run stopped)            BLOCKED run_interrupted
 //   criterion_end outcome not_planned                   NOT_VERIFIABLE <its reason>
 //   any other outcome but completed                     BLOCKED <its reason> (step_failed, …)
-//   completed, the final read empty ("" or none)        NOT_VERIFIABLE no_value_read — even when
+//   completed, the judged read empty ("" or none)       NOT_VERIFIABLE no_value_read — even when
 //                                                       the expect is `equals ""`
 //   completed, no expect result recorded                BLOCKED run_interrupted
-//   completed, the final expect mismatched              FAIL (the stable wait ran before it)
+//   completed, the judged expect mismatched             FAIL (the stable wait ran before it)
 //   completed, matched, a `material: true` assumption   NOT_VERIFIABLE material_assumption
 //   completed, matched                                  PASS
+// The judged expect is the FIRST mismatched expect line when there is one (every expect a plan
+// holds is a check: an earlier one that failed is never outweighed by a later one that held), else
+// the last expect line; the judged read is the last read line before it (the value it checked).
+// read_value, matched and expected come from that pair.
 // A criterion under plan.json's not_planned is NOT_VERIFIABLE with the plan's reason.
 //
 // The run's verdict is the highest by precedence FAIL > BLOCKED > NOT_VERIFIABLE > PASS, and so is
@@ -146,23 +150,35 @@ const findLast = (list, pred) => {
   return null;
 };
 
-// The plan's final expect as { op, value }, or null.
-function plannedExpect(steps) {
-  const e = findLast(Array.isArray(steps) ? steps : [], (s) => isPlainObject(s) && s.type === 'expect');
+// The plan's expect as { op, value }: the one at index `at` when it is an expect, else the plan's
+// final expect, or null.
+function plannedExpect(steps, at = null) {
+  const list = Array.isArray(steps) ? steps : [];
+  const isExpect = (s) => isPlainObject(s) && s.type === 'expect';
+  const e = Number.isInteger(at) && isExpect(list[at]) ? list[at] : findLast(list, isExpect);
   return e ? { op: e.op, value: e.value } : null;
+}
+
+// The judged expect line and the read it checked (header): { read, expect }, either null.
+function judgedPair(stepLines) {
+  let at = stepLines.findIndex((s) => s.type === 'expect' && s.outcome === STEP_OUTCOMES.mismatched);
+  if (at < 0) {
+    for (let i = stepLines.length - 1; i >= 0; i -= 1) if (stepLines[i].type === 'expect') { at = i; break; }
+  }
+  if (at < 0) return { read: findLast(stepLines, (s) => s.type === 'read'), expect: null };
+  return { read: findLast(stepLines.slice(0, at), (s) => s.type === 'read'), expect: stepLines[at] };
 }
 
 // One planned criterion's verdict.json entry from its plan entry and its evidence lines.
 function judgePlanned(cp, stepLines, end) {
-  const lastRead = findLast(stepLines, (s) => s.type === 'read');
-  const lastExpect = findLast(stepLines, (s) => s.type === 'expect');
+  const { read, expect } = judgedPair(stepLines);
   const assumptions = Array.isArray(cp.unverified_assumptions) ? cp.unverified_assumptions : [];
   const entry = {
     verdict: null,
     evidence_class: EVIDENCE_CLASSES.structured_read,
-    read_value: lastRead ? lastRead.value : null,
-    matched: lastExpect ? lastExpect.outcome === STEP_OUTCOMES.matched : null,
-    expected: plannedExpect(cp.steps),
+    read_value: read ? read.value : null,
+    matched: expect ? expect.outcome === STEP_OUTCOMES.matched : null,
+    expected: plannedExpect(cp.steps, expect ? expect.step : null),
     reason: null,
     failed_step: end ? end.failed_step : null,
     interpretation: typeof cp.interpretation === 'string' ? cp.interpretation : null,

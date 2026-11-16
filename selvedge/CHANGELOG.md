@@ -25,8 +25,9 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   `.selvedge/runs.jsonl` (`entry` from `SELVEDGE_ENTRY`: `session`, `ci` or `loomwright`).
 - `selvedge verdict <run-dir>` derives PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion from
   `evidence.jsonl` and `plan.json` only, into `verdict.json` (schema in
-  `schemas/verdict.schema.json`): an empty read is NOT_VERIFIABLE `no_value_read`, never PASS; a FAIL
-  carries `read_value` and `expected`; a material assumption is NOT_VERIFIABLE
+  `schemas/verdict.schema.json`): an empty read is NOT_VERIFIABLE `no_value_read`, never PASS; any
+  mismatched `expect` in a criterion FAILs it, carrying `read_value` and `expected` (`changed_from`
+  compares a read with the previous read of the same locator and property); a material assumption is NOT_VERIFIABLE
   `material_assumption`; an interrupted criterion is BLOCKED `run_interrupted`; `prior_revisions`
   lists earlier revisions' verdicts. Exit precedence: 1 FAIL, 2 BLOCKED, 3 NOT_VERIFIABLE, 0. `run`
   calls the same derivation; re-running `verdict` appends nothing.
