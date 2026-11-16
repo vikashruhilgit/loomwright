@@ -11,7 +11,8 @@
 // Neither ⇒ EnvError playwright_unavailable (BLOCKED): nothing is launched.
 //
 // The resolved `version` is returned so a caller can record which Playwright produced its evidence.
-// This module only loads the library; launching (through the guarded context) is snapshot.mjs's.
+// This module only loads the library; launching (through the guarded context) is the caller's
+// (snapshot.mjs, runner/execute.mjs).
 //
 // Node >= 18, standard library only.
 import { existsSync, readFileSync } from 'node:fs';

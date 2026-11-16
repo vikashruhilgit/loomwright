@@ -58,7 +58,7 @@ mkdir -p "$HOME" "$TMP/o"
 unset SELVEDGE_PLANNER SELVEDGE_PLAYWRIGHT_MODULE SELVEDGE_ENTRY SELVEDGE_RUN_BUDGET_MS \
   SELVEDGE_PLANNER_TOKEN_BUDGET SELVEDGE_STEP_TIMEOUT_MS SELVEDGE_RUN_DIR SELVEDGE_BASE NODE_PATH \
   PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK STUB_PW_GOTO_MS STUB_PW_TEXT STUB_PLANNER_MODE \
-  STUB_PLANNER_LOG SHOP_USER SHOP_BLANK
+  STUB_PLANNER_LOG SHOP_USER SHOP_BLANK SHOP_UNSET
 
 node "$APP" serve "$TMP/servers.json" >"$TMP/servers.log" 2>&1 &
 SRV_PID=$!
@@ -80,9 +80,10 @@ chmod +x "$TMP/stubbin/claude"
 export STUB_PW_LOG="$TMP/launches.log"
 
 # The plan generator: node gen.mjs <criteria.json> <spec.json> <run-dir> writes <run-dir>/plan.json
-# for spec.criteria[i] = {text, polarity?, assumptions?, steps} (every "$O" in a string becomes the
-# fixture origin), and, before the freeze, snapshots.jsonl (spec.plan_time_actions) and
-# planner-usage.json (spec.usage).
+# for spec.criteria[i] = {text, polarity?, assumptions?, steps} or {text, not_planned: {reason, …}}
+# (every "$O" in a string becomes the fixture origin; spec.origins overrides the plan's origins),
+# and, before the freeze, snapshots.jsonl (spec.plan_time_actions) and planner-usage.json
+# (spec.usage).
 cat > "$TMP/gen.mjs" <<'EOF'
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -91,8 +92,12 @@ const { criteriaSha256 } = await import(pathToFileURL(path.join(process.env.SELV
 const [critFile, specFile, dir] = process.argv.slice(2);
 const crit = JSON.parse(readFileSync(critFile, 'utf8'));
 const spec = JSON.parse(readFileSync(specFile, 'utf8'), (k, v) => (typeof v === 'string' ? v.split('$O').join(process.env.AURL) : v));
-const plan = { schema_version: 1, target: 'web', criteria_sha256: criteriaSha256(crit.criteria), origins: [process.env.AURL], steps_by_criterion: {} };
+const plan = { schema_version: 1, target: 'web', criteria_sha256: criteriaSha256(crit.criteria), origins: spec.origins || [process.env.AURL], steps_by_criterion: {} };
 spec.criteria.forEach((c, i) => {
+  if (c.not_planned) {
+    (plan.not_planned = plan.not_planned || []).push({ id: crit.criteria[i].id, ...c.not_planned });
+    return;
+  }
   plan.steps_by_criterion[crit.criteria[i].id] = {
     interpretation: `The page shows what criterion ${i + 1} names.`,
     polarity: c.polarity || 'positive',
@@ -270,6 +275,46 @@ F20c="$(folder ac20c "$RU" "$(stub_spec 12 13)")"
 RUN_CWD="$RU" run ac20-unapproved "$F20c" "$STUB"
 check "AC20 a reset hook not approved: every criterion BLOCKED env_hooks_unapproved, the hook did not run, no browser launched" \
   'rc === 2 && ids.every((id) => vj.criteria[id].reason === "env_hooks_unapproved") && txt(E.STUB_PW_LOG) === "" && JSON.stringify(vj.hooks_run) === "[]"'
+
+echo "-- per-criterion and pre-launch refusals (stub browser)"
+RB="$TMP/repo-branches"; newrepo "$RB"
+printf '{"schema_version":1,"origins":["%s","http://localhost:1"]}\n' "$AURL" > "$RB/selvedge.json"
+FB="$(folder branches "$RB" '{"origins":["$O","http://localhost:1"],"criteria":[
+{"text":"Port one reads \"stub\"","steps":[{"type":"goto","url":"http://localhost:1/"},{"type":"read","property":"text","locator":{"testid":"x"}},{"type":"expect","op":"equals","value":"stub"}]},
+{"text":"An unset user reads \"stub\"","steps":[{"type":"goto","url":"$O/echo"},{"type":"fill","locator":{"label":"User"},"value":"{{SHOP_UNSET}}"},{"type":"read","property":"text","locator":{"testid":"x"}},{"type":"expect","op":"equals","value":"stub"}]},
+{"text":"The audit log records \"sent\"","not_planned":{"reason":"side_effect_not_observable","detail":"no page shows the audit log"}},
+{"text":"Criterion B4 reads \"stub\"","steps":[{"type":"goto","url":"$O/"},{"type":"read","property":"text","locator":{"testid":"x"}},{"type":"expect","op":"equals","value":"stub"}]}]}')"
+printf '{"schema_version":1,"origins":["%s"]}\n' "$AURL" > "$RB/selvedge.json"
+RUN_CWD="$RB" run branches "$FB" "$STUB"
+check "a goto origin selvedge.json no longer allows: that criterion BLOCKED host_not_allowed, before any browser" \
+  'rc === 2 && vc(0).verdict === "BLOCKED" && vc(0).reason === "host_not_allowed" && !ev.some((l) => l.kind === "step" && l.criterion === ids[0])'
+check "an unset {{NAME}}: that criterion BLOCKED placeholder_unset, the name on stderr; the other criteria still run (one launch)" \
+  'vc(1).reason === "placeholder_unset" && err.includes("SHOP_UNSET") && vc(2).verdict === "PASS" && launches() === 1'
+check "a not_planned criterion: a criterion_end not_planned line with the plan reason; NOT_VERIFIABLE side_effect_not_observable" \
+  'const np = JSON.parse(f("plan.json")).not_planned[0].id; const e = ev.find((l) => l.kind === "criterion_end" && l.criterion === np); e.outcome === "not_planned" && e.reason === "side_effect_not_observable" && vj.criteria[np].verdict === "NOT_VERIFIABLE" && vj.criteria[np].reason === "side_effect_not_observable"'
+FP="$(folder nopw "$R" "$(stub_spec 14)")"
+run nopw "$FP" "SELVEDGE_PLAYWRIGHT_MODULE=$TMP/no-such-playwright.mjs"
+check "Playwright that does not resolve: every criterion BLOCKED playwright_unavailable; run_start playwright_version null" \
+  'rc === 2 && vc(0).reason === "playwright_unavailable" && ev[0].playwright_version === null'
+RF="$TMP/repo-failing-hook"; newrepo "$RF"
+printf '{"schema_version":1,"origins":["%s"],"hooks":{"reset":"exit 7"}}\n' "$AURL" > "$RF/selvedge.json"
+(cd "$RF" && node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const A = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/env-approvals.mjs').href);
+const E = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/env-config.mjs').href);
+const { config, root } = E.loadConfig();
+A.writeApproval({ root, identity: A.repoIdentity(root), sha256: A.hooksSha256(config.hooks) });")
+FF="$(folder failhook "$RF" "$(stub_spec 15)")"
+RUN_CWD="$RF" run failhook "$FF" "$STUB"
+check "an approved reset hook that fails (exit 7): exit 1, nothing written to the run folder, no browser launched" \
+  'rc === 1 && err.includes("hook reset failed") && !has("evidence.jsonl") && !has("verdict.json") && launches() === 0'
+run badbudget "$FF" "$STUB" SELVEDGE_RUN_BUDGET_MS=soon
+check "SELVEDGE_RUN_BUDGET_MS=soon: a usage error (exit 2) naming it; nothing written" 'rc === 2 && err.includes("SELVEDGE_RUN_BUDGET_MS") && !has("evidence.jsonl") && launches() === 0'
+run badtimeout "$FF" "$STUB" SELVEDGE_STEP_TIMEOUT_MS=0
+check "SELVEDGE_STEP_TIMEOUT_MS=0: a usage error (exit 2) naming it; nothing written" 'rc === 2 && err.includes("SELVEDGE_STEP_TIMEOUT_MS") && !has("evidence.jsonl")'
+rm "$RF/selvedge.json"
+RUN_CWD="$RF" run noconfig "$FF" "$STUB"
+check "no selvedge.json: exit 2 config_absent; nothing written, no browser launched" 'rc === 2 && err.includes("config_absent") && !has("evidence.jsonl") && launches() === 0'
 
 echo "-- real Chromium: AC11–AC16, AC21"
 HOME="$REAL_HOME" pw_require_or_skip; pwrc=$?
