@@ -13,8 +13,9 @@ import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, rea
 import path from 'node:path';
 
 const APPROVALS_SCHEMA_VERSION = 1;
-const FILE_MODE = 0o600; // approvals.json (created with this mode; umask can only narrow it)
-const DIR_MODE = 0o700; // $HOME/.claude/selvedge
+// The user-scoped stores' modes (approvals.json here; the auth state in auth-state.mjs imports them).
+export const FILE_MODE = 0o600; // approvals.json (created with this mode; umask can only narrow it)
+export const DIR_MODE = 0o700; // $HOME/.claude/selvedge
 
 // Canonical JSON: object keys sorted, no whitespace.
 export function canonicalJson(value) {
@@ -82,8 +83,8 @@ function realpathOrResolve(p) {
   }
 }
 
-// True when the approvals file would sit inside the repo — never trusted.
-function insideRepo(file, root) {
+// True when the file (an approvals file, an auth state file) would sit inside the repo — never trusted.
+export function insideRepo(file, root) {
   const f = realpathOrResolve(file);
   const r = realpathOrResolve(root);
   return f === r || f.startsWith(r.endsWith(path.sep) ? r : r + path.sep);

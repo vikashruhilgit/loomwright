@@ -180,11 +180,14 @@ export function assertLoopbackProxied() {
 
 // The launch options for a guarded Chromium: exactly { proxy: { server: 'http://127.0.0.1:<port>' } }.
 // No `bypass` key (a bypass entry naming loopback turns Playwright's forced loopback proxying off)
-// and no `direct://` fallback (a dead proxy must fail the request, not route around it).
-export function buildLaunchOptions({ proxyPort } = {}) {
+// and no `direct://` fallback (a dead proxy must fail the request, not route around it). `headed`
+// (only `selvedge auth setup --headed`, where a human signs in) adds `headless: false`, nothing else.
+export function buildLaunchOptions({ proxyPort, headed = false } = {}) {
   const port = Number(proxyPort);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new TypeError(`proxyPort must be a TCP port, got ${proxyPort}`);
-  return { proxy: { server: `http://127.0.0.1:${port}` } };
+  const options = { proxy: { server: `http://127.0.0.1:${port}` } };
+  if (headed === true) options.headless = false;
+  return options;
 }
 
 // The route layer's decision for one request: { allow: true } or { allow: false, reason, origin, host }.
@@ -240,19 +243,28 @@ function originAndHost(url) {
   }
 }
 
-// openGuardedContext({ chromium, config, lookup?, routeLayer?, contextOptions? }) →
+// openGuardedContext({ chromium, config, lookup?, routeLayer?, storageState?, headed? }) →
 //   { browser, context, page, proxy, blocks, seen, close() }
 //   chromium        the caller's Playwright `chromium` (this module never imports playwright)
 //   config          a loaded selvedge config (env-config.mjs loadConfig().config)
 //   lookup          passed to the proxy (dns.promises.lookup-compatible); programmatic only
+//   storageState    the path of a saved Playwright storage state (auth-state.mjs authStatePath) the
+//                   context starts from; given only when that file exists, so without it the context
+//                   options are exactly { serviceWorkers: 'block' }
+//   headed          launch a visible browser (buildLaunchOptions); only `selvedge auth setup --headed`
 //   routeLayer      TEST-ONLY. `false` turns the route layer's checks off so a test can prove the
 //                   proxy alone refuses; production callers never pass it.
 // The route is installed on the context before its first page is created; `page` is that page.
 // `blocks` gathers both layers' refusals; `seen` lists every request the route layer saw.
-export async function openGuardedContext({ chromium, config, lookup, routeLayer = true } = {}) {
+export async function openGuardedContext({ chromium, config, lookup, routeLayer = true, storageState, headed = false } = {}) {
   assertLoopbackProxied();
   if (!chromium || typeof chromium.launch !== 'function') throw new TypeError('openGuardedContext needs the caller\'s Playwright chromium');
   if (!config || !Array.isArray(config.origins)) throw new TypeError('openGuardedContext needs a loaded selvedge config');
+  if (storageState !== undefined && storageState !== null && (typeof storageState !== 'string' || storageState === '')) {
+    throw new TypeError('openGuardedContext storageState must be the path of a saved storage state');
+  }
+  const contextOptions = { serviceWorkers: 'block' };
+  if (typeof storageState === 'string') contextOptions.storageState = storageState;
 
   const blocks = [];
   const seen = [];
@@ -271,8 +283,8 @@ export async function openGuardedContext({ chromium, config, lookup, routeLayer 
   };
 
   try {
-    browser = await chromium.launch(buildLaunchOptions({ proxyPort: proxy.port }));
-    const context = await browser.newContext({ serviceWorkers: 'block' });
+    browser = await chromium.launch(buildLaunchOptions({ proxyPort: proxy.port, headed }));
+    const context = await browser.newContext(contextOptions);
     // Only a config whose non-read requests the route layer sends itself needs the fetch modes.
     if (routeLayer !== false && needsRedirectCheck(config, 'POST')) await context.addInitScript(tagFetchModes, FETCH_MODE_HEADER);
 

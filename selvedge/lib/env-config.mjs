@@ -31,6 +31,7 @@ export const REASONS = Object.freeze({
   stuck_screen: 'stuck_screen',
   budget_exceeded: 'budget_exceeded',
   run_interrupted: 'run_interrupted',
+  needs_auth: 'needs_auth',
   // NOT_VERIFIABLE outcomes
   criterion_not_testable: 'criterion_not_testable',
   side_effect_not_observable: 'side_effect_not_observable',
@@ -63,8 +64,13 @@ export const CONFIG_FILE = 'selvedge.json';
 // The validator's accepted key sets. selvedge/schemas/selvedge-config.schema.json declares the same
 // names; selvedge/tests/test-env.sh asserts the two are equal (the schema is not read at run time, so
 // the check is a real second copy, not a tautology).
-export const CONFIG_KEYS = Object.freeze(['schema_version', 'origins', 'allow_remote', 'allow_remote_mutation', 'hooks']);
+export const CONFIG_KEYS = Object.freeze(['schema_version', 'origins', 'allow_remote', 'allow_remote_mutation', 'hooks', 'auth']);
 export const HOOK_KEYS = Object.freeze(['seed', 'reset', 'auth_setup']);
+export const AUTH_KEYS = Object.freeze(['env', 'signed_in_check']);
+export const SIGNED_IN_CHECK_KEYS = Object.freeze(['url', 'locator']);
+
+// An `auth.env` entry: the name of an environment variable (the same form as a plan's `{{NAME}}`).
+export const ENV_NAME_PATTERN = '^[A-Z_][A-Z0-9_]*$';
 
 const LOCAL_HOSTS = Object.freeze(['localhost', '127.0.0.1', '[::1]']);
 
@@ -211,6 +217,55 @@ export function validateSchema(cfg) {
       if (typeof cmd !== 'string') fail(`hook "${name}" must be a string`);
     }
   }
+  if ('auth' in cfg) {
+    const auth = cfg.auth;
+    if (!isPlainObject(auth)) fail('"auth" must be an object');
+    for (const key of Object.keys(auth)) {
+      if (!AUTH_KEYS.includes(key)) fail(`unknown "auth" key "${key}" (allowed: ${AUTH_KEYS.join(', ')})`);
+    }
+    if ('env' in auth) {
+      if (!Array.isArray(auth.env)) fail('"auth.env" must be an array of environment variable names');
+      const nameRe = new RegExp(ENV_NAME_PATTERN);
+      for (const n of auth.env) {
+        if (typeof n !== 'string' || !nameRe.test(n)) fail(`"auth.env" entry ${JSON.stringify(n)} is not an environment variable name (${ENV_NAME_PATTERN})`);
+      }
+    }
+    if ('signed_in_check' in auth) {
+      const check = auth.signed_in_check;
+      if (!isPlainObject(check)) fail('"auth.signed_in_check" must be an object with "url" and "locator"');
+      for (const key of Object.keys(check)) {
+        if (!SIGNED_IN_CHECK_KEYS.includes(key)) fail(`unknown "auth.signed_in_check" key "${key}" (allowed: ${SIGNED_IN_CHECK_KEYS.join(', ')})`);
+      }
+      if (typeof check.url !== 'string' || check.url === '') fail('"auth.signed_in_check.url" must be a non-empty string');
+      if (!isPlainObject(check.locator)) fail('"auth.signed_in_check.locator" must be an object (one plan-step locator form: role, label, text or testid)');
+    }
+  }
+}
+
+// A deep-frozen copy of a JSON value (the auth locator), so the normalized config stays immutable.
+function frozenCopy(value) {
+  if (Array.isArray(value)) return Object.freeze(value.map(frozenCopy));
+  if (isPlainObject(value)) return Object.freeze(Object.fromEntries(Object.entries(value).map(([k, v]) => [k, frozenCopy(v)])));
+  return value;
+}
+
+// The normalized `auth` block (null when absent). The check URL's origin must be one the config lists
+// (checked here, after the origin list itself is valid); the locator's FORM (exactly one plan-step
+// locator, never CSS / XPath) is checked where it is used — validateSignedInCheck in auth-state.mjs —
+// because this module cannot import plan-steps.mjs (plan-steps.mjs imports it).
+function normalizeAuth(cfg, origins) {
+  if (!('auth' in cfg)) return null;
+  const check = cfg.auth.signed_in_check;
+  if (check !== undefined && !isOriginAllowed({ origins }, check.url)) {
+    throw new EnvError(
+      REASONS.config_schema_violation,
+      `"auth.signed_in_check.url" ${JSON.stringify(check.url)} is not on an origin selvedge.json lists (${origins.join(', ')})`,
+    );
+  }
+  return Object.freeze({
+    env: Object.freeze([...(cfg.auth.env || [])]),
+    signed_in_check: check === undefined ? null : Object.freeze({ url: check.url, locator: frozenCopy(check.locator) }),
+  });
 }
 
 // Full validation: schema, then the origin rules. Returns a normalized frozen config.
@@ -248,6 +303,7 @@ export function validateConfig(cfg) {
     allow_remote: allowRemote,
     allow_remote_mutation: cfg.allow_remote_mutation === true,
     hooks: Object.freeze({ ...(cfg.hooks || {}) }),
+    auth: normalizeAuth(cfg, origins),
   });
 }
 

@@ -107,6 +107,11 @@ shell hooks that set up the app under test:
   custom verb) is refused. This is an allow-list: a method not named here is refused.
 - `hooks` — optional; only `seed`, `reset` and `auth_setup`. They run only after you approve them
   (below).
+- `auth` — optional; only `env` and `signed_in_check`. `env` lists the names (never the values) of
+  the environment variables `auth_setup` reads its credentials from, each `[A-Z_][A-Z0-9_]*`.
+  `signed_in_check` is `{"url": …, "locator": …}`: a page on a listed origin and exactly one
+  plan-step locator form (`role`, `label`, `text` or `testid`; never CSS or XPath) that matches
+  only when signed in. `selvedge auth setup` keeps the session outside the repo.
 
 No other key is accepted. The JSON Schema is
 [`schemas/selvedge-config.schema.json`](schemas/selvedge-config.schema.json).
@@ -577,6 +582,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `stuck_screen` | BLOCKED | consecutive action steps left the page unchanged, so the criterion stopped before its check |
 | `budget_exceeded` | BLOCKED | the run's wall-clock or planner-token budget was spent before the criterion started |
 | `run_interrupted` | BLOCKED | `evidence.jsonl` has no end line for a planned criterion: the run stopped before the criterion finished |
+| `needs_auth` | BLOCKED | `auth.signed_in_check` did not match (no session, or an expired one) and nobody could sign in; run `selvedge auth setup` (or `--headed`) |
 | `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
 | `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action; it is not planned |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
