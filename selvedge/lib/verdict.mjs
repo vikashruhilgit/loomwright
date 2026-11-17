@@ -17,6 +17,9 @@
 //                                                       the expect is `equals ""`
 //   completed, no expect result recorded                BLOCKED run_interrupted
 //   completed, the judged expect mismatched             FAIL (the stable wait ran before it)
+//   completed, any expect matched on an empty read      NOT_VERIFIABLE no_value_read (that pair is
+//                                                       the one reported; a later match never
+//                                                       outweighs it)
 //   completed, matched, a `material: true` assumption   NOT_VERIFIABLE material_assumption
 //   completed, matched                                  PASS
 // The judged expect is the FIRST mismatched expect line when there is one (every expect a plan
@@ -192,6 +195,14 @@ function judgePlanned(cp, stepLines, end) {
   if (isEmptyRead(entry.read_value)) return set(VERDICTS.NOT_VERIFIABLE, REASONS.no_value_read);
   if (entry.matched === null) return set(VERDICTS.BLOCKED, REASONS.run_interrupted);
   if (entry.matched === false) return set(VERDICTS.FAIL);
+  // Every expect is a check: one that held on an empty read verified nothing, and a later expect
+  // that held never outweighs it (judged on that pair, read_value and expected from it).
+  const emptyAt = stepLines.findIndex((s, i) => s.type === 'expect' && isEmptyRead(findLast(stepLines.slice(0, i), (r) => r.type === 'read')?.value));
+  if (emptyAt >= 0) {
+    const r = findLast(stepLines.slice(0, emptyAt), (l) => l.type === 'read');
+    Object.assign(entry, { read_value: r ? r.value : null, expected: plannedExpect(cp.steps, stepLines[emptyAt].step) });
+    return set(VERDICTS.NOT_VERIFIABLE, REASONS.no_value_read);
+  }
   if (assumptions.some((a) => isPlainObject(a) && a.material === true)) return set(VERDICTS.NOT_VERIFIABLE, REASONS.material_assumption);
   return set(VERDICTS.PASS);
 }

@@ -376,7 +376,9 @@ one element, a hidden or covered click target, a step timeout) is BLOCKED `step_
 unchanged (same url and accessibility tree) are BLOCKED `stuck_screen`. The other criteria still
 run.
 
-**The stable wait.** An `expect` that would FAIL is checked once more before it counts: first the
+**The stable wait.** Every `expect` after a read waits before it is judged, whether its first read
+would match or not (a check that the page did *not* change would otherwise PASS on a read taken
+before an in-flight request landed): first the
 network goes idle (no request in flight for 500 ms), then the DOM settles (two equal reads of the
 page 500 ms apart), both within 5 s; the criterion's last `read` then runs again and the `expect`
 is judged on that value. Its evidence lines say `stable_wait: true`. Honest limit: a value that
@@ -419,7 +421,9 @@ nothing else decides a verdict: `run` calls the same derivation once its evidenc
 criterion, the first match wins: no `criterion_end` line is BLOCKED `run_interrupted`; a
 `not_planned` end is NOT_VERIFIABLE with its reason; any other end but `completed` is BLOCKED with
 its reason; an empty judged read is NOT_VERIFIABLE `no_value_read` (even for `equals ""`); an
-`expect` that mismatched after the stable wait is FAIL, with `read_value` and `expected`; a match
+`expect` that mismatched after the stable wait is FAIL, with `read_value` and `expected`; an
+`expect` that held on an empty read is NOT_VERIFIABLE `no_value_read` even when a later one held
+(reported on that pair); a match
 with a `material: true` assumption is NOT_VERIFIABLE `material_assumption`; else PASS. Every
 `expect` in a criterion is a check: the judged one is the first that mismatched, else the last one,
 and the judged read is the read it checked, so an earlier failed check is never outweighed by a

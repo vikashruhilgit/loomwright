@@ -52,6 +52,8 @@ export R
 #   no_expect    read "12", no expect line, completed
 #   mid_fail     read "BAD", expect equals "GOOD" mismatched, click, read "ok", expect equals "ok"
 #                matched, completed (a failed check before a final one that held)
+#   mid_empty    read "", expect equals "" matched, click, read "ok", expect equals "ok" matched,
+#                completed (a check that held on an empty read before a final one that held)
 #   not_planned  listed under the plan's not_planned (criterion_not_testable)
 # Other spec keys: plan_revision, criteria_sha256, data_state, hooks_run, replay_of, extra (raw
 # lines appended to evidence.jsonl, after run_end unless no_end_line), no_end_line (omit run_end),
@@ -85,6 +87,29 @@ spec.shapes.forEach((shape, i) => {
   if (shape === 'not_planned') {
     plan.not_planned.push({ id: c, reason: 'criterion_not_testable', rewrite: 'name the value to check' });
     end(c, 'not_planned', 'criterion_not_testable');
+    return;
+  }
+  if (shape === 'mid_empty') {
+    plan.steps_by_criterion[c] = {
+      interpretation: `criterion ${i} checks the total twice`,
+      polarity: 'positive',
+      unverified_assumptions: [],
+      steps: [
+        { type: 'goto', url: 'http://localhost:4001/cart' },
+        { type: 'read', locator: total, property: 'text' },
+        { type: 'expect', op: 'equals', value: '' },
+        { type: 'click', locator: { role: 'button', name: 'Recalculate' } },
+        { type: 'read', locator: total, property: 'text' },
+        { type: 'expect', op: 'equals', value: 'ok' },
+      ],
+    };
+    step(c, 0, 'goto', 'ok', null);
+    step(c, 1, 'read', 'ok', '');
+    step(c, 2, 'expect', 'matched', null);
+    step(c, 3, 'click', 'ok', null);
+    step(c, 4, 'read', 'ok', 'ok');
+    step(c, 5, 'expect', 'matched', null);
+    end(c, 'completed');
     return;
   }
   if (shape === 'mid_fail') {
@@ -309,6 +334,11 @@ D="$(mk 20261116T120000Z-aaab91 '{"shapes":["mid_fail","pass"]}')"
 vd mid-fail "$D"
 check "a mismatched expect before a later matched one → FAIL (never PASS), judged on the first mismatched pair: read_value BAD, expected {equals, GOOD}" \
   'rc === 1 && c(0).verdict === "FAIL" && c(0).read_value === "BAD" && JSON.stringify(c(0).expected) === JSON.stringify({ op: "equals", value: "GOOD" }) && c(0).matched === false && c(0).reason === null && c(1).verdict === "PASS"'
+
+D="$(mk 20261116T120000Z-aaab92 '{"shapes":["mid_empty","pass"]}')"
+vd mid-empty "$D"
+check "an expect that held on an empty read before a later matched one → NOT_VERIFIABLE no_value_read (never PASS), judged on that pair: read_value \"\", expected {equals, \"\"}" \
+  'rc === 3 && c(0).verdict === "NOT_VERIFIABLE" && c(0).reason === "no_value_read" && c(0).read_value === "" && JSON.stringify(c(0).expected) === JSON.stringify({ op: "equals", value: "" }) && c(0).matched === true && c(1).verdict === "PASS"'
 
 echo "-- a material assumption is never PASS (AC5)"
 D="$(mk 20261116T120000Z-aaaa08 '{"shapes":["material"]}')"

@@ -16,8 +16,9 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   (`plan_modified`). Each criterion runs in a fresh guarded context. The runner writes every line of
   `evidence.jsonl` itself (`run_start`, one `step` line per executed step, `criterion_end`,
   `run_end`; every `{{NAME}}` value written back as `{{NAME}}`) and one end-state screenshot per
-  criterion. An `expect` that would FAIL gets a stable wait (network idle, then a settled DOM, within
-  5 s) and one re-read. A step that throws is BLOCKED `step_failed` (with its index), three no-change
+  criterion. Every `expect` after a read gets a stable wait (network idle, then a settled DOM, within
+  5 s) and one re-read before it is judged, so a check that holds before an in-flight side effect
+  lands (`changed_from` false) cannot PASS early. A step that throws is BLOCKED `step_failed` (with its index), three no-change
   actions in a row are BLOCKED `stuck_screen`, and `SELVEDGE_RUN_BUDGET_MS`,
   `SELVEDGE_PLANNER_TOKEN_BUDGET` and `SELVEDGE_STEP_TIMEOUT_MS` bound the run. Approved `reset` /
   `seed` hooks run before the first browser (`data_state: managed`); an unapproved one blocks every
@@ -25,7 +26,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   `.selvedge/runs.jsonl` (`entry` from `SELVEDGE_ENTRY`: `session`, `ci` or `loomwright`).
 - `selvedge verdict <run-dir>` derives PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion from
   `evidence.jsonl` and `plan.json` only, into `verdict.json` (schema in
-  `schemas/verdict.schema.json`): an empty read is NOT_VERIFIABLE `no_value_read`, never PASS; any
+  `schemas/verdict.schema.json`): an empty read is NOT_VERIFIABLE `no_value_read`, never PASS, for
+  any `expect` in a criterion, not only the last; any
   mismatched `expect` in a criterion FAILs it, carrying `read_value` and `expected` (`changed_from`
   compares a read with the previous read of the same locator and property); a material assumption is NOT_VERIFIABLE
   `material_assumption`; an interrupted criterion is BLOCKED `run_interrupted`; `prior_revisions`

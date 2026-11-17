@@ -15,12 +15,14 @@
 //                 was (same url and accessibility tree); failed_step is the last of them
 //   blocked       the guarded context could not be opened (its reason, else playwright_unavailable)
 //
-// Stable wait: an expect that would FAIL is re-checked once. First the network goes idle (no
+// Stable wait: every expect after a read waits before it is judged, whether its first read would
+// match or not (a negative check such as `changed_from` would otherwise PASS on a read taken before
+// an in-flight side effect landed). First the network goes idle (no
 // request in flight for NETWORK_QUIET_MS, counted on the page's request / requestfinished /
 // requestfailed events — Playwright's `networkidle` load state resolves at once after a load, so a
 // fetch started by a later click would not be waited for), then the DOM settles (two equal
 // page.content() reads DOM_SETTLE_MS apart), both within STABLE_TIMEOUT_MS. The criterion's last
-// read runs again (a second read line, stable_wait: true) and the expect is evaluated on it. A value
+// read runs again (a second read line, stable_wait: true) and the expect is judged on it alone. A value
 // that arrives by a timer alone, with no request and a DOM unchanged for longer than the settle
 // time, is not waited for (a documented limit).
 //
@@ -195,9 +197,9 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
       }
 
       if (step.type === 'expect') {
-        let matched = expectMatches(step, reads);
+        let matched = lastRead >= 0 ? null : expectMatches(step, reads);
         let waited = false;
-        if (!matched && lastRead >= 0) {
+        if (lastRead >= 0) {
           // the stable wait, then the last read once more (header)
           waited = true;
           try {
