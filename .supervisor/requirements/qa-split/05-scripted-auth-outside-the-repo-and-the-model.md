@@ -1,6 +1,7 @@
 # Sign-in is scripted by the CLI, stored outside the repo, and never loops
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/935
 
 > Phase 1, item 05 of `qa-split/00-plan.md` (rev 2, approved 2026-11-12).
 > Decision: D11 (with its honest limit). Loomwright invariant carried over: every question gate has a
@@ -47,3 +48,9 @@ they are out of reach.
 
 - `selvedge/lib/auth*`, `selvedge/lib/runner/**` (login-wall check), `selvedge/tests/**`
 - `selvedge/README.md` (the honest-limit paragraph)
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-17T17:17:41Z
+- **Brief:** .supervisor/jobs/done/2026-11-17-qa-split-05-scripted-auth-outside-repo.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/935
