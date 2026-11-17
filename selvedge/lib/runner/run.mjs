@@ -29,8 +29,9 @@
 // The approved hooks run after the claim and before the first browser launch, reset then seed, each
 // through this CLI's own `selvedge env hook <name>` (so the approval and remote-origin checks stay
 // env.mjs's). A hook that runs and fails is an operation failure: exit 1 and no evidence is written
-// (the claim is removed), so the folder can be run again once the hook is fixed. With a hook run, data_state is managed; with none, unmanaged and
-// plan_time_actions is freeze.json's (what the planner's snapshots did to the app).
+// (the claim is removed), so the folder can be run again once the hook is fixed. With a hook run,
+// data_state is managed; with none, unmanaged and plan_time_actions is freeze.json's (what the
+// planner's snapshots did to the app).
 // Per criterion, before launch: a goto origin selvedge.json no longer allows is BLOCKED
 // host_not_allowed; an unset {{NAME}} is BLOCKED placeholder_unset; Playwright that does not resolve
 // makes every criterion still to run BLOCKED playwright_unavailable.
@@ -53,14 +54,15 @@
 // 1 any FAIL, else 2 any BLOCKED (or a refusal above), else 3 any NOT_VERIFIABLE, else 0.
 // Every reason comes from REASONS in env-config.mjs.
 //
-// --replay <frozen-run-dir> (replayRun) re-runs a frozen plan unchanged, for regression. Every check
-// above runs against the frozen folder before anything is created, except already_run (a folder that
-// ran is what a replay replays); the freeze-line check there is the frozen run's own line (a replay
-// folder has none: replay the folder it replayed). Then a NEW run folder gets criteria.json, plan.json (the very bytes
-// that were hashed), plan.sha256 and freeze.json copied, and runs as above with replay_of = the frozen
-// run id (in run_start, verdict.json and the run line), the plan's own plan_revision, planner_tokens 0
-// and no planner-token budget check (the replay spends none). A replay that writes no evidence (a
-// refusal, a failing hook) leaves no new folder behind.
+// --replay <frozen-run-dir> (replayRun) re-runs a frozen plan unchanged, for regression. Every
+// check above runs against the frozen folder before anything is created, except already_run (a
+// folder that ran is what a replay replays); the freeze-line check there is the frozen run's own
+// line (a replay folder has none: replay the folder it replayed). Then a NEW run folder gets
+// criteria.json, plan.json (the very bytes that were hashed), plan.sha256 and freeze.json copied,
+// and runs as above with replay_of = the frozen run id (in run_start, verdict.json and the run
+// line), the plan's own plan_revision, planner_tokens 0 and no planner-token budget check (the
+// replay spends none). A replay that writes no evidence (a refusal, a failing hook) leaves no new
+// folder behind.
 //
 // --trace: each criterion's context is traced and kept, redacted, as traces/<criterion-id>.zip
 // (runner/execute.mjs, runner/trace-redact.mjs). Without it nothing is traced.

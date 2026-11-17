@@ -353,24 +353,24 @@ selvedge run --replay <frozen-run-dir> [--trace]  run that frozen plan again, in
 selvedge verdict <run-dir>                        re-derive verdict.json from the folder's files
 ```
 
-**`selvedge run`** executes the frozen `plan.json` in the guarded browser. No model is called:
-every step is a typed plan step, and the runner writes every evidence line itself. A folder runs
-once. Each of these exits 2 before anything is written or launched, in this order: a usage error
+**`selvedge run`** executes the frozen `plan.json` in the guarded browser. No model is called: every
+step is a typed plan step, and the runner writes every evidence line itself. A folder runs once.
+Each of these exits 2 before anything is written or launched, in this order: a usage error
 (including a bad `SELVEDGE_ENTRY`, `SELVEDGE_RUN_BUDGET_MS` or `SELVEDGE_STEP_TIMEOUT_MS`),
 `not_frozen` (no `plan.sha256`), `already_run` (`evidence.jsonl` or `run.claim` exists),
 `plan_modified` (the sha256 of `plan.json`'s bytes is not the one `plan.sha256` records, or not the
 one the folder's own `event: "freeze"` line in `runs.jsonl` records, so a `plan.json` and
-`plan.sha256` edited together are still refused), then a `selvedge.json` reason. The run then
-claims the folder by creating `run.claim` exclusively, before any hook runs: of two runs started
-together on one folder, one goes on and the other is `already_run` without running a hook. The
-claim is removed when the run ends; a run killed outright leaves it, and the folder reads as
-`already_run` until it is removed. After that, the planner-token budget (`freeze.json`'s planner tokens above
+`plan.sha256` edited together are still refused), then a `selvedge.json` reason. The run then claims
+the folder by creating `run.claim` exclusively, before any hook runs: of two runs started together
+on one folder, one goes on and the other is `already_run` without running a hook. The claim is
+removed when the run ends; a run killed outright leaves it, and the folder reads as `already_run`
+until it is removed. After that, the planner-token budget (`freeze.json`'s planner tokens above
 `SELVEDGE_PLANNER_TOKEN_BUDGET`) or a hook that is not approved makes every criterion BLOCKED
-(`budget_exceeded`, `env_hooks_unapproved`) and nothing launches. Approved `reset` then `seed`
-hooks run before the first browser, each through `selvedge env hook`, and the run's `data_state`
-is `managed`; with neither hook it is `unmanaged` and `plan_time_actions` (what the planner's
-snapshots did to the app) is carried into the verdict. A hook that runs and fails exits 1 and
-writes no evidence (the claim is removed), so the folder can run again.
+(`budget_exceeded`, `env_hooks_unapproved`) and nothing launches. Approved `reset` then `seed` hooks
+run before the first browser, each through `selvedge env hook`, and the run's `data_state` is
+`managed`; with neither hook it is `unmanaged` and `plan_time_actions` (what the planner's snapshots
+did to the app) is carried into the verdict. A hook that runs and fails exits 1 and writes no
+evidence (the claim is removed), so the folder can run again.
 
 Each criterion runs in its own fresh guarded context: no cookie or storage carries from one to the
 next. A `goto` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, an unset
