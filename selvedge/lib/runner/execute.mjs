@@ -4,7 +4,9 @@
 // criterion, runs its steps through the one executor (steps.mjs), writes one evidence line per
 // executed step through `write` (the run's appendEvidence), takes one end-state screenshot
 // (screenshots/<criterion-id>.png in the run folder) and always closes the context. No cookie,
-// storage or page state carries from one criterion to the next.
+// storage or page state carries from one criterion to the next. With a stored sign-in session
+// (`storageState`, auth-state.mjs; run.mjs passes it only when the file exists) every criterion's
+// context starts from that same saved state, never from the previous criterion's cookies.
 //
 // How a criterion ends (its criterion_end outcome):
 //   completed     every step ran; the verdict comes from its reads and expects (verdict.mjs)
@@ -129,12 +131,13 @@ async function keepTrace({ context, id, runDir, secrets }) {
 }
 
 // executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets, stepTimeoutMs, write,
-//                    trace }) → Promise<criterion_end line>
+//                    trace, storageState }) → Promise<criterion_end line>
 //   steps     the plan's steps AS GIVEN (what the evidence records)
 //   resolved  the same steps with {{NAME}} resolved (what drives the page)
 //   write     appends one evidence line (the run's appendEvidence)
 //   trace     true for `run --trace` (the header's Trace paragraph)
-export async function executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets = [], stepTimeoutMs, write, trace = false }) {
+//   storageState  the stored sign-in session's path, or null (the context then starts empty)
+export async function executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets = [], stepTimeoutMs, write, trace = false, storageState = null }) {
   const end = (outcome, reason = null, failedStep = null, screenshot = null) => ({
     kind: EVIDENCE_KINDS.criterion_end,
     criterion: id,
@@ -144,9 +147,11 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
     screenshot,
   });
 
+  const options = { chromium, config };
+  if (typeof storageState === 'string') options.storageState = storageState;
   let guard;
   try {
-    guard = await openGuardedContext({ chromium, config });
+    guard = await openGuardedContext(options);
   } catch (e) {
     process.stderr.write(`selvedge run: ${id}: the guarded browser did not open: ${redactValues(firstLine(e), secrets)}\n`);
     return end(CRITERION_OUTCOMES.blocked, e instanceof EnvError ? e.reason : REASONS.playwright_unavailable);

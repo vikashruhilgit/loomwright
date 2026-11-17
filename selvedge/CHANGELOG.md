@@ -8,6 +8,33 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.5.0 — 2026-11-17
+
+- `selvedge.json` takes an `auth` key: `env` (the names, never the values, of the environment
+  variables the sign-in reads) and `signed_in_check` (`url` on a listed origin, and one plan-step
+  locator that matches only when signed in). Every command that loads the config refuses an unknown
+  `auth` or `signed_in_check` key, a bad variable name, a check URL on an unlisted origin and a locator
+  that is not an object (`config_schema_violation`); `run` and `auth setup --headed` also refuse a
+  CSS or XPath locator before anything launches.
+- `selvedge auth setup` signs in once, outside any plan or model: it runs the approved
+  `hooks.auth_setup` (credentials only from the variables `auth.env` names; an unset one is
+  `BLOCKED placeholder_unset` and the hook does not run), and keeps the Playwright storage state it
+  writes to `$SELVEDGE_STORAGE_STATE` at `$HOME/.local/state/selvedge/<repo-id>/auth/storageState.json`
+  (directories `0700`, file `0600`, never inside the repo). `--headed` lets you sign in yourself in a
+  visible guarded browser instead (up to `SELVEDGE_AUTH_TIMEOUT_MS`), with no hook and no credential
+  passing through selvedge.
+- `selvedge run` loads that session into every criterion's fresh context and checks
+  `auth.signed_in_check` once, after the hooks and before the first criterion. A failed check makes
+  every criterion BLOCKED `needs_auth` (a new reason) at once when nobody can sign in (stdin not a
+  terminal, or the new `--non-interactive` flag), with exactly one check and no retry loop; on a
+  terminal it asks for one sign-in, reads one line and checks once more. `run` never runs
+  `auth_setup` itself. With no `auth` key, `run` is unchanged.
+- Every `auth.env` value is redacted like a `{{NAME}}` value (written back as `{{NAME}}`) in
+  `evidence.jsonl`, `verdict.json`, traces and stderr; none reaches the planner prompt.
+- The README documents `auth setup`, where the session lives, the `needs_auth` behaviour, and the
+  honest limit: an agent with shell access can read any file you can, so selvedge keeps secrets out
+  of plans, evidence, PR comments and model prompts, and does not claim they are out of reach.
+
 ## 0.4.1 — 2026-11-17
 
 - `selvedge run` checks a first run's `plan.json` against the folder's own `event: "freeze"` line in
