@@ -442,14 +442,15 @@ above), else `3` any NOT_VERIFIABLE, else `0`. stdout holds one line per criteri
 `<VERDICT> [<reason>] <criterion-id>`, then `verdict <VERDICT> <path to verdict.json>`.
 
 **`--replay <frozen-run-dir>`** runs a frozen plan again, for regression. Every check above runs
-against the frozen folder first, except `already_run` (a folder that ran is the one being
-replayed); the freeze-line check is that run's own line, so a folder with no freeze line (a replay
-folder) is `plan_modified`: replay the folder it replayed. Only then is a new run folder created, holding byte copies of `criteria.json`,
-`plan.json`, `plan.sha256` and `freeze.json`, and the plan runs there unchanged: `replay_of` (in
-`run_start`, `verdict.json` and the run line) is the frozen run id, `plan_revision` is the plan's
-own, and `planner_tokens` is 0 (no planner-token budget applies). A replay never repairs a plan: a
-renamed button the frozen locator no longer matches is BLOCKED `step_failed` at that step. A
-replay that writes no evidence (a refusal, a failing hook) leaves no new folder behind.
+against the frozen folder first, except `already_run` (a folder that ran is the one being replayed);
+the freeze-line check is that run's own line, so a folder with no freeze line (a replay folder) is
+`plan_modified`: replay the folder it replayed. Only then is a new run folder created, holding byte
+copies of `criteria.json`, `plan.json`, `plan.sha256` and `freeze.json`, and the plan runs there
+unchanged: `replay_of` (in `run_start`, `verdict.json` and the run line) is the frozen run id,
+`plan_revision` is the plan's own, and `planner_tokens` is 0 (no planner-token budget applies). A
+replay never repairs a plan: a renamed button the frozen locator no longer matches is BLOCKED
+`step_failed` at that step. A replay that writes no evidence (a refusal, a failing hook) leaves no
+new folder behind.
 
 **`--trace`** keeps a Playwright trace of each criterion as `traces/<criterion-id>.zip`, redacted
 before it is written: every `Cookie`, `Set-Cookie` and `Authorization` header value reads
