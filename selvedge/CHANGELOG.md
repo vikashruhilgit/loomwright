@@ -8,6 +8,16 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.4.1 — 2026-11-17
+
+- `selvedge run` checks a first run's `plan.json` against the folder's own `event: "freeze"` line in
+  `.selvedge/runs.jsonl`, as `--replay` already did, so a `plan.json` and `plan.sha256` edited
+  together are `plan_modified` and nothing runs.
+- `selvedge run` claims the folder (`run.claim`, created exclusively) before any `reset` / `seed`
+  hook runs, so of two runs started together on one folder only one runs the hooks; the other is
+  `already_run`. The claim is removed when the run ends; a run killed outright leaves it, and the
+  folder reads as `already_run` until it is removed.
+
 ## 0.4.0 — 2026-11-16
 
 - `selvedge run <run-dir>` executes a frozen `plan.json` in the guarded browser with no model call.

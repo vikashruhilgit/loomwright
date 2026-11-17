@@ -10,21 +10,28 @@
 //   usage           not one <run-dir>, a bad SELVEDGE_ENTRY / SELVEDGE_RUN_BUDGET_MS /
 //                   SELVEDGE_STEP_TIMEOUT_MS / SELVEDGE_PLANNER_TOKEN_BUDGET value
 //   not_frozen      the folder holds no plan.sha256 (or no freeze.json)
-//   already_run     the folder already holds evidence.jsonl (one run per folder; the file is created
-//                   exclusively, so two runs started together cannot both write it)
-//   plan_modified   the sha256 of plan.json's bytes is not the one plan.sha256 records
+//   already_run     the folder already holds evidence.jsonl, or run.claim (one run per folder)
+//   plan_modified   the sha256 of plan.json's bytes is not the one plan.sha256 records, or not the
+//                   one the folder's own `event: "freeze"` line in runs.jsonl records (a plan.json
+//                   and plan.sha256 edited together are still plan_modified; so is a folder with no
+//                   freeze line)
 //   a config reason selvedge.json (of the repo that holds the run folder) does not load
+// Then the run claims the folder: run.claim is created exclusively before any hook runs or anything
+// launches, so of two runs started together on one folder exactly one goes on and the other is
+// already_run before it runs a hook. The claim is removed when the run ends, however it ends; a run
+// killed outright leaves it behind, and the folder then reads as already_run until it is removed.
 // Then, each making every criterion BLOCKED (evidence and verdict.json are written; nothing
 // launches):
 //   budget_exceeded        freeze.json's planner tokens (input + output) exceed
 //                          SELVEDGE_PLANNER_TOKEN_BUDGET (only when both are known)
 //   env_hooks_unapproved   a reset / seed hook in selvedge.json is not approved (`selvedge env
 //                          hook` exits 2; its own reason is taken when it names another)
-// The approved hooks run before the first browser launch, reset then seed, each through this CLI's
-// own `selvedge env hook <name>` (so the approval and remote-origin checks stay env.mjs's). A hook
-// that runs and fails is an operation failure: exit 1 and nothing is written, so the folder can be
-// run again once the hook is fixed. With a hook run, data_state is managed; with none, unmanaged and
-// plan_time_actions is freeze.json's (what the planner's snapshots did to the app).
+// The approved hooks run after the claim and before the first browser launch, reset then seed, each
+// through this CLI's own `selvedge env hook <name>` (so the approval and remote-origin checks stay
+// env.mjs's). A hook that runs and fails is an operation failure: exit 1 and no evidence is written
+// (the claim is removed), so the folder can be run again once the hook is fixed. With a hook run,
+// data_state is managed; with none, unmanaged and plan_time_actions is freeze.json's (what the
+// planner's snapshots did to the app).
 // Per criterion, before launch: a goto origin selvedge.json no longer allows is BLOCKED
 // host_not_allowed; an unset {{NAME}} is BLOCKED placeholder_unset; Playwright that does not resolve
 // makes every criterion still to run BLOCKED playwright_unavailable.
@@ -47,16 +54,15 @@
 // 1 any FAIL, else 2 any BLOCKED (or a refusal above), else 3 any NOT_VERIFIABLE, else 0.
 // Every reason comes from REASONS in env-config.mjs.
 //
-// --replay <frozen-run-dir> (replayRun) re-runs a frozen plan unchanged, for regression. Every check
-// above runs against the frozen folder before anything is created, except already_run (a folder that
-// ran is what a replay replays), plus one more: plan.json's sha256 must also equal the plan_sha256 of
-// the frozen run's own `event: "freeze"` line in runs.jsonl, so a plan.json and plan.sha256 edited
-// together are still plan_modified (as is a folder with no freeze line, such as a replay folder:
-// replay the folder it replayed). Then a NEW run folder gets criteria.json, plan.json (the very bytes
-// that were hashed), plan.sha256 and freeze.json copied, and runs as above with replay_of = the frozen
-// run id (in run_start, verdict.json and the run line), the plan's own plan_revision, planner_tokens 0
-// and no planner-token budget check (the replay spends none). A replay that writes no evidence (a
-// refusal, a failing hook) leaves no new folder behind.
+// --replay <frozen-run-dir> (replayRun) re-runs a frozen plan unchanged, for regression. Every
+// check above runs against the frozen folder before anything is created, except already_run (a
+// folder that ran is what a replay replays); the freeze-line check there is the frozen run's own
+// line (a replay folder has none: replay the folder it replayed). Then a NEW run folder gets
+// criteria.json, plan.json (the very bytes that were hashed), plan.sha256 and freeze.json copied,
+// and runs as above with replay_of = the frozen run id (in run_start, verdict.json and the run
+// line), the plan's own plan_revision, planner_tokens 0 and no planner-token budget check (the
+// replay spends none). A replay that writes no evidence (a refusal, a failing hook) leaves no new
+// folder behind.
 //
 // --trace: each criterion's context is traced and kept, redacted, as traces/<criterion-id>.zip
 // (runner/execute.mjs, runner/trace-redact.mjs). Without it nothing is traced.
@@ -84,6 +90,9 @@ export const DEFAULT_RUN_BUDGET_MS = 600000;
 export const STEP_TIMEOUT_ENV = 'SELVEDGE_STEP_TIMEOUT_MS';
 // The hooks a run runs, in this order (auth_setup is item 05's).
 export const RUN_HOOKS = Object.freeze(['reset', 'seed']);
+
+// The file a run creates exclusively in its folder before any hook runs (the header's claim).
+export const RUN_CLAIM_FILE = 'run.claim';
 
 const BLOCKED_LINE = /^BLOCKED ([a-z_]+)$/m;
 
@@ -163,6 +172,9 @@ export function readFrozenRun(runDir, { replay = false } = {}) {
   if (!replay && existsSync(path.join(runDir, EVIDENCE_FILE))) {
     throw new EnvError(REASONS.already_run, `${path.join(runDir, EVIDENCE_FILE)} exists: this folder has already run; nothing in it is changed`);
   }
+  if (!replay && existsSync(path.join(runDir, RUN_CLAIM_FILE))) {
+    throw new EnvError(REASONS.already_run, `${path.join(runDir, RUN_CLAIM_FILE)} exists: another run of this folder is under way (or one was killed before it ended; remove the file once none is running)`);
+  }
   const want = recorded.trim().split(/\s+/)[0];
   const planFile = path.join(runDir, RUN_FILES.plan);
   let bytes;
@@ -201,11 +213,11 @@ export function assertFreezeLine(root, runId, planSha256, freeze) {
   const lines = readRunsLog(root).entries.filter((e) => e.event === FREEZE_EVENT && e.run_id === runId);
   if (!lines.length) {
     const hint = typeof freeze.run_id === 'string' && freeze.run_id !== runId ? ` (it was copied from run ${freeze.run_id}: replay that folder)` : '';
-    throw new EnvError(REASONS.plan_modified, `${runsLogPath(root)} holds no freeze line for run ${runId}${hint}: the plan cannot be shown to be the one frozen; nothing was created`);
+    throw new EnvError(REASONS.plan_modified, `${runsLogPath(root)} holds no freeze line for run ${runId}${hint}: the plan cannot be shown to be the one frozen; nothing was run`);
   }
   const bad = lines.find((l) => l.plan_sha256 !== planSha256);
   if (bad) {
-    throw new EnvError(REASONS.plan_modified, `plan.json has sha256 ${planSha256}, but the freeze line for run ${runId} in ${runsLogPath(root)} records ${bad.plan_sha256}: the frozen plan was edited; nothing was created`);
+    throw new EnvError(REASONS.plan_modified, `plan.json has sha256 ${planSha256}, but the freeze line for run ${runId} in ${runsLogPath(root)} records ${bad.plan_sha256}: the frozen plan was edited; nothing was run`);
   }
 }
 
@@ -214,6 +226,18 @@ function plannerTokens(freeze) {
   const t = freeze.planner_tokens;
   if (!isPlainObject(t) || !Number.isInteger(t.input_tokens) || !Number.isInteger(t.output_tokens)) return null;
   return t.input_tokens + t.output_tokens;
+}
+
+// Creates run.claim exclusively, or throws already_run (another run holds the folder).
+function claimRun(runDir) {
+  const file = path.join(runDir, RUN_CLAIM_FILE);
+  try {
+    writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
+  } catch (e) {
+    if (e && e.code === 'EEXIST') throw new EnvError(REASONS.already_run, `${file} exists: another run of this folder is under way; nothing in it is changed`);
+    throw e;
+  }
+  return file;
 }
 
 // Runs the approved reset / seed hooks through `selvedge env hook <name>` at the repo root.
@@ -251,9 +275,22 @@ export async function runPlan(runDir, { env = process.env, started = Date.now(),
   const { entry, runBudgetMs, stepTimeoutMs, tokenBudget } = runOptions(env);
 
   const { plan, planSha256, freeze } = readFrozenRun(runDir);
+  const runId = path.basename(path.resolve(runDir));
+  // a first run checks its own freeze line, as a replay checks the frozen run's (a replay folder has
+  // none of its own; replayRun checked the one it copies)
+  if (replayOf === null) assertFreezeLine(repoRoot(runDir) || runDir, runId, planSha256, freeze);
   // selvedge.json of the repo that holds the run folder; the same root holds runs.jsonl.
   const { config, root } = loadConfig({ cwd: runDir });
-  const runId = path.basename(path.resolve(runDir));
+  const claim = claimRun(runDir);
+  try {
+    return await claimedRun({ runDir, env, started, replayOf, trace, entry, runBudgetMs, stepTimeoutMs, tokenBudget, plan, planSha256, freeze, config, root, runId });
+  } finally {
+    rmSync(claim, { force: true });
+  }
+}
+
+// The run proper, with the folder claimed (runPlan).
+async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBudgetMs, stepTimeoutMs, tokenBudget, plan, planSha256, freeze, config, root, runId }) {
   const planned = Object.entries(plan.steps_by_criterion);
   const notPlanned = Array.isArray(plan.not_planned) ? plan.not_planned.filter((np) => isPlainObject(np) && typeof np.id === 'string') : [];
 

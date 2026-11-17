@@ -353,19 +353,24 @@ selvedge run --replay <frozen-run-dir> [--trace]  run that frozen plan again, in
 selvedge verdict <run-dir>                        re-derive verdict.json from the folder's files
 ```
 
-**`selvedge run`** executes the frozen `plan.json` in the guarded browser. No model is called:
-every step is a typed plan step, and the runner writes every evidence line itself. A folder runs
-once. Each of these exits 2 before anything is written or launched, in this order: a usage error
+**`selvedge run`** executes the frozen `plan.json` in the guarded browser. No model is called: every
+step is a typed plan step, and the runner writes every evidence line itself. A folder runs once.
+Each of these exits 2 before anything is written or launched, in this order: a usage error
 (including a bad `SELVEDGE_ENTRY`, `SELVEDGE_RUN_BUDGET_MS` or `SELVEDGE_STEP_TIMEOUT_MS`),
-`not_frozen` (no `plan.sha256`), `already_run` (`evidence.jsonl` exists), `plan_modified` (the
-sha256 of `plan.json`'s bytes is not the one `plan.sha256` records), then a `selvedge.json` reason.
-After that, the planner-token budget (`freeze.json`'s planner tokens above
+`not_frozen` (no `plan.sha256`), `already_run` (`evidence.jsonl` or `run.claim` exists),
+`plan_modified` (the sha256 of `plan.json`'s bytes is not the one `plan.sha256` records, or not the
+one the folder's own `event: "freeze"` line in `runs.jsonl` records, so a `plan.json` and
+`plan.sha256` edited together are still refused), then a `selvedge.json` reason. The run then claims
+the folder by creating `run.claim` exclusively, before any hook runs: of two runs started together
+on one folder, one goes on and the other is `already_run` without running a hook. The claim is
+removed when the run ends; a run killed outright leaves it, and the folder reads as `already_run`
+until it is removed. After that, the planner-token budget (`freeze.json`'s planner tokens above
 `SELVEDGE_PLANNER_TOKEN_BUDGET`) or a hook that is not approved makes every criterion BLOCKED
-(`budget_exceeded`, `env_hooks_unapproved`) and nothing launches. Approved `reset` then `seed`
-hooks run before the first browser, each through `selvedge env hook`, and the run's `data_state`
-is `managed`; with neither hook it is `unmanaged` and `plan_time_actions` (what the planner's
-snapshots did to the app) is carried into the verdict. A hook that runs and fails exits 1 and
-writes nothing, so the folder can run again.
+(`budget_exceeded`, `env_hooks_unapproved`) and nothing launches. Approved `reset` then `seed` hooks
+run before the first browser, each through `selvedge env hook`, and the run's `data_state` is
+`managed`; with neither hook it is `unmanaged` and `plan_time_actions` (what the planner's snapshots
+did to the app) is carried into the verdict. A hook that runs and fails exits 1 and writes no
+evidence (the claim is removed), so the folder can run again.
 
 Each criterion runs in its own fresh guarded context: no cookie or storage carries from one to the
 next. A `goto` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, an unset
@@ -437,16 +442,15 @@ above), else `3` any NOT_VERIFIABLE, else `0`. stdout holds one line per criteri
 `<VERDICT> [<reason>] <criterion-id>`, then `verdict <VERDICT> <path to verdict.json>`.
 
 **`--replay <frozen-run-dir>`** runs a frozen plan again, for regression. Every check above runs
-against the frozen folder first, except `already_run` (a folder that ran is the one being
-replayed), and one more: `plan.json`'s sha256 must also equal the `plan_sha256` of that run's own
-`event: "freeze"` line in `runs.jsonl`, so a `plan.json` and `plan.sha256` edited together are
-still `plan_modified`, as is a folder with no freeze line (a replay folder: replay the folder it
-replayed). Only then is a new run folder created, holding byte copies of `criteria.json`,
-`plan.json`, `plan.sha256` and `freeze.json`, and the plan runs there unchanged: `replay_of` (in
-`run_start`, `verdict.json` and the run line) is the frozen run id, `plan_revision` is the plan's
-own, and `planner_tokens` is 0 (no planner-token budget applies). A replay never repairs a plan: a
-renamed button the frozen locator no longer matches is BLOCKED `step_failed` at that step. A
-replay that writes no evidence (a refusal, a failing hook) leaves no new folder behind.
+against the frozen folder first, except `already_run` (a folder that ran is the one being replayed);
+the freeze-line check is that run's own line, so a folder with no freeze line (a replay folder) is
+`plan_modified`: replay the folder it replayed. Only then is a new run folder created, holding byte
+copies of `criteria.json`, `plan.json`, `plan.sha256` and `freeze.json`, and the plan runs there
+unchanged: `replay_of` (in `run_start`, `verdict.json` and the run line) is the frozen run id,
+`plan_revision` is the plan's own, and `planner_tokens` is 0 (no planner-token budget applies). A
+replay never repairs a plan: a renamed button the frozen locator no longer matches is BLOCKED
+`step_failed` at that step. A replay that writes no evidence (a refusal, a failing hook) leaves no
+new folder behind.
 
 **`--trace`** keeps a Playwright trace of each criterion as `traces/<criterion-id>.zip`, redacted
 before it is written: every `Cookie`, `Set-Cookie` and `Authorization` header value reads
@@ -593,7 +597,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `criteria_not_found` | usage | no criteria were found in the input, or the `criteria.json` file is missing or empty |
 | `planner_failed` | usage | the planner exited non-zero, wrote no plan, or could not be started |
 | `plan_modified` | usage | the sha256 of a run folder's `plan.json` is not the one it was frozen (or run) with; nothing runs and no verdict is derived |
-| `already_run` | usage | the run folder already holds `evidence.jsonl`; a frozen plan runs once, a re-run goes through `--replay` |
+| `already_run` | usage | the run folder already holds `evidence.jsonl`, or `run.claim` (another run of it is under way); a frozen plan runs once, a re-run goes through `--replay` |
 | `not_frozen` | usage | the run folder holds no frozen plan (no `plan.sha256`, or no `plan.json` for `verdict`); freeze it with `selvedge plan --freeze` |
 | `evidence_missing` | usage | `verdict` found no usable `evidence.jsonl` in the run folder: it is absent, or a line is not one of the known evidence line kinds |
 
