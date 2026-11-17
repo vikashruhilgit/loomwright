@@ -398,6 +398,31 @@ export TR="$tr"
 node -e 'const { a, b } = JSON.parse(process.env.TR); process.exit(!a.includes("LSTOKENq8z2x") && !a.includes("COOKIEVAL7f3a9") && a.includes("\"storageState\":\"[redacted]\"") && a.includes("<p>[redacted]</p>") && !b.includes("OTHERLS-41") ? 0 : 1)' 2>/dev/null \
   && ok "trace-redact: the context-options storageState becomes [redacted], and a localStorage value is redacted wherever the trace shows it; a passed session value is redacted too" \
   || ko "trace-redact kept a session value: $(printf '%s' "$tr" | head -c 900)"
+
+tr2="$(node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const T = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/runner/trace-redact.mjs').href);
+const line = (o) => JSON.stringify(o);
+const entry = (name, text) => ({ name, nameBytes: Buffer.from(name), flags: 0x0800, time: 0, date: 33, data: Buffer.from(text) });
+const bin = (name, bytes) => ({ name, nameBytes: Buffer.from(name), flags: 0x0800, time: 0, date: 33, data: Buffer.from(bytes) });
+// a short localStorage value: the storage state reads [redacted], the rest of the trace is untouched,
+// and a binary entry holding its byte does not drop the trace
+const state = { cookies: [], origins: [{ origin: 'http://127.0.0.1:9', localStorage: [{ name: 'seen', value: '1' }] }] };
+const shortText = [line({ type: 'context-options', options: { storageState: state }, playwrightVersion: '1.65.1' }), line({ type: 'frame-snapshot', html: '<a href=\"http://127.0.0.1:9/\">1</a>' })].join(String.fromCharCode(10));
+const s = T.redactEntries([entry('trace.trace', shortText), bin('resources/x.png', [0x89, 0x31, 0x00])], [], ['1']);
+// URL-encoded: a stored-session value, and a {{NAME}} value, sent as ?t=encodeURIComponent(v)
+const tok = 'Ab+c/d=LS9token';
+const pw = 'p@ss w/rd+9';
+const u = T.redactEntries([entry('trace.network', line({ request: { url: 'http://127.0.0.1:9/a?t=' + encodeURIComponent(tok) + '&p=' + encodeURIComponent(pw) } }))], [{ name: 'APP_PASS', value: pw }], [tok]);
+process.stdout.write(JSON.stringify({ leaked: s.leaked, short: s.entries[0].data.toString(), url: u.entries[0].data.toString() }));
+" 2>&1)"
+export TR2="$tr2"
+node -e 'const { leaked, short } = JSON.parse(process.env.TR2); process.exit(leaked === null && short.includes("\"storageState\":\"[redacted]\"") && short.includes("\"playwrightVersion\":\"1.65.1\"") && short.includes("http://127.0.0.1:9/") && short.includes(">1</a>") ? 0 : 1)' 2>/dev/null \
+  && ok "trace-redact: a stored-session value shorter than 8 characters ('1') is kept out of the storage state only: the trace stays kept and readable (versions, hosts intact)" \
+  || ko "trace-redact mangled or dropped a trace over a short session value: $(printf '%s' "$tr2" | head -c 900)"
+node -e 'const { url } = JSON.parse(process.env.TR2); process.exit(!url.includes("Ab%2Bc%2Fd%3DLS9token") && !url.includes("p%40ss%20w%2Frd%2B9") && url.includes("t=[redacted]") && url.includes("p={{APP_PASS}}") ? 0 : 1)' 2>/dev/null \
+  && ok "trace-redact: a session value and a {{NAME}} / auth.env value the page sends URL-encoded are redacted in that form too" \
+  || ko "trace-redact kept a URL-encoded secret: $(printf '%s' "$tr2" | head -c 900)"
 grep -qE "sessionValues\(storageState\)" "$LIB/runner/execute.mjs" \
   && ok "execute.mjs hands the stored session's values to the trace redaction" || ko "execute.mjs does not pass sessionValues to redactTraceZip"
 

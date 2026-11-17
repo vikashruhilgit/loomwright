@@ -34,7 +34,10 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   page a planner looks at), so a credential a page shows reaches the planner only as `{{NAME}}`.
 - `run --trace` with a stored session keeps no session value: the storage state Playwright records
   in the trace's context options reads `[redacted]`, and every cookie and local storage value the
-  session holds is replaced by `[redacted]` wherever the trace shows it.
+  session holds is replaced by `[redacted]` wherever the trace shows it, as stored and URL-encoded.
+  A session value shorter than 8 characters is replaced only inside that storage state, so a `"1"`
+  flag neither mangles the kept trace nor drops it. A `{{NAME}}` / `auth.env` value is now also
+  redacted in its URL-encoded form.
 - A stored session file Playwright would not load (not JSON, a JSON object without a storage
   state's `cookies` / `origins` shape, or a cookie breaking Playwright's rules: `expires` other than
   -1 or a unix time up to year 9999, a `url` that is not `http`/`https`) is BLOCKED `needs_auth`

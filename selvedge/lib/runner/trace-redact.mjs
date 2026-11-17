@@ -17,8 +17,9 @@
 //   3. every resolved {{NAME}} value of the run goes back to {{NAME}} (redactValues, snapshot.mjs)
 //   4. a `storageState` key's whole value becomes "[redacted]" (the context-options event records the
 //      context's storage state), and every value in a `cookies` or `localStorage` list of
-//      { name, value } — and every value passed in `values` (the stored session's, execute.mjs) — is
-//      replaced by "[redacted]" wherever it appears, as in 2
+//      { name, value } inside it — and every value passed in `values` (the stored session's,
+//      execute.mjs) — is replaced by "[redacted]" wherever it appears, as stored and URL-encoded;
+//      a session value shorter than MIN_SESSION_VALUE_LENGTH is left outside the storage state
 // JSON lines are parsed and redacted string by string (so they stay valid JSON); other text is
 // redacted as text. Binary entries (images) are copied, and the whole trace is dropped when one
 // holds a secret's bytes. A value the page shows transformed (cut, reversed) is not caught — the
@@ -240,12 +241,13 @@ function collectHeader(name, value, into) {
 }
 
 // Walks a parsed JSON value, collecting secret values from headers, HAR cookie entries and a storage
-// state's cookies and localStorage entries.
-function collectJson(v, into, key = null) {
+// state's cookies and localStorage entries. A storage state's values (inside a REDACTED_KEYS value,
+// or any localStorage list) go to `session`, which sessionForms() floors; the rest go to `into`.
+function collectJson(v, into, session, key = null, inState = false) {
   if (Array.isArray(v)) {
     for (const x of v) {
-      if (VALUE_LISTS.includes(key) && isPlainObject(x) && typeof x.value === 'string' && x.value !== '') into.add(x.value);
-      collectJson(x, into);
+      if (VALUE_LISTS.includes(key) && isPlainObject(x) && typeof x.value === 'string' && x.value !== '') (inState || key === 'localStorage' ? session : into).add(x.value);
+      collectJson(x, into, session, null, inState);
     }
     return;
   }
@@ -253,7 +255,23 @@ function collectJson(v, into, key = null) {
   if (isRedactedHeader(v.name) && typeof v.value === 'string') collectHeader(v.name, v.value, into);
   for (const [k, x] of Object.entries(v)) {
     if (isRedactedHeader(k) && typeof x === 'string') collectHeader(k, x, into);
-    collectJson(x, into, k);
+    collectJson(x, into, session, k, inState || REDACTED_KEYS.includes(k));
+  }
+}
+
+// A stored-session value shorter than this is not redacted outside the storage state (which reads
+// "[redacted]" whole): a "1" replaced wherever it occurs would mangle the trace (versions, ports) or
+// drop it (a binary entry holding the byte). Header values and {{NAME}} / auth.env values have no floor.
+export const MIN_SESSION_VALUE_LENGTH = 8;
+
+// The forms a stored-session value is redacted in: as stored, and URL-encoded (a page that sends it
+// in a query string). [] below MIN_SESSION_VALUE_LENGTH.
+function sessionForms(v) {
+  if (v.length < MIN_SESSION_VALUE_LENGTH) return [];
+  try {
+    return [v, encodeURIComponent(v)];
+  } catch {
+    return [v]; // a lone surrogate has no URL-encoded form
   }
 }
 
@@ -331,15 +349,17 @@ export function redactEntries(entries, secretList = [], extraValues = []) {
     }
   });
   // pass 1: every cookie and Authorization value in the whole trace
-  const values = new Set(extraValues.filter((v) => typeof v === 'string' && v !== ''));
+  const values = new Set();
+  const session = new Set(extraValues.filter((v) => typeof v === 'string' && v !== ''));
   for (const text of texts) {
     if (text === null) continue;
     for (const line of text.split('\n')) {
       const parsed = parseJsonLine(line);
-      if (parsed !== undefined) collectJson(parsed, values);
+      if (parsed !== undefined) collectJson(parsed, values, session);
       else collectRaw(line, values);
     }
   }
+  for (const v of session) for (const f of sessionForms(v)) values.add(f);
   const replaceValues = valueReplacer(values);
   // pass 2: redact every text entry
   const out = entries.map((e, i) => {

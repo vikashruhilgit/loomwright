@@ -472,7 +472,10 @@ before it is written: every `Cookie`, `Set-Cookie` and `Authorization` header va
 replaced by `[redacted]` wherever it appears in the trace (a page's HTML or script included); and
 every resolved `{{NAME}}` value goes back to `{{NAME}}`. With a stored sign-in session (below), the
 storage state Playwright records for the context reads `[redacted]`, and every cookie and local
-storage value the session holds is replaced by `[redacted]` wherever it appears. The raw trace is
+storage value the session holds is replaced by `[redacted]` wherever it appears, as stored and
+URL-encoded; a session value shorter than 8 characters (a `"1"` flag) is left alone outside the
+storage state, since replacing it everywhere would mangle the trace. A `{{NAME}}` value is caught
+URL-encoded too. The raw trace is
 written to a private temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
 and a trace it cannot redact whole (zip64, encryption, an unknown compression method, a bad
 checksum, a binary entry holding a secret) is dropped, never kept: stderr says
@@ -538,8 +541,8 @@ cannot see a walled page; its steps are written from what it can see, or by hand
 
 **Honest limit.** An agent with shell access can read any file you can, the session file and your
 environment variables included: selvedge keeps secrets out of plans, evidence, PR comments and model
-prompts, and does not claim they are out of reach. The redaction finds a value as given and in the
-quoted forms Playwright prints; a page that shows it cut, re-cased or otherwise transformed is not
+prompts, and does not claim they are out of reach. The redaction finds a value as given, in the
+quoted forms Playwright prints and URL-encoded; a page that shows it cut, re-cased or otherwise transformed is not
 caught. A hook that prints its own credentials prints them: its output is your command's.
 
 ## Environment variables

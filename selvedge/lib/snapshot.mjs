@@ -205,7 +205,8 @@ const jsonBody = (v) => JSON.stringify(v).slice(1, -1);
 const normalizeSpace = (v) => v.replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
 
 // encodedForms(value) → every non-empty form the value can take in the printed tree or in an error
-// message (as given, whitespace-normalized, YAML-escaped, JSON-escaped, single-quote-doubled).
+// message (as given, whitespace-normalized, YAML-escaped, JSON-escaped, single-quote-doubled) or in
+// a URL (URL-encoded).
 export function encodedForms(value) {
   const forms = new Set();
   for (const base of [value, normalizeSpace(value)]) {
@@ -213,6 +214,12 @@ export function encodedForms(value) {
       forms.add(enc);
       forms.add(enc.replace(/'/g, "''"));
     }
+  }
+  // URL-encoded, as a page sends the value in a query string (a lone surrogate has no such form)
+  try {
+    forms.add(encodeURIComponent(value));
+  } catch {
+    // keep the other forms
   }
   forms.delete('');
   return [...forms];
