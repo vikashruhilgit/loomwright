@@ -1,6 +1,7 @@
 # The run is model-free, the evidence is runner-written, and the verdict is derived from it
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/926
 
 > Phase 1, item 04 of `qa-split/00-plan.md` (rev 2, approved 2026-11-12).
 > Decisions: D6 (hash check, no model in the run), D7 (PASS rule, stable wait, exit precedence),
@@ -85,3 +86,9 @@ refuses a plan whose hash changed.
 
 - `selvedge/lib/runner/**`, `selvedge/lib/verdict*`, `selvedge/schemas/verdict.schema.json`
 - `selvedge/tests/**`, `selvedge/tests/fixture-app/**`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-17T07:57:02Z
+- **Brief:** .supervisor/jobs/done/2026-11-16-qa-split-04-model-free-run-and-verdict.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/926
