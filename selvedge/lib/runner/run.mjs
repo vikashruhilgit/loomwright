@@ -1,5 +1,5 @@
-// runner/run.mjs — `selvedge run [--trace] <run-dir>` and `selvedge run --replay <frozen-run-dir>
-// [--trace]`, run by selvedge/bin/selvedge.
+// runner/run.mjs — `selvedge run [--trace] [--non-interactive] <run-dir>` and `selvedge run --replay
+// <frozen-run-dir> [--trace] [--non-interactive]`, run by selvedge/bin/selvedge.
 //
 // Executes a frozen run folder's plan.json through the guarded browser. No model is called: every
 // step is a typed plan step (runner/steps.mjs), every evidence line is written by this runner
@@ -15,7 +15,9 @@
 //                   one the folder's own `event: "freeze"` line in runs.jsonl records (a plan.json
 //                   and plan.sha256 edited together are still plan_modified; so is a folder with no
 //                   freeze line)
-//   a config reason selvedge.json (of the repo that holds the run folder) does not load
+//   a config reason selvedge.json (of the repo that holds the run folder) does not load, or its
+//                   auth.signed_in_check is not one plan-step locator form (a CSS or XPath locator
+//                   is config_schema_violation: validateSignedInCheck, auth-state.mjs)
 // Then the run claims the folder: run.claim is created exclusively before any hook runs or anything
 // launches, so of two runs started together on one folder exactly one goes on and the other is
 // already_run before it runs a hook. The claim is removed when the run ends, however it ends; a run
@@ -32,6 +34,18 @@
 // (the claim is removed), so the folder can be run again once the hook is fixed. With a hook run,
 // data_state is managed; with none, unmanaged and plan_time_actions is freeze.json's (what the
 // planner's snapshots did to the app).
+// The sign-in check (only when selvedge.json has `auth.signed_in_check` and the plan has a planned
+// criterion; with no `auth` key nothing here changes): after the hooks, before the per-criterion
+// checks, Playwright is resolved (once; the criteria reuse it) and runner/auth-check.mjs checks the
+// login wall ONCE in a guarded context with the stored session (auth-state.mjs, when its file
+// exists). A failed check makes every criterion BLOCKED needs_auth at once when nobody can sign in
+// (stdin not a terminal, or --non-interactive);
+// on a terminal it asks for one sign-in (`selvedge auth setup --headed`), reads one line and checks
+// once more. No retry loop, and run never runs the auth_setup hook itself. With `auth` set, every
+// criterion context starts from the stored session when it exists, and every value of an `auth.env`
+// variable joins the redaction list, written back as {{NAME}}. With `auth` but no signed_in_check, a
+// stored session file Playwright would not load (auth-state.mjs stateFileProblem) makes every
+// criterion BLOCKED needs_auth before any browser opens.
 // Per criterion, before launch: a goto origin selvedge.json no longer allows is BLOCKED
 // host_not_allowed; an unset {{NAME}} is BLOCKED placeholder_unset; Playwright that does not resolve
 // makes every criterion still to run BLOCKED playwright_unavailable.
@@ -73,6 +87,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, repoRoot } from '../env-config.mjs';
+import { authEnvValues, authStatePath, hasState, stateFileProblem, validateSignedInCheck } from '../auth-state.mjs';
 import { PLANNER_TOKEN_BUDGET_ENV } from '../plan-planner.mjs';
 import { FREEZE_EVENT, RUN_FILES, initRun, readRunsLog, runsLogPath } from '../plan-runs.mjs';
 import { SELVEDGE_BIN, plannerTokenBudget } from '../plan.mjs';
@@ -80,6 +95,7 @@ import { resolvePlaceholders } from '../plan-steps.mjs';
 import { STEP_TIMEOUT_MS, placeholderValues } from '../snapshot.mjs';
 import { firstLine, resolvePlaywright } from '../snapshot-playwright.mjs';
 import { RUN_EVENT, deriveVerdict } from '../verdict.mjs';
+import { SIGN_IN_HINT, signedInGate } from './auth-check.mjs';
 import { CRITERION_OUTCOMES, DATA_STATES, EVIDENCE_FILE, EVIDENCE_KINDS, appendEvidence } from './evidence.mjs';
 import { executeCriterion } from './execute.mjs';
 
@@ -88,7 +104,8 @@ export const ENTRIES = Object.freeze({ session: 'session', ci: 'ci', loomwright:
 export const RUN_BUDGET_ENV = 'SELVEDGE_RUN_BUDGET_MS';
 export const DEFAULT_RUN_BUDGET_MS = 600000;
 export const STEP_TIMEOUT_ENV = 'SELVEDGE_STEP_TIMEOUT_MS';
-// The hooks a run runs, in this order (auth_setup is item 05's).
+// The hooks a run runs, in this order. auth_setup is never one: it runs only through `selvedge auth
+// setup` (lib/auth.mjs), never from a run.
 export const RUN_HOOKS = Object.freeze(['reset', 'seed']);
 
 // The file a run creates exclusively in its folder before any hook runs (the header's claim).
@@ -96,8 +113,8 @@ export const RUN_CLAIM_FILE = 'run.claim';
 
 const BLOCKED_LINE = /^BLOCKED ([a-z_]+)$/m;
 
-const USAGE = `Usage: selvedge run [--trace] <run-dir>
-       selvedge run --replay <frozen-run-dir> [--trace]
+const USAGE = `Usage: selvedge run [--trace] [--non-interactive] <run-dir>
+       selvedge run --replay <frozen-run-dir> [--trace] [--non-interactive]
 
 Execute a frozen run folder's plan.json in the guarded browser (no model is called), write
 <run-dir>/evidence.jsonl, screenshots/<criterion-id>.png and verdict.json, and append one line to
@@ -110,6 +127,12 @@ is refused (plan_modified).
   --trace                    keep a redacted Playwright trace per criterion, traces/<criterion-id>.zip
                              (Cookie, Set-Cookie, Authorization and {{NAME}} values removed; a trace
                              that cannot be redacted is dropped)
+  --non-interactive          never wait for a sign-in: a failed auth.signed_in_check makes every
+                             criterion BLOCKED needs_auth at once (also when stdin is not a terminal)
+
+With "auth.signed_in_check" in selvedge.json the sign-in is checked once, before the first criterion,
+with the session \`selvedge auth setup\` stored; on a terminal a failed check asks you to sign in
+(\`selvedge auth setup --headed\`) and checks once more.
 
 Environment: SELVEDGE_ENTRY (session | ci | loomwright, recorded in the run line; default session),
 SELVEDGE_RUN_BUDGET_MS (wall clock for the run, default ${DEFAULT_RUN_BUDGET_MS}),
@@ -268,10 +291,12 @@ function refusedGoto(config, steps) {
   return bad ? bad.url : null;
 }
 
-// runPlan(runDir, { env, started, replayOf, trace }) → Promise<exit code>. Writes the CLI's stdout /
+// runPlan(runDir, { env, started, replayOf, trace, interactive }) → Promise<exit code>. Writes the CLI's stdout /
 // stderr itself; `started` (ms) is when the run began, what SELVEDGE_RUN_BUDGET_MS counts from;
 // `replayOf` is the frozen run id a replay folder copies (replayRun), null otherwise.
-export async function runPlan(runDir, { env = process.env, started = Date.now(), replayOf = null, trace = false } = {}) {
+// `interactive` is true only when someone can answer the sign-in prompt (cmdRun: stdin is a terminal
+// and no --non-interactive).
+export async function runPlan(runDir, { env = process.env, started = Date.now(), replayOf = null, trace = false, interactive = false } = {}) {
   const { entry, runBudgetMs, stepTimeoutMs, tokenBudget } = runOptions(env);
 
   const { plan, planSha256, freeze } = readFrozenRun(runDir);
@@ -281,20 +306,25 @@ export async function runPlan(runDir, { env = process.env, started = Date.now(),
   if (replayOf === null) assertFreezeLine(repoRoot(runDir) || runDir, runId, planSha256, freeze);
   // selvedge.json of the repo that holds the run folder; the same root holds runs.jsonl.
   const { config, root } = loadConfig({ cwd: runDir });
+  validateSignedInCheck(config); // a CSS / XPath sign-in locator: config_schema_violation, nothing claimed
   const claim = claimRun(runDir);
   try {
-    return await claimedRun({ runDir, env, started, replayOf, trace, entry, runBudgetMs, stepTimeoutMs, tokenBudget, plan, planSha256, freeze, config, root, runId });
+    return await claimedRun({ runDir, env, started, replayOf, trace, interactive, entry, runBudgetMs, stepTimeoutMs, tokenBudget, plan, planSha256, freeze, config, root, runId });
   } finally {
     rmSync(claim, { force: true });
   }
 }
 
 // The run proper, with the folder claimed (runPlan).
-async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBudgetMs, stepTimeoutMs, tokenBudget, plan, planSha256, freeze, config, root, runId }) {
+async function claimedRun({ runDir, env, started, replayOf, trace, interactive, entry, runBudgetMs, stepTimeoutMs, tokenBudget, plan, planSha256, freeze, config, root, runId }) {
   const planned = Object.entries(plan.steps_by_criterion);
   const notPlanned = Array.isArray(plan.not_planned) ? plan.not_planned.filter((np) => isPlainObject(np) && typeof np.id === 'string') : [];
 
   const secrets = placeholderValues(planned.flatMap(([, c]) => c.steps), env);
+  secrets.push(...authEnvValues(config, env, secrets)); // auth.env values are redacted as {{NAME}} too
+  // the stored sign-in session (only with an `auth` key, and only when its file exists), asked again
+  // after the sign-in check: a person may sign in while the run waits
+  const storageState = () => (config.auth && hasState({ root, env }) ? authStatePath({ root, env }) : null);
   const ends = new Map(); // criterion id → criterion_end line, for the ones decided before launch
   // a replay spends no planner tokens (its plan's own cost was its freeze's)
   const tokens = replayOf === null ? plannerTokens(freeze) : 0;
@@ -313,6 +343,32 @@ async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBud
     if (hooks.blockedReason) {
       err(`${hooks.blockedReason}: a hook did not run; every criterion is BLOCKED and nothing was launched`);
       blockAll = { outcome: CRITERION_OUTCOMES.blocked, reason: hooks.blockedReason };
+    }
+  }
+  // 2b. with `auth` but no sign-in check: a stored session the criteria would load that Playwright
+  //     would refuse is needs_auth before any browser (with a check, checkSignedIn asks the same)
+  if (blockAll === null && config.auth && !config.auth.signed_in_check && planned.length) {
+    const file = storageState();
+    const problem = file === null ? null : stateFileProblem(file);
+    if (problem) {
+      err(`${REASONS.needs_auth}: the stored session ${file} ${problem}; every criterion is BLOCKED ${REASONS.needs_auth}. Sign in again with ${SIGN_IN_HINT}`);
+      blockAll = { outcome: CRITERION_OUTCOMES.blocked, reason: REASONS.needs_auth };
+    }
+  }
+  // 2c. the sign-in check, once, before any criterion (the header); its Playwright is step 4's
+  let pw = null;
+  if (blockAll === null && config.auth && config.auth.signed_in_check && planned.length) {
+    try {
+      pw = await resolvePlaywright({ root, env, cwd: process.cwd() });
+      err(`playwright ${pw.version || '(version unknown)'} from ${pw.source} (${pw.path})`);
+    } catch (e) {
+      if (!(e instanceof EnvError)) throw e;
+      err(`${e.reason}: ${e.message}; the sign-in could not be checked`);
+      blockAll = { outcome: CRITERION_OUTCOMES.blocked, reason: e.reason };
+    }
+    if (pw !== null) {
+      const gate = await signedInGate({ chromium: pw.chromium, config, storageState, interactive, stepTimeoutMs, secrets });
+      if (!gate.signedIn) blockAll = { outcome: CRITERION_OUTCOMES.blocked, reason: gate.reason };
     }
   }
   // 3. per criterion: origins and {{NAME}} values
@@ -336,9 +392,8 @@ async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBud
       ends.set(id, { outcome: CRITERION_OUTCOMES.blocked, reason: e.reason });
     }
   }
-  // 4. Playwright, only when a criterion is left to run
-  let pw = null;
-  if (resolvedById.size) {
+  // 4. Playwright, only when a criterion is left to run (and the sign-in check did not resolve it)
+  if (resolvedById.size && pw === null) {
     try {
       pw = await resolvePlaywright({ root, env, cwd: process.cwd() });
       err(`playwright ${pw.version || '(version unknown)'} from ${pw.source} (${pw.path})`);
@@ -368,6 +423,7 @@ async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBud
   }
 
   const chromium = pw ? pw.chromium : null;
+  const criterionState = storageState();
   for (const [id, c] of planned) {
     const decided = ends.get(id);
     if (decided) {
@@ -380,7 +436,7 @@ async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBud
       continue;
     }
     err(`${id}: running ${c.steps.length} step(s)`);
-    const end = await executeCriterion({ id, steps: c.steps, resolved: resolvedById.get(id), chromium, config, runDir, secrets, stepTimeoutMs, write, trace });
+    const end = await executeCriterion({ id, steps: c.steps, resolved: resolvedById.get(id), chromium, config, runDir, secrets, stepTimeoutMs, write, trace, storageState: criterionState });
     write(end);
   }
   write({ kind: EVIDENCE_KINDS.run_end, ts: new Date().toISOString(), duration_ms: Date.now() - started });
@@ -411,8 +467,8 @@ async function claimedRun({ runDir, env, started, replayOf, trace, entry, runBud
   return result.exitCode;
 }
 
-// replayRun(frozenDir, { env, started, trace }) → Promise<exit code>: the header's --replay.
-export async function replayRun(frozenDir, { env = process.env, started = Date.now(), trace = false } = {}) {
+// replayRun(frozenDir, { env, started, trace, interactive }) → Promise<exit code>: the header's --replay.
+export async function replayRun(frozenDir, { env = process.env, started = Date.now(), trace = false, interactive = false } = {}) {
   runOptions(env); // usage first: a bad value creates nothing
   const { planBytes, planSha256, freeze } = readFrozenRun(frozenDir, { replay: true });
   const frozenId = path.basename(path.resolve(frozenDir));
@@ -420,7 +476,8 @@ export async function replayRun(frozenDir, { env = process.env, started = Date.n
   assertFreezeLine(repoRoot(frozenDir) || frozenDir, frozenId, planSha256, freeze);
   const criteriaFile = path.join(frozenDir, RUN_FILES.criteria);
   if (!existsSync(criteriaFile)) throw new EnvError(REASONS.not_frozen, `${frozenDir} holds no ${RUN_FILES.criteria}: not a complete frozen run folder; nothing was created`);
-  const { root } = loadConfig({ cwd: frozenDir });
+  const { config, root } = loadConfig({ cwd: frozenDir });
+  validateSignedInCheck(config); // before the new folder is created
 
   const { runDir } = initRun({ root, criteriaFile });
   try {
@@ -428,7 +485,7 @@ export async function replayRun(frozenDir, { env = process.env, started = Date.n
     copyFileSync(path.join(frozenDir, RUN_FILES.freeze), path.join(runDir, RUN_FILES.freeze));
     writeFileSync(path.join(runDir, RUN_FILES.planSha), `${planSha256}  ${RUN_FILES.plan}\n`, { flag: 'wx' });
     err(`replay of ${frozenId} in ${runDir}`);
-    return await runPlan(runDir, { env, started, replayOf: frozenId, trace });
+    return await runPlan(runDir, { env, started, replayOf: frozenId, trace, interactive });
   } finally {
     // a replay that wrote no evidence leaves nothing behind
     if (!existsSync(path.join(runDir, EVIDENCE_FILE))) rmSync(runDir, { recursive: true, force: true });
@@ -446,16 +503,18 @@ function assertDir(dir) {
 }
 
 function cmdRun(argv, started) {
-  const { flags, positional } = parseCliArgs(argv, { values: ['replay'], booleans: ['trace'] });
+  const { flags, positional } = parseCliArgs(argv, { values: ['replay'], booleans: ['trace', 'non-interactive'] });
   const trace = flags.trace === true;
+  // someone can answer the sign-in prompt only on a terminal, and never with --non-interactive
+  const interactive = flags['non-interactive'] !== true && process.stdin.isTTY === true;
   if (flags.replay !== undefined) {
     if (positional.length) throw new UsageError(`--replay takes the frozen run folder; no other <run-dir> (got ${positional[0]})`);
     assertDir(flags.replay);
-    return replayRun(flags.replay, { started, trace });
+    return replayRun(flags.replay, { started, trace, interactive });
   }
   if (positional.length !== 1) throw new UsageError(positional.length === 0 ? 'a <run-dir> is required' : `one <run-dir> only (got ${positional.length})`);
   assertDir(positional[0]);
-  return runPlan(positional[0], { started, trace });
+  return runPlan(positional[0], { started, trace, interactive });
 }
 
 async function main(argv) {

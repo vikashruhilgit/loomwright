@@ -6,9 +6,10 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# The `env`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands run lib/<command>.mjs
-# (`run`: lib/runner/run.mjs) and are the only ones that need Node (>= 18; `snapshot` and `run` also
-# need Playwright, found at run time); --version, help and install-cli stay bash-only.
+# The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands run lib/<command>.mjs
+# (`run`: lib/runner/run.mjs) and are the only ones that need Node (>= 18; `snapshot`, `run` and
+# `auth setup --headed` also need Playwright, found at run time); --version, help and install-cli
+# stay bash-only.
 #
 # Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line),
 # 3 NOT_VERIFIABLE (a named reason on its own line). Precedence when several apply: 1 > 2 > 3 > 0.
@@ -54,6 +55,10 @@ Commands:
   env <check|init|approve|hook>
                        selvedge.json origin allowlist and approved env hooks (needs Node >= 18;
                        \`selvedge env help\` for details)
+  auth setup [--headed]
+                       sign in once (the approved auth_setup hook, or you in a headed guarded
+                       browser) and keep the session outside the repo for \`run\` (needs Node >= 18;
+                       --headed also Playwright; \`selvedge auth help\`)
   criteria <from-pr|from-md|from-text|check>
                        acceptance criteria to criteria.json, and the testability pre-check
                        (needs Node >= 18; \`selvedge criteria help\`)
@@ -120,6 +125,7 @@ case "${1:-}" in
   --version|version) cmd_version ;;
   install-cli) cmd_install_cli ;;
   env) shift; cmd_node env "$@" ;;
+  auth) shift; cmd_node auth "$@" ;;
   criteria) shift; cmd_node criteria "$@" ;;
   snapshot) shift; cmd_node snapshot "$@" ;;
   plan) shift; cmd_node plan "$@" ;;

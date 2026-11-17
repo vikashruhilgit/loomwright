@@ -1,6 +1,6 @@
 // runner/trace-redact.mjs — strips secrets from a Playwright trace zip before `run --trace` keeps it.
 //
-// redactTraceZip(inFile, outFile, { secrets }) reads the zip Playwright wrote, redacts every entry
+// redactTraceZip(inFile, outFile, { secrets, values }) reads the zip Playwright wrote, redacts every entry
 // that decodes as UTF-8 text (trace.trace, trace.network, trace.stacks, resources/*), and writes
 // outFile (a temp name, then a rename). → { kept: true, entries } or { kept: false, why }: a zip it
 // cannot read whole — zip64, encryption, a compression method other than stored / deflate, a CRC or
@@ -13,8 +13,16 @@
 //      `Name: value` line in raw text
 //   2. every cookie value seen in any Cookie / Set-Cookie header (or HAR `cookies` entry) of the
 //      whole trace, and every Authorization value (whole, and its credentials after the scheme), is
-//      replaced by "[redacted]" wherever it appears — in a page's HTML, a script, a snapshot
+//      replaced by "[redacted]" wherever it appears — in a page's HTML, a script, a snapshot —
+//      except a stored-session value shorter than MIN_SESSION_VALUE_LENGTH (item 4)
 //   3. every resolved {{NAME}} value of the run goes back to {{NAME}} (redactValues, snapshot.mjs)
+//   4. a `storageState` key's whole value becomes "[redacted]" (the context-options event records the
+//      context's storage state), and every value in a `cookies` or `localStorage` list of
+//      { name, value } inside it — and every value passed in `values` (the stored session's,
+//      execute.mjs) — is replaced by "[redacted]" wherever it appears, as stored and URL-encoded;
+//      a stored-session value shorter than MIN_SESSION_VALUE_LENGTH is left alone outside the storage
+//      state, on every path (a Cookie / Set-Cookie header or a HAR `cookies` list that replays it
+//      included; such a header's value is still "[redacted]" whole, item 1)
 // JSON lines are parsed and redacted string by string (so they stay valid JSON); other text is
 // redacted as text. Binary entries (images) are copied, and the whole trace is dropped when one
 // holds a secret's bytes. A value the page shows transformed (cut, reversed) is not caught — the
@@ -34,6 +42,12 @@ export const REDACTED = '[redacted]';
 // Header names (lower case) whose values are never kept.
 export const REDACTED_HEADERS = Object.freeze(['cookie', 'set-cookie', 'authorization']);
 const COOKIE_HEADERS = Object.freeze(['cookie', 'set-cookie']);
+// Keys whose array holds { name, value } entries whose every value is a secret (HAR / storage-state
+// cookies, a storage state's origins[].localStorage).
+const VALUE_LISTS = Object.freeze(['cookies', 'localStorage']);
+// Keys whose whole value is replaced by REDACTED: the context's storage state, which Playwright
+// records in the trace's context-options event.
+export const REDACTED_KEYS = Object.freeze(['storageState']);
 
 const SIG = Object.freeze({ local: 0x04034b50, central: 0x02014b50, end: 0x06054b50, end64Locator: 0x07064b50 });
 const METHOD = Object.freeze({ stored: 0, deflate: 8 });
@@ -229,12 +243,14 @@ function collectHeader(name, value, into) {
   }
 }
 
-// Walks a parsed JSON value, collecting secret values from headers and HAR cookie entries.
-function collectJson(v, into, key = null) {
+// Walks a parsed JSON value, collecting secret values from headers, HAR cookie entries and a storage
+// state's cookies and localStorage entries. A storage state's values (inside a REDACTED_KEYS value,
+// or any localStorage list) go to `session`, which sessionForms() floors; the rest go to `into`.
+function collectJson(v, into, session, key = null, inState = false) {
   if (Array.isArray(v)) {
     for (const x of v) {
-      if (key === 'cookies' && isPlainObject(x) && typeof x.value === 'string' && x.value !== '') into.add(x.value);
-      collectJson(x, into);
+      if (VALUE_LISTS.includes(key) && isPlainObject(x) && typeof x.value === 'string' && x.value !== '') (inState || key === 'localStorage' ? session : into).add(x.value);
+      collectJson(x, into, session, null, inState);
     }
     return;
   }
@@ -242,8 +258,41 @@ function collectJson(v, into, key = null) {
   if (isRedactedHeader(v.name) && typeof v.value === 'string') collectHeader(v.name, v.value, into);
   for (const [k, x] of Object.entries(v)) {
     if (isRedactedHeader(k) && typeof x === 'string') collectHeader(k, x, into);
-    collectJson(x, into, k);
+    collectJson(x, into, session, k, inState || REDACTED_KEYS.includes(k));
   }
+}
+
+// A stored-session value (one passed in `values`, or found in a storage state) shorter than this is
+// not redacted outside the storage state (which reads "[redacted]" whole) — not even when a Cookie /
+// Set-Cookie header or a HAR `cookies` list replays it: a "1" replaced wherever it occurs would mangle
+// the trace (versions, ports) or drop it (a binary entry holding the byte). The header's own value is
+// still "[redacted]" whole. Values not known to be stored-session values — other cookie values,
+// Authorization values, {{NAME}} / auth.env values — have no floor.
+export const MIN_SESSION_VALUE_LENGTH = 8;
+
+// The forms a stored-session value is redacted in: as stored, and URL-encoded (a page that sends it
+// in a query string). [] below MIN_SESSION_VALUE_LENGTH.
+function sessionForms(v) {
+  if (v.length < MIN_SESSION_VALUE_LENGTH) return [];
+  try {
+    return [v, encodeURIComponent(v)];
+  } catch {
+    return [v]; // a lone surrogate has no URL-encoded form
+  }
+}
+
+// Every form a short stored-session value can reach `values` in from a header or a HAR cookie entry:
+// as stored, URL-encoded and percent-decoded.
+function shortSessionForms(v) {
+  const forms = [v];
+  for (const f of [encodeURIComponent, decodeURIComponent]) {
+    try {
+      forms.push(f(v));
+    } catch {
+      // a lone surrogate / not percent-encoded
+    }
+  }
+  return forms;
 }
 
 // Escapes a string for a RegExp alternation.
@@ -273,7 +322,7 @@ function redactJson(v, replaceValues, secrets) {
   const out = {};
   for (const [k, x] of Object.entries(v)) {
     const key = redactString(k, replaceValues, secrets);
-    if ((headerObject && k === 'value') || (isRedactedHeader(k) && typeof x === 'string')) out[key] = REDACTED;
+    if ((headerObject && k === 'value') || (isRedactedHeader(k) && typeof x === 'string') || (REDACTED_KEYS.includes(k) && x !== null && x !== undefined)) out[key] = REDACTED;
     else out[key] = redactJson(x, replaceValues, secrets);
   }
   return out;
@@ -307,8 +356,10 @@ function redactRaw(line, replaceValues, secrets) {
   return redactString(headersGone, replaceValues, secrets);
 }
 
-// redactEntries(entries, secrets) → { entries, leaked: null | entry name }. Pure: no file access.
-export function redactEntries(entries, secretList = []) {
+// redactEntries(entries, secrets, values) → { entries, leaked: null | entry name }. Pure: no file
+// access. `values` are raw strings redacted as cookie values are (the stored session's, known before
+// the trace is read).
+export function redactEntries(entries, secretList = [], extraValues = []) {
   const secrets = Object.assign([...secretList], { forms: secretList.flatMap((s) => encodedForms(s.value)) });
   const texts = entries.map((e) => {
     try {
@@ -319,14 +370,21 @@ export function redactEntries(entries, secretList = []) {
   });
   // pass 1: every cookie and Authorization value in the whole trace
   const values = new Set();
+  const session = new Set(extraValues.filter((v) => typeof v === 'string' && v !== ''));
   for (const text of texts) {
     if (text === null) continue;
     for (const line of text.split('\n')) {
       const parsed = parseJsonLine(line);
-      if (parsed !== undefined) collectJson(parsed, values);
+      if (parsed !== undefined) collectJson(parsed, values, session);
       else collectRaw(line, values);
     }
   }
+  // A short stored-session value (and its URL-encoded / decoded form) is floored on every path: a
+  // Cookie / Set-Cookie header or a HAR `cookies` list that replays it adds it to `values` unfloored,
+  // so it comes out again here (that header's value itself still reads [redacted], step 1). Removed
+  // before the long values go in, so a long session value is never taken out by a short one's form.
+  for (const v of session) if (v.length < MIN_SESSION_VALUE_LENGTH) for (const f of shortSessionForms(v)) values.delete(f);
+  for (const v of session) for (const f of sessionForms(v)) values.add(f);
   const replaceValues = valueReplacer(values);
   // pass 2: redact every text entry
   const out = entries.map((e, i) => {
@@ -347,8 +405,8 @@ export function redactEntries(entries, secretList = []) {
   return { entries: out, leaked: null };
 }
 
-// redactTraceZip(inFile, outFile, { secrets }) → { kept: true, entries } | { kept: false, why }
-export function redactTraceZip(inFile, outFile, { secrets = [] } = {}) {
+// redactTraceZip(inFile, outFile, { secrets, values }) → { kept: true, entries } | { kept: false, why }
+export function redactTraceZip(inFile, outFile, { secrets = [], values = [] } = {}) {
   let entries;
   try {
     entries = readZip(readFileSync(inFile));
@@ -356,7 +414,7 @@ export function redactTraceZip(inFile, outFile, { secrets = [] } = {}) {
     if (e instanceof TraceZipError) return { kept: false, why: e.message };
     return { kept: false, why: `unreadable (${e && e.code ? e.code : e && e.message})` };
   }
-  const red = redactEntries(entries, secrets);
+  const red = redactEntries(entries, secrets, values);
   if (red.leaked !== null) return { kept: false, why: `a binary entry holds a secret value (${red.leaked})` };
   const tmp = `${outFile}.tmp-${process.pid}`;
   try {

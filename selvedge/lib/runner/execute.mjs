@@ -4,7 +4,9 @@
 // criterion, runs its steps through the one executor (steps.mjs), writes one evidence line per
 // executed step through `write` (the run's appendEvidence), takes one end-state screenshot
 // (screenshots/<criterion-id>.png in the run folder) and always closes the context. No cookie,
-// storage or page state carries from one criterion to the next.
+// storage or page state carries from one criterion to the next. With a stored sign-in session
+// (`storageState`, auth-state.mjs; run.mjs passes it only when the file exists) every criterion's
+// context starts from that same saved state, never from the previous criterion's cookies.
 //
 // How a criterion ends (its criterion_end outcome):
 //   completed     every step ran; the verdict comes from its reads and expects (verdict.mjs)
@@ -13,7 +15,8 @@
 //                 is its 0-based index and nothing after it runs
 //   stuck_screen  STUCK_SCREEN_ACTIONS consecutive action steps each left the page exactly as it
 //                 was (same url and accessibility tree); failed_step is the last of them
-//   blocked       the guarded context could not be opened (its reason, else playwright_unavailable)
+//   blocked       the guarded context could not be opened (its reason; needs_auth when Playwright
+//                 refused the stored session; else playwright_unavailable)
 //
 // Stable wait: every expect after a read waits before it is judged, whether its first read would
 // match or not (a negative check such as `changed_from` would otherwise PASS on a read taken before
@@ -29,7 +32,8 @@
 // Trace (`run --trace`): the context is traced (DOM snapshots, no screenshots: an image of a typed
 // value cannot be redacted, no sources) and, before it closes, the trace is written to a private
 // temp folder, redacted by redactTraceZip (trace-redact.mjs) into traces/<criterion-id>.zip in the
-// run folder, and the raw zip deleted. A trace that cannot be redacted whole is dropped, never kept;
+// run folder, and the raw zip deleted. With a stored session, its cookie and localStorage values are
+// redacted too (auth-state.mjs sessionValues; the trace records the context's storage state). A trace that cannot be redacted whole is dropped, never kept;
 // stderr says `trace: <path> (redacted)` or `trace: dropped (<why>)`. Without --trace nothing is
 // traced.
 //
@@ -37,6 +41,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isStorageStateError, sessionValues } from '../auth-state.mjs';
 import { EnvError, REASONS } from '../env-config.mjs';
 import { ACTION_TYPES } from '../plan-steps.mjs';
 import { NAVIGATION_TIMEOUT_MS, redactValues } from '../snapshot.mjs';
@@ -110,7 +115,7 @@ function fileName(id, ext) {
 
 // Stops the context's tracing into a private temp folder and keeps only the redacted copy,
 // traces/<criterion-id>.zip. Never throws: a failure drops the trace.
-async function keepTrace({ context, id, runDir, secrets }) {
+async function keepTrace({ context, id, runDir, secrets, storageState }) {
   const say = (line) => process.stderr.write(`selvedge run: ${id}: trace: ${redactValues(line, secrets)}\n`);
   let tmp = null;
   try {
@@ -119,7 +124,9 @@ async function keepTrace({ context, id, runDir, secrets }) {
     await context.tracing.stop({ path: raw });
     const rel = path.join(TRACES_DIR, fileName(id, 'zip'));
     mkdirSync(path.join(runDir, TRACES_DIR), { recursive: true });
-    const res = redactTraceZip(raw, path.join(runDir, rel), { secrets });
+    // the stored session's cookie and localStorage values are redacted wherever the trace holds them
+    const values = typeof storageState === 'string' ? sessionValues(storageState) : [];
+    const res = redactTraceZip(raw, path.join(runDir, rel), { secrets, values });
     say(res.kept ? `${rel} (redacted)` : `dropped (${res.why})`);
   } catch (e) {
     say(`dropped (${firstLine(e)})`);
@@ -129,12 +136,13 @@ async function keepTrace({ context, id, runDir, secrets }) {
 }
 
 // executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets, stepTimeoutMs, write,
-//                    trace }) → Promise<criterion_end line>
+//                    trace, storageState }) → Promise<criterion_end line>
 //   steps     the plan's steps AS GIVEN (what the evidence records)
 //   resolved  the same steps with {{NAME}} resolved (what drives the page)
 //   write     appends one evidence line (the run's appendEvidence)
 //   trace     true for `run --trace` (the header's Trace paragraph)
-export async function executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets = [], stepTimeoutMs, write, trace = false }) {
+//   storageState  the stored sign-in session's path, or null (the context then starts empty)
+export async function executeCriterion({ id, steps, resolved, chromium, config, runDir, secrets = [], stepTimeoutMs, write, trace = false, storageState = null }) {
   const end = (outcome, reason = null, failedStep = null, screenshot = null) => ({
     kind: EVIDENCE_KINDS.criterion_end,
     criterion: id,
@@ -144,11 +152,15 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
     screenshot,
   });
 
+  const options = { chromium, config };
+  if (typeof storageState === 'string') options.storageState = storageState;
   let guard;
   try {
-    guard = await openGuardedContext({ chromium, config });
+    guard = await openGuardedContext(options);
   } catch (e) {
     process.stderr.write(`selvedge run: ${id}: the guarded browser did not open: ${redactValues(firstLine(e), secrets)}\n`);
+    // Playwright refusing the stored session is needs_auth (sign in again), not a missing Playwright
+    if (options.storageState && !(e instanceof EnvError) && isStorageStateError(e)) return end(CRITERION_OUTCOMES.blocked, REASONS.needs_auth);
     return end(CRITERION_OUTCOMES.blocked, e instanceof EnvError ? e.reason : REASONS.playwright_unavailable);
   }
 
@@ -266,7 +278,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
       process.stderr.write(`selvedge run: ${id}: no end-state screenshot: ${redactValues(firstLine(e), secrets)}\n`);
     }
   } finally {
-    if (tracing) await keepTrace({ context: guard.context, id, runDir, secrets });
+    if (tracing) await keepTrace({ context: guard.context, id, runDir, secrets, storageState: options.storageState });
     await guard.close();
   }
   if (guard.blocks.length) {

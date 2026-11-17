@@ -53,21 +53,22 @@ selvedge                 # version and the command list
 selvedge --version       # selvedge <version>, read from .claude-plugin/plugin.json at run time
 selvedge install-cli     # link the CLI into $HOME/.local/bin (re-run after each plugin update)
 selvedge env <command>   # selvedge.json and its env hooks (below); needs Node.js >= 18
+selvedge auth setup [--headed]         # sign in once; the session is kept outside the repo for run
 selvedge criteria <command>   # acceptance criteria to criteria.json, and the testability pre-check
 selvedge snapshot <url> [--steps <prefix.json>] --run-dir <dir>   # an allowed page's accessibility tree
 selvedge plan <criteria.json>          # planner, lint and freeze into .selvedge/runs/<run-id>/
 selvedge plan --init | --validate | --freeze …   # the same steps one at a time
-selvedge run [--trace] <run-dir>       # execute a frozen plan, no model: evidence and verdict
-selvedge run --replay <run-dir> [--trace]   # the same frozen plan again, in a new run folder
+selvedge run [--trace] [--non-interactive] <run-dir>   # execute a frozen plan, no model: evidence and verdict
+selvedge run --replay <run-dir> [--trace] [--non-interactive]   # the same frozen plan again, in a new run folder
 selvedge verdict <run-dir>             # per-criterion verdicts from evidence.jsonl + plan.json
 ```
 
 `--version` and `install-cli` need only bash and standard userland tools (no `jq`, no Node); the
 CLI resolves its own real path through symlinks, so it works when run through the `install-cli`
-link. **The `env`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands need Node.js >= 18 on
-`PATH`**; without it they exit 1 and say so. `snapshot` and `run` also need Playwright (see
-[How Playwright is found](#how-playwright-is-found)), and the default planner needs the `claude`
-CLI.
+link. **The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands need Node.js
+>= 18 on `PATH`**; without it they exit 1 and say so. `snapshot`, `run` and `auth setup --headed`
+also need Playwright (see [How Playwright is found](#how-playwright-is-found)), and the default
+planner needs the `claude` CLI.
 
 Exit codes: `0` ok, `1` an operation failed, `2` a usage error or **BLOCKED**, `3`
 **NOT_VERIFIABLE**. A BLOCKED outcome prints its own stdout line `BLOCKED <reason>`, a
@@ -107,6 +108,12 @@ shell hooks that set up the app under test:
   custom verb) is refused. This is an allow-list: a method not named here is refused.
 - `hooks` — optional; only `seed`, `reset` and `auth_setup`. They run only after you approve them
   (below).
+- `auth` — optional; only `env` and `signed_in_check`. `env` lists the names (never the values) of
+  the environment variables `auth_setup` reads its credentials from, each `[A-Z_][A-Z0-9_]*`.
+  `signed_in_check` is `{"url": …, "locator": …}`: a page on a listed origin and exactly one
+  plan-step locator form (`role`, `label`, `text` or `testid`; never CSS or XPath) that matches
+  only when signed in. `selvedge auth setup` keeps the session outside the repo
+  ([`auth` and the sign-in check](#auth-and-the-sign-in-check)).
 
 No other key is accepted. The JSON Schema is
 [`schemas/selvedge-config.schema.json`](schemas/selvedge-config.schema.json).
@@ -204,7 +211,9 @@ writes locators: content that appears only after a click is not in the tree unti
   value cut, re-cased or otherwise transformed still shows it). **Open item:** any
   environment variable name resolves, not only names a plan declares, so whoever may run
   `snapshot` (a planner included) can make the page hold any variable's value; the redaction keeps
-  the plain value off the output, nothing more.
+  the plain value off the output, nothing more. The value of every variable `auth.env` names is
+  redacted the same way, prefix or not, so a page that shows a credential hands a planner
+  `{{NAME}}`.
 - **Before any browser launches** it refuses an unlisted `<url>` or prefix `goto` origin
   (`BLOCKED host_not_allowed`), a bad prefix (`plan_invalid`, one stderr line per problem), and a
   missing Playwright (`BLOCKED playwright_unavailable`).
@@ -348,8 +357,10 @@ Plan-lint problems (the codes after `plan_invalid:`):
 ## `run` and `verdict`
 
 ```
-selvedge run [--trace] <run-dir>                  execute a frozen run folder's plan.json
-selvedge run --replay <frozen-run-dir> [--trace]  run that frozen plan again, in a new run folder
+selvedge run [--trace] [--non-interactive] <run-dir>
+                                                  execute a frozen run folder's plan.json
+selvedge run --replay <frozen-run-dir> [--trace] [--non-interactive]
+                                                  run that frozen plan again, in a new run folder
 selvedge verdict <run-dir>                        re-derive verdict.json from the folder's files
 ```
 
@@ -360,7 +371,8 @@ Each of these exits 2 before anything is written or launched, in this order: a u
 `not_frozen` (no `plan.sha256`), `already_run` (`evidence.jsonl` or `run.claim` exists),
 `plan_modified` (the sha256 of `plan.json`'s bytes is not the one `plan.sha256` records, or not the
 one the folder's own `event: "freeze"` line in `runs.jsonl` records, so a `plan.json` and
-`plan.sha256` edited together are still refused), then a `selvedge.json` reason. The run then claims
+`plan.sha256` edited together are still refused), then a `selvedge.json` reason (including an
+`auth.signed_in_check` locator that is CSS or XPath: `config_schema_violation`). The run then claims
 the folder by creating `run.claim` exclusively, before any hook runs: of two runs started together
 on one folder, one goes on and the other is `already_run` without running a hook. The claim is
 removed when the run ends; a run killed outright leaves it, and the folder reads as `already_run`
@@ -370,10 +382,12 @@ until it is removed. After that, the planner-token budget (`freeze.json`'s plann
 run before the first browser, each through `selvedge env hook`, and the run's `data_state` is
 `managed`; with neither hook it is `unmanaged` and `plan_time_actions` (what the planner's snapshots
 did to the app) is carried into the verdict. A hook that runs and fails exits 1 and writes no
-evidence (the claim is removed), so the folder can run again.
+evidence (the claim is removed), so the folder can run again. With `auth.signed_in_check` set, the
+sign-in is checked once after the hooks and before the first criterion; a failed check makes every
+criterion BLOCKED `needs_auth` (see [`auth` and the sign-in check](#auth-and-the-sign-in-check)).
 
 Each criterion runs in its own fresh guarded context: no cookie or storage carries from one to the
-next. A `goto` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, an unset
+next (with a stored sign-in session, each starts from that same saved session). A `goto` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, an unset
 `{{NAME}}` is BLOCKED `placeholder_unset`, and a criterion under the plan's `not_planned` is
 NOT_VERIFIABLE with the plan's reason. A step that throws (a locator matching nothing or more than
 one element, a hidden or covered click target, a step timeout) is BLOCKED `step_failed` with its
@@ -456,13 +470,80 @@ new folder behind.
 before it is written: every `Cookie`, `Set-Cookie` and `Authorization` header value reads
 `[redacted]`; every cookie value seen in any of those headers, and every `Authorization` value, is
 replaced by `[redacted]` wherever it appears in the trace (a page's HTML or script included); and
-every resolved `{{NAME}}` value goes back to `{{NAME}}`. The raw trace is written to a private
-temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
+every resolved `{{NAME}}` value goes back to `{{NAME}}`. With a stored sign-in session (below), the
+storage state Playwright records for the context reads `[redacted]`, and every cookie and local
+storage value the session holds is replaced by `[redacted]` wherever it appears, as stored and
+URL-encoded; a session value shorter than 8 characters (a `"1"` flag) is left alone outside the
+storage state, even where a header replays it (the header itself still reads `[redacted]`), since replacing it everywhere would mangle the trace. A `{{NAME}}` value is caught
+URL-encoded too. The raw trace is
+written to a private temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
 and a trace it cannot redact whole (zip64, encryption, an unknown compression method, a bad
 checksum, a binary entry holding a secret) is dropped, never kept: stderr says
 `trace: dropped (<why>)`. Traces carry DOM snapshots but no screenshots (an image of a typed value
 cannot be redacted). Honest limit: a value the page shows transformed (cut, re-cased, reversed) is
 not caught. Without `--trace` nothing is traced.
+
+## `auth` and the sign-in check
+
+```
+selvedge auth setup [--base <ref>]   run the approved hooks.auth_setup and keep the session it writes
+selvedge auth setup --headed         sign in yourself in a visible guarded browser and keep that session
+```
+
+A walled page needs a signed-in browser, and an agent that types a password leaves it in its
+transcript and in traces. So no model signs in: `selvedge auth setup` does it once, outside any
+plan or run, and keeps the session (a Playwright storage state: cookies and local storage) where
+`selvedge run` loads it.
+
+- **`setup`** runs `hooks.auth_setup` through `selvedge env hook auth_setup`, so it needs your
+  approval (`BLOCKED env_hooks_unapproved` otherwise) and every origin local
+  (`BLOCKED env_hooks_remote_origin`). The hook's credentials come only from the environment
+  variables `auth.env` names; one unset is `BLOCKED placeholder_unset` (stderr names it, never a
+  value) and the hook does not run. The hook writes the storage state as JSON to the path in
+  `SELVEDGE_STORAGE_STATE`; a hook that exits 0 without writing it, or writes something that is not a
+  storage state Playwright loads (a JSON object whose `cookies` and `origins` have Playwright's
+  shape and cookie rules: an `expires` of -1 or a unix time, an `http`/`https` `url`), exits 1 and
+  nothing is kept. With no `hooks.auth_setup` and no `--headed` it is a usage
+  error naming both.
+- **`setup --headed`** needs `auth.signed_in_check`: it opens the guarded browser visibly at its
+  `url` and waits (up to `SELVEDGE_AUTH_TIMEOUT_MS`, default 300000) while you sign in, until the
+  locator matches, then keeps that session. No hook runs and no credential passes through selvedge.
+  It needs a display, so it cannot run in CI; its tests use a stub Playwright.
+- **Where the session lives:** `$HOME/.local/state/selvedge/<repo-id>/auth/storageState.json`, where
+  `<repo-id>` is the sha256 of the repo's identity (the same identity approvals use). The
+  directories are mode `0700` and the file `0600`, set by selvedge whatever the hook's umask. A path
+  that would resolve inside the repo is never written or read.
+
+**What `run` does with it.** Only when `selvedge.json` has an `auth` key (without one, `run` is
+unchanged): every criterion's context starts from the stored session when the file exists, and the
+value of every variable `auth.env` names is redacted like a `{{NAME}}` value (written back as
+`{{APP_PASS}}`) in `evidence.jsonl`, `verdict.json` and stderr (and in what `selvedge snapshot`
+prints, the page a planner looks at). A stored session file Playwright would not load (not JSON, or
+not a storage state's shape or cookie rules) makes every criterion BLOCKED `needs_auth` before any
+browser opens, with or without a sign-in check; a session Playwright itself refuses when the context
+opens is `needs_auth` too, never `playwright_unavailable`. With `auth.signed_in_check` set, the
+run checks the sign-in **once**, after the hooks and before the first criterion: one guarded
+context with the stored session opens the check `url`, and the locator must match at least one
+element within `SELVEDGE_STEP_TIMEOUT_MS`. When it does not (no session, an expired one, a redirect
+to a login page):
+
+- **nobody can sign in** — stdin is not a terminal, or `run --non-interactive` — every criterion is
+  BLOCKED `needs_auth` at once, no criterion's steps run, and the run still writes its evidence,
+  `verdict.json` and its `runs.jsonl` line (exit 2). There is no retry loop.
+- **on a terminal** — stderr says what is needed (`selvedge auth setup --headed`), waits for one
+  line (Enter), checks exactly once more, and either goes on or makes every criterion BLOCKED
+  `needs_auth`. There is never a third check.
+
+`run` never runs `auth_setup` itself. After signing in, run the plan again with
+`selvedge run --replay <run-dir>` (a folder runs once). Wrappers and CI pass `--non-interactive`.
+Limit: `selvedge snapshot` (what a planner looks through) does not load the session, so a planner
+cannot see a walled page; its steps are written from what it can see, or by hand.
+
+**Honest limit.** An agent with shell access can read any file you can, the session file and your
+environment variables included: selvedge keeps secrets out of plans, evidence, PR comments and model
+prompts, and does not claim they are out of reach. The redaction finds a value as given, in the
+quoted forms Playwright prints and URL-encoded; a page that shows it cut, re-cased or otherwise transformed is not
+caught. A hook that prints its own credentials prints them: its output is your command's.
 
 ## Environment variables
 
@@ -481,7 +562,12 @@ Read by the CLI only, never from a file in the repo:
   checked before each criterion starts: once it is spent, every criterion not yet started is
   BLOCKED `budget_exceeded` and gets no browser.
 - `SELVEDGE_STEP_TIMEOUT_MS` — the time one action of a `run` may take, in milliseconds (default
-  5000); a step that runs out is BLOCKED `step_failed`.
+  5000); a step that runs out is BLOCKED `step_failed`. The sign-in check waits as long for its
+  locator.
+- `SELVEDGE_AUTH_TIMEOUT_MS` — how long `auth setup --headed` waits for you to sign in, in
+  milliseconds (default 300000).
+- `SELVEDGE_STORAGE_STATE` — set by `auth setup` for its `auth_setup` hook: the path the hook writes
+  the storage state to (selvedge then moves it into place, mode `0600`).
 - `SELVEDGE_RUN_DIR` — the run folder `snapshot` records in, when `--run-dir` is not given.
 - `SELVEDGE_BASE` — the config source `snapshot` reads (a ref, or empty for the working tree);
   set by `plan` for its planner, and a `--base` naming another is refused.
@@ -577,6 +663,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `stuck_screen` | BLOCKED | consecutive action steps left the page unchanged, so the criterion stopped before its check |
 | `budget_exceeded` | BLOCKED | the run's wall-clock or planner-token budget was spent before the criterion started |
 | `run_interrupted` | BLOCKED | `evidence.jsonl` has no end line for a planned criterion: the run stopped before the criterion finished |
+| `needs_auth` | BLOCKED | `auth.signed_in_check` did not match (no session, or an expired one) and nobody could sign in; run `selvedge auth setup` (or `--headed`) |
 | `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
 | `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action; it is not planned |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
@@ -587,7 +674,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `remote_origin_without_allow_remote` | config | a non-local origin is listed without `"allow_remote": true` |
 | `config_absent` | config | no `selvedge.json` at the repo root; run `selvedge env init` |
 | `config_invalid_json` | config | `selvedge.json` is not valid JSON |
-| `config_schema_violation` | config | an unknown key, an unknown hook name, or a value of the wrong type |
+| `config_schema_violation` | config | an unknown key (an `auth` or `signed_in_check` key included), an unknown hook name, a value of the wrong type, an `auth.signed_in_check.url` on an origin `origins` does not list, or a sign-in locator that is not one plan-step locator form (CSS or XPath) |
 | `base_config_unreadable` | config | `--base <ref>` given, but `<ref>:selvedge.json` cannot be read |
 | `approve_requires_tty` | usage | `env approve` was run without an interactive terminal |
 | `port_required` | usage | `env init` found no port (`--port`, `package.json` scripts, or a TTY prompt) |

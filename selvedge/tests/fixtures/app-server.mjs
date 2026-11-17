@@ -1,5 +1,6 @@
 // app-server.mjs — a small web app for selvedge's snapshot, plan and run tests (test-snapshot.sh,
-// test-plan.sh, test-run.sh, test-replay.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
+// test-plan.sh, test-run.sh, test-replay.sh, test-auth-run.sh). Not named test-*, so
+// selvedge/tests/run.sh never runs it directly.
 //
 // Pages (every page is a complete HTML document; scripts are inline, nothing loads from elsewhere):
 //   /             a plain page: heading "Plain page", no controls
@@ -33,6 +34,18 @@
 //   /api/whoami   text/plain "signed in" when the Authorization header is that bearer, else "anonymous"
 //   /control/cart-label?name=<label>  sets the /cart button's aria-label (above); with no name it is
 //                 reset. Server state, reset on every server start; answers text "ok"
+//   /login        GET: a sign-in form ("User" and "Password" fields, a "Sign in" button) posting to
+//                 /login. POST (form-encoded user, pass, both non-empty): starts a session (cookie
+//                 selvedge_session=<random id>, path /, HttpOnly) and redirects 303 to /account; an
+//                 empty field answers 401 with the form again
+//   /account      the login wall: with a live session cookie, heading "Account", "Signed in as
+//                 <user>" (data-testid "signed-in-as") and "Your password is <pass>" (data-testid
+//                 "password-echo": a page that shows a credential, which a run must redact); without
+//                 one, a 302 redirect to /login. Every request to /account is counted
+//   /control/hits?path=<path>  text: how many requests <path> has had since the server started
+//                 (only /account is counted)
+//   /control/expire-sessions  ends every session, so a saved cookie is no longer accepted; answers
+//                 text "ok"
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
@@ -44,6 +57,7 @@
 //           <info.json> (atomically: written to a temp name, then renamed), and runs until SIGTERM
 //           or SIGINT closes every server. A watchdog exits it after 15 minutes so a test that dies
 //           without killing it never leaves it running.
+import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { renameSync, writeFileSync } from 'node:fs';
 import { startServer } from './servers.mjs';
@@ -148,6 +162,34 @@ document.getElementById('covered').addEventListener('click', () => { count.textC
 </script>`,
 );
 
+const LOGIN = page(
+  'Sign in',
+  `<main><h1>Sign in</h1>
+<form method="post" action="/login">
+<label>User <input type="text" name="user"></label>
+<label>Password <input type="password" name="pass"></label>
+<button type="submit">Sign in</button>
+</form></main>`,
+);
+
+const accountPage = ({ user, pass }) => page(
+  'Account',
+  `<main><h1>Account</h1>
+<p data-testid="signed-in-as">Signed in as ${escapeHtml(user)}</p>
+<p data-testid="password-echo">Your password is ${escapeHtml(pass)}</p></main>`,
+);
+
+const SESSION_COOKIE = 'selvedge_session';
+
+// The value of cookie `name` in a Cookie header, or null.
+function cookieValue(header, name) {
+  for (const part of String(header || '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
 const SILENT = page(
   'Account',
   `<main><h1>Account</h1>
@@ -162,15 +204,39 @@ fetch('/api/whoami', { headers: { Authorization: 'Bearer ${BEARER_TOKEN}' } })
 export async function startAppServer() {
   const events = [];
   let cartLabel = null; // /control/cart-label; null: the button's name is its text
+  const sessions = new Map(); // session id → { user, pass } (/login, /account)
+  const hits = new Map(); // counted path → requests (/account)
   const sockets = new Set();
   const server = http.createServer((req, res) => {
     events.push({ method: req.method, path: req.url, cookie: req.headers.cookie || null });
-    req.resume();
     const url = new URL(req.url, 'http://fixture.invalid');
     const send = (status, html, headers = {}) => {
       res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers });
       res.end(html);
     };
+    const text = (body) => {
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(body);
+    };
+    if (url.pathname === '/login' && req.method === 'POST') {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+        const user = form.get('user') || '';
+        const pass = form.get('pass') || '';
+        if (!user || !pass) {
+          send(401, LOGIN);
+          return;
+        }
+        const id = randomBytes(16).toString('hex');
+        sessions.set(id, { user, pass });
+        res.writeHead(303, { location: '/account', 'cache-control': 'no-store', 'set-cookie': `${SESSION_COOKIE}=${id}; Path=/; HttpOnly` });
+        res.end();
+      });
+      return;
+    }
+    req.resume();
     switch (url.pathname) {
       case '/':
         send(200, PLAIN);
@@ -189,6 +255,27 @@ export async function startAppServer() {
       case '/api/whoami':
         res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
         res.end(req.headers.authorization === `Bearer ${BEARER_TOKEN}` ? 'signed in' : 'anonymous');
+        return;
+      case '/login':
+        send(200, LOGIN);
+        return;
+      case '/account': {
+        hits.set('/account', (hits.get('/account') || 0) + 1);
+        const session = sessions.get(cookieValue(req.headers.cookie, SESSION_COOKIE));
+        if (!session) {
+          res.writeHead(302, { location: '/login', 'cache-control': 'no-store' });
+          res.end();
+          return;
+        }
+        send(200, accountPage(session));
+        return;
+      }
+      case '/control/hits':
+        text(`${hits.get(url.searchParams.get('path')) || 0}\n`);
+        return;
+      case '/control/expire-sessions':
+        sessions.clear();
+        text('ok\n');
         return;
       case '/echo':
         send(200, ECHO);

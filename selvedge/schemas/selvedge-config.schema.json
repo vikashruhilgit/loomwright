@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "selvedge.json",
-  "description": "Selvedge target configuration: the exact origins the guarded browser may reach and the env hooks a user may approve. Validated by selvedge/lib/env-config.mjs, whose accepted key sets selvedge/tests/test-env.sh asserts equal to the property names here.",
+  "description": "Selvedge target configuration: the exact origins the guarded browser may reach and the env hooks a user may approve, and the sign-in check for walled pages. Validated by selvedge/lib/env-config.mjs, whose accepted key sets selvedge/tests/test-env.sh asserts equal to the property names here.",
   "type": "object",
   "required": ["schema_version"],
   "properties": {
@@ -28,6 +28,28 @@
         "seed": { "type": "string" },
         "reset": { "type": "string" },
         "auth_setup": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "auth": {
+      "description": "Sign-in for walled pages. `selvedge auth setup` runs the approved auth_setup hook (or, with --headed, lets a human sign in) and keeps the session outside the repo; `selvedge run` loads it and checks signed_in_check once before the first criterion.",
+      "type": "object",
+      "properties": {
+        "env": {
+          "description": "The environment variables the auth_setup hook reads its credentials from. Names only: a value never appears in selvedge.json, and every value is redacted from a run's evidence.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" }
+        },
+        "signed_in_check": {
+          "description": "A page on a listed origin and a locator (exactly one plan-step locator form: role, label, text or testid; never CSS or XPath) that matches at least one element only when signed in.",
+          "type": "object",
+          "required": ["url", "locator"],
+          "properties": {
+            "url": { "type": "string", "minLength": 1 },
+            "locator": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     }

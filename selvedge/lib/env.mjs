@@ -9,8 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, lstatSync, openSync, readFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
-import { CONFIG_FILE, EnvError, HOOK_KEYS, REASONS, isLocalOrigin, loadConfig, repoRoot } from './env-config.mjs';
+import { CONFIG_FILE, EnvError, HOOK_KEYS, REASONS, isLocalOrigin, loadConfig, readOneLine, repoRoot } from './env-config.mjs';
 import { approvalState, hooksSha256, writeApproval } from './env-approvals.mjs';
 
 const MIN_NODE_MAJOR = 18;
@@ -89,18 +88,6 @@ function parseArgs(args, allowed) {
 
 function hasTty() {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
-}
-
-// One line from stdin (no raw mode: the line discipline delivers it), or null at EOF.
-async function readLine() {
-  const rl = readline.createInterface({ input: process.stdin, terminal: false });
-  try {
-    for await (const line of rl) return line;
-    return null;
-  } finally {
-    rl.close();
-    process.stdin.pause();
-  }
 }
 
 function hookApprovalLine(state) {
@@ -214,7 +201,7 @@ async function cmdInit(args) {
       ({ port, from } = found);
     } else if (hasTty()) {
       process.stdout.write('selvedge env init: the local port your app listens on: ');
-      const answer = await readLine();
+      const answer = await readOneLine();
       port = validPort(answer === null ? '' : answer.trim());
       from = 'prompt';
     }
@@ -274,7 +261,7 @@ async function cmdApprove(args) {
     return 0;
   }
   process.stdout.write('Approve these hooks for this repo? [y/N] ');
-  const answer = await readLine();
+  const answer = await readOneLine();
   if (answer === null || !/^(y|yes)$/i.test(answer.trim())) {
     out('');
     out('selvedge env: not approved; nothing was written');
