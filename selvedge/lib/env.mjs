@@ -7,7 +7,7 @@
 // Node >= 18, standard library only.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, lstatSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, lstatSync, openSync, readFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { CONFIG_FILE, EnvError, HOOK_KEYS, REASONS, isLocalOrigin, loadConfig, repoRoot } from './env-config.mjs';
@@ -20,7 +20,8 @@ const USAGE = `Usage: selvedge env <command>
 Commands:
   check [--base <ref>]     validate selvedge.json and report the hook approval state; with --base,
                            read the committed <ref>:selvedge.json instead of the working tree
-  init [--port <N>]        write a local-only selvedge.json (http://localhost:<N>); never overwrites
+  init [--port <N>]        write a local-only selvedge.json (http://localhost:<N>); never overwrites;
+                           first adds .selvedge/ to .gitignore (once)
   approve [--base <ref>]   show the hooks and their sha256, and record your approval (needs a TTY)
   hook <name> [--base <ref>]
                            run an approved hook (${HOOK_KEYS.join(', ')}) at the repo root; only
@@ -158,10 +159,37 @@ function detectPort(dir) {
   return null;
 }
 
+// The line `env init` adds to the repo's .gitignore: run folders, evidence and runs.jsonl live
+// under .selvedge/ and are never committed. These existing lines already ignore it.
+const IGNORE_LINE = '.selvedge/';
+const IGNORE_FORMS = Object.freeze([IGNORE_LINE, '.selvedge', '/.selvedge/', '/.selvedge']);
+
+// Appends IGNORE_LINE to <dir>/.gitignore (creating it) unless a line already ignores .selvedge.
+// Never changes init's exit code: a .gitignore that cannot be read or written is a warning.
+function ensureIgnoreLine(dir) {
+  const file = path.join(dir, '.gitignore');
+  try {
+    let text = '';
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch (e) {
+      if (!e || e.code !== 'ENOENT') throw e;
+    }
+    if (text.split(/\r?\n/).some((l) => IGNORE_FORMS.includes(l.trim()))) return;
+    appendFileSync(file, `${text !== '' && !text.endsWith('\n') ? '\n' : ''}${IGNORE_LINE}\n`);
+    out(`selvedge env: added ${IGNORE_LINE} to ${file}`);
+  } catch (e) {
+    err(`warning: could not add ${IGNORE_LINE} to ${file}: ${e && e.message}`);
+  }
+}
+
 async function cmdInit(args) {
   const { flags, positional } = parseArgs(args, ['port']);
   if (positional.length) throw new UsageError(`unexpected argument: ${positional[0]}`);
   const dir = repoRoot() || process.cwd();
+  // First, before the selvedge.json check and the port detection, so a repo whose selvedge.json
+  // exists (or whose init fails port_required) still gets the line.
+  ensureIgnoreLine(dir);
   const file = path.join(dir, CONFIG_FILE);
   let exists = true;
   try {

@@ -1,5 +1,5 @@
-// app-server.mjs — a small web app for selvedge's snapshot and plan tests (test-snapshot.sh,
-// test-plan.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
+// app-server.mjs — a small web app for selvedge's snapshot, plan and run tests (test-snapshot.sh,
+// test-plan.sh, test-run.sh, test-replay.sh). Not named test-*, so selvedge/tests/run.sh never runs it directly.
 //
 // Pages (every page is a complete HTML document; scripts are inline, nothing loads from elsewhere):
 //   /             a plain page: heading "Plain page", no controls
@@ -7,6 +7,9 @@
 //                 "Cart" holding a "Quantity" spinbutton (a number input, value 1) and a "Total"
 //                 value (data-testid "total": 6 × the quantity), plus a "Close" button. The dialog
 //                 is `hidden` until the click, so it is absent from the accessibility tree before it.
+//                 After a /control/cart-label request the button's accessible name (aria-label) is
+//                 that label while its visible text still reads "Open cart" (a renamed control a
+//                 role locator no longer matches, though a text match still would).
 //   /echo         a "User" text field, a "Reset" button and a paragraph (data-testid "echo") that
 //                 reads "Hello, <the field's value>" ("Hello, nobody" when empty) on every input,
 //                 and one (data-testid "echo-reversed") reading "Reversed: <the value reversed>"
@@ -16,6 +19,20 @@
 //                 last key pressed anywhere on the page)
 //   /cookie       a paragraph "cookie: <the request's Cookie header, or none>"; with ?set=1 the
 //                 response also sets the cookie selvedge_fixture=seen (path /)
+//   /slow         a "Load price" button and a value (data-testid "price") reading "pending"; the
+//                 click fetches /api/price, which the server answers only after SLOW_PRICE_MS
+//                 (1.5 s) with "42", and only then does the value read "42"
+//   /api/price    the slow answer above (text/plain "42")
+//   /controls     a "Do nothing" button (no handler: clicking it changes nothing), an empty value
+//                 (data-testid "empty", no text), a hidden "Hidden action" button, a "Covered action"
+//                 button under an overlay that takes its clicks, and a side-effect counter
+//                 (data-testid "count", "0") that an "Add one" button increments
+//   /silent-cookie  sets the cookie selvedge_secret=SILENT_COOKIE_VALUE (path /, HttpOnly) and
+//                 never prints it; its script fetches /api/whoami with the header
+//                 `Authorization: Bearer <BEARER_TOKEN>` and shows the answer (data-testid "whoami")
+//   /api/whoami   text/plain "signed in" when the Authorization header is that bearer, else "anonymous"
+//   /control/cart-label?name=<label>  sets the /cart button's aria-label (above); with no name it is
+//                 reset. Server state, reset on every server start; answers text "ok"
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
@@ -32,6 +49,11 @@ import { renameSync, writeFileSync } from 'node:fs';
 import { startServer } from './servers.mjs';
 
 const UNIT_PRICE = 6;
+const SLOW_PRICE_MS = 1500;
+const SLOW_PRICE = '42';
+// What a trace must never keep (test-replay.sh greps for both).
+export const SILENT_COOKIE_VALUE = 'ckv-7Q2mZp4Lr9Xs';
+export const BEARER_TOKEN = 'tok-Hb81Vd3Nq6Wf';
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -43,10 +65,11 @@ function page(title, body) {
 
 const PLAIN = page('Plain', '<main><h1>Plain page</h1><p>Nothing to open here.</p></main>');
 
-const CART = page(
+// The /cart page; `label` (a /control/cart-label name) becomes the Open cart button's aria-label.
+const cartPage = (label) => page(
   'Shop',
   `<main><h1>Shop</h1>
-<button type="button" id="open">Open cart</button>
+<button type="button" id="open"${label ? ` aria-label="${escapeHtml(label)}"` : ''}>Open cart</button>
 <div role="dialog" aria-label="Cart" id="cart" hidden>
   <label>Quantity <input type="number" id="qty" min="0" value="1"></label>
   <p>Total: <span data-testid="total" id="total">${UNIT_PRICE}</span></p>
@@ -93,9 +116,52 @@ document.addEventListener('keydown', (e) => { lastKey = e.key; showOrder(); });
 </script>`,
 );
 
+const SLOW = page(
+  'Slow',
+  `<main><h1>Slow</h1>
+<button type="button" id="load">Load price</button>
+<p>Price: <span data-testid="price" id="price">pending</span></p></main>
+<script>
+const price = document.getElementById('price');
+document.getElementById('load').addEventListener('click', () => {
+  fetch('/api/price').then((r) => r.text()).then((t) => { price.textContent = t; });
+});
+</script>`,
+);
+
+const CONTROLS = page(
+  'Controls',
+  `<main><h1>Controls</h1>
+<button type="button" id="dead">Do nothing</button>
+<p>Empty: <span data-testid="empty" id="empty"></span></p>
+<button type="button" id="hidden" hidden>Hidden action</button>
+<div style="position: relative; width: 240px; height: 48px;">
+  <button type="button" id="covered">Covered action</button>
+  <div id="overlay" style="position: absolute; inset: 0; background: #fff;"></div>
+</div>
+<p>Count: <span data-testid="count" id="count">0</span></p>
+<button type="button" id="add">Add one</button></main>
+<script>
+const count = document.getElementById('count');
+document.getElementById('add').addEventListener('click', () => { count.textContent = String(Number(count.textContent) + 1); });
+document.getElementById('covered').addEventListener('click', () => { count.textContent = 'covered clicked'; });
+</script>`,
+);
+
+const SILENT = page(
+  'Account',
+  `<main><h1>Account</h1>
+<p>Session: <span data-testid="whoami" id="whoami">checking</span></p></main>
+<script>
+fetch('/api/whoami', { headers: { Authorization: 'Bearer ${BEARER_TOKEN}' } })
+  .then((r) => r.text()).then((t) => { document.getElementById('whoami').textContent = t; });
+</script>`,
+);
+
 // startAppServer() → Promise<{ port, origin, events, close() }>
 export async function startAppServer() {
   const events = [];
+  let cartLabel = null; // /control/cart-label; null: the button's name is its text
   const sockets = new Set();
   const server = http.createServer((req, res) => {
     events.push({ method: req.method, path: req.url, cookie: req.headers.cookie || null });
@@ -110,10 +176,36 @@ export async function startAppServer() {
         send(200, PLAIN);
         return;
       case '/cart':
-        send(200, CART);
+        send(200, cartPage(cartLabel));
+        return;
+      case '/control/cart-label':
+        cartLabel = url.searchParams.get('name') || null;
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end('ok\n');
+        return;
+      case '/silent-cookie':
+        send(200, SILENT, { 'set-cookie': `selvedge_secret=${SILENT_COOKIE_VALUE}; Path=/; HttpOnly` });
+        return;
+      case '/api/whoami':
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(req.headers.authorization === `Bearer ${BEARER_TOKEN}` ? 'signed in' : 'anonymous');
         return;
       case '/echo':
         send(200, ECHO);
+        return;
+      case '/slow':
+        send(200, SLOW);
+        return;
+      case '/api/price': {
+        const timer = setTimeout(() => {
+          res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(SLOW_PRICE);
+        }, SLOW_PRICE_MS);
+        res.once('close', () => clearTimeout(timer));
+        return;
+      }
+      case '/controls':
+        send(200, CONTROLS);
         return;
       case '/cookie': {
         const headers = url.searchParams.get('set') === '1' ? { 'set-cookie': 'selvedge_fixture=seen; Path=/' } : {};

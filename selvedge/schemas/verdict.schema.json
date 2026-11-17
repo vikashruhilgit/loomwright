@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "verdict.json",
+  "description": "A run folder's verdicts, derived by selvedge/lib/verdict.mjs (deriveVerdict) from evidence.jsonl and plan.json only; no model writes it. selvedge/tests/test-verdict.sh asserts the verdict and evidence_class enums equal VERDICTS and EVIDENCE_CLASSES in verdict.mjs, and that a written verdict.json has exactly the keys declared here.",
+  "type": "object",
+  "required": ["schema_version", "target", "plan_sha256", "playwright_version", "plan_revision", "prior_revisions", "replay_of", "data_state", "hooks_run", "criteria"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "target": { "const": "web" },
+    "plan_sha256": {
+      "description": "sha256 hex of the plan.json bytes the run executed (evidence.jsonl run_start).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "playwright_version": { "type": ["string", "null"] },
+    "plan_revision": { "type": ["integer", "null"], "minimum": 1 },
+    "prior_revisions": {
+      "description": "One entry per earlier revision of the same criteria, ascending: the verdict of that revision's own run (never a replay), or null when it never ran.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/prior_revision" }
+    },
+    "replay_of": {
+      "description": "The frozen run id this run replayed, or null.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$"
+    },
+    "data_state": { "enum": ["managed", "unmanaged"] },
+    "hooks_run": {
+      "description": "The approved env hooks run before the first browser launch, in order.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "plan_time_actions": {
+      "description": "Present only when data_state is unmanaged: the action steps the planner's snapshot calls carried out against the app (freeze.json).",
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "criteria": {
+      "description": "Keyed by criterion id (c- + 12 hex).",
+      "type": "object",
+      "propertyNames": { "pattern": "^c-[0-9a-f]{12}$" },
+      "additionalProperties": { "$ref": "#/$defs/criterion" }
+    }
+  },
+  "additionalProperties": false,
+  "if": { "properties": { "data_state": { "const": "unmanaged" } }, "required": ["data_state"] },
+  "then": { "required": ["plan_time_actions"] },
+  "else": { "not": { "required": ["plan_time_actions"] } },
+  "$defs": {
+    "verdict": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_VERIFIABLE"] },
+    "prior_revision": {
+      "type": "object",
+      "required": ["revision", "verdict"],
+      "properties": {
+        "revision": { "type": "integer", "minimum": 1 },
+        "verdict": { "anyOf": [{ "$ref": "#/$defs/verdict" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    },
+    "criterion": {
+      "type": "object",
+      "required": ["verdict", "evidence_class", "read_value", "matched", "expected", "reason", "failed_step", "interpretation", "unverified_assumptions", "steps"],
+      "properties": {
+        "verdict": { "$ref": "#/$defs/verdict" },
+        "evidence_class": { "enum": ["structured-read", "in-process-assert", "model-judged"] },
+        "read_value": {
+          "description": "The judged read's value (the read the judged expect checked, else the final read) as evidence.jsonl recorded it ({{NAME}} values kept as {{NAME}}), or null.",
+          "type": ["string", "number", "boolean", "null"]
+        },
+        "matched": {
+          "description": "Whether the judged expect (the first that mismatched, else the last) held, or null when no expect ran.",
+          "type": ["boolean", "null"]
+        },
+        "expected": {
+          "description": "The plan's judged expect (the first that mismatched, else the final one), or null for a criterion the plan does not plan.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["op", "value"],
+              "properties": {
+                "op": { "enum": ["equals", "contains", "matches", "gt", "lt", "changed_from"] },
+                "value": { "type": ["string", "number", "boolean"] }
+              },
+              "additionalProperties": false
+            },
+            { "type": "null" }
+          ]
+        },
+        "reason": {
+          "description": "A reason from REASONS (selvedge/lib/env-config.mjs) for BLOCKED and NOT_VERIFIABLE; null for PASS and FAIL.",
+          "type": ["string", "null"]
+        },
+        "failed_step": {
+          "description": "The 0-based index of the plan step that failed, or null.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "interpretation": { "type": ["string", "null"] },
+        "unverified_assumptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text", "material"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1 },
+              "material": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "steps": {
+          "description": "The step summary: one entry per evidence.jsonl step line of the criterion, in order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["step", "type", "outcome", "duration_ms"],
+            "properties": {
+              "step": { "type": "integer", "minimum": 0 },
+              "type": { "enum": ["goto", "click", "fill", "select", "check", "press", "wait_for", "read", "expect"] },
+              "outcome": { "enum": ["ok", "failed", "matched", "mismatched"] },
+              "duration_ms": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
