@@ -15,7 +15,8 @@
 //                 is its 0-based index and nothing after it runs
 //   stuck_screen  STUCK_SCREEN_ACTIONS consecutive action steps each left the page exactly as it
 //                 was (same url and accessibility tree); failed_step is the last of them
-//   blocked       the guarded context could not be opened (its reason, else playwright_unavailable)
+//   blocked       the guarded context could not be opened (its reason; needs_auth when Playwright
+//                 refused the stored session; else playwright_unavailable)
 //
 // Stable wait: every expect after a read waits before it is judged, whether its first read would
 // match or not (a negative check such as `changed_from` would otherwise PASS on a read taken before
@@ -31,7 +32,8 @@
 // Trace (`run --trace`): the context is traced (DOM snapshots, no screenshots: an image of a typed
 // value cannot be redacted, no sources) and, before it closes, the trace is written to a private
 // temp folder, redacted by redactTraceZip (trace-redact.mjs) into traces/<criterion-id>.zip in the
-// run folder, and the raw zip deleted. A trace that cannot be redacted whole is dropped, never kept;
+// run folder, and the raw zip deleted. With a stored session, its cookie and localStorage values are
+// redacted too (auth-state.mjs sessionValues; the trace records the context's storage state). A trace that cannot be redacted whole is dropped, never kept;
 // stderr says `trace: <path> (redacted)` or `trace: dropped (<why>)`. Without --trace nothing is
 // traced.
 //
@@ -39,6 +41,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isStorageStateError, sessionValues } from '../auth-state.mjs';
 import { EnvError, REASONS } from '../env-config.mjs';
 import { ACTION_TYPES } from '../plan-steps.mjs';
 import { NAVIGATION_TIMEOUT_MS, redactValues } from '../snapshot.mjs';
@@ -112,7 +115,7 @@ function fileName(id, ext) {
 
 // Stops the context's tracing into a private temp folder and keeps only the redacted copy,
 // traces/<criterion-id>.zip. Never throws: a failure drops the trace.
-async function keepTrace({ context, id, runDir, secrets }) {
+async function keepTrace({ context, id, runDir, secrets, storageState }) {
   const say = (line) => process.stderr.write(`selvedge run: ${id}: trace: ${redactValues(line, secrets)}\n`);
   let tmp = null;
   try {
@@ -121,7 +124,9 @@ async function keepTrace({ context, id, runDir, secrets }) {
     await context.tracing.stop({ path: raw });
     const rel = path.join(TRACES_DIR, fileName(id, 'zip'));
     mkdirSync(path.join(runDir, TRACES_DIR), { recursive: true });
-    const res = redactTraceZip(raw, path.join(runDir, rel), { secrets });
+    // the stored session's cookie and localStorage values are redacted wherever the trace holds them
+    const values = typeof storageState === 'string' ? sessionValues(storageState) : [];
+    const res = redactTraceZip(raw, path.join(runDir, rel), { secrets, values });
     say(res.kept ? `${rel} (redacted)` : `dropped (${res.why})`);
   } catch (e) {
     say(`dropped (${firstLine(e)})`);
@@ -154,6 +159,8 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
     guard = await openGuardedContext(options);
   } catch (e) {
     process.stderr.write(`selvedge run: ${id}: the guarded browser did not open: ${redactValues(firstLine(e), secrets)}\n`);
+    // Playwright refusing the stored session is needs_auth (sign in again), not a missing Playwright
+    if (options.storageState && !(e instanceof EnvError) && isStorageStateError(e)) return end(CRITERION_OUTCOMES.blocked, REASONS.needs_auth);
     return end(CRITERION_OUTCOMES.blocked, e instanceof EnvError ? e.reason : REASONS.playwright_unavailable);
   }
 
@@ -271,7 +278,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
       process.stderr.write(`selvedge run: ${id}: no end-state screenshot: ${redactValues(firstLine(e), secrets)}\n`);
     }
   } finally {
-    if (tracing) await keepTrace({ context: guard.context, id, runDir, secrets });
+    if (tracing) await keepTrace({ context: guard.context, id, runDir, secrets, storageState: options.storageState });
     await guard.close();
   }
   if (guard.blocks.length) {

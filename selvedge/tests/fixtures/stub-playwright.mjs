@@ -12,6 +12,8 @@
 // set, `launch <json>` (the launch options), `newContext <json>` (the context options) and
 // `storageState` (each context.storageState call) are appended to it, one per line.
 // context.storageState({ path }) returns STUB_STATE and, given a path, writes it there as JSON.
+// With $STUB_PW_STATE_ERROR set, newContext throws that message when given a storageState (as real
+// Playwright does, "Error setting storage state", for a state it refuses).
 // locator.count() is 1 unless $STUB_PW_COUNTS_FILE (re-read on every call, so a test can change it
 // while a command waits) or else $STUB_PW_COUNTS holds a JSON object naming the locator's key:
 // `role:<role>` or `role:<role>:<name>`, `label:<label>`, `text:<text>`, `testid:<id>`, `css:<sel>`.
@@ -100,6 +102,7 @@ export const chromium = {
     return {
       newContext: async (options) => {
         optsLog(`newContext ${JSON.stringify(options === undefined ? null : options)}`);
+        if (env.STUB_PW_STATE_ERROR && options && options.storageState) throw new Error(env.STUB_PW_STATE_ERROR);
         return context;
       },
       close: async () => {},

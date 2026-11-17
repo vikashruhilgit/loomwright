@@ -103,12 +103,25 @@ export function authEnvValues(config, env = process.env, taken = []) {
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const SAME_SITE = ['Strict', 'Lax', 'None'];
+// Playwright's largest cookie `expires` (network.js kMaxCookieExpiresDateInSeconds: 9999-12-31).
+export const MAX_COOKIE_EXPIRES = 253402300799;
+
+function isHttpUrl(s) {
+  try {
+    const u = new URL(s);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 // storageStateProblem(data) → why Playwright would refuse `data` as a context's storageState, or
 // null. Mirrors what Playwright checks before a context opens (its protocol validator and its cookie
-// rules): an object whose optional `cookies` is an array of cookies (string name and value, typed
-// optional fields, and a url or else a domain and path) and whose optional `origins` is an array of
-// { origin, localStorage: [{ name, value }] }.
+// rules, network.js rewriteCookies): an object whose optional `cookies` is an array of cookies (string
+// name and value, typed optional fields, a url or else a domain and path, an `expires` of -1 or a unix
+// time up to MAX_COOKIE_EXPIRES, a url that is http or https) and whose optional `origins` is an array
+// of { origin, localStorage: [{ name, value }] }. A rule it does not model still reaches needs_auth:
+// a context Playwright refuses with "storage state" in the error is needs_auth too (isStorageStateError).
 export function storageStateProblem(data) {
   if (!isPlainObject(data)) return 'is not a storage state (a JSON object)';
   const opt = (v, type) => v === undefined || typeof v === type;
@@ -123,6 +136,10 @@ export function storageStateProblem(data) {
         return bad('has a field of the wrong type');
       }
       if (c.url ? c.domain || c.path : !(c.domain && c.path)) return bad('needs a url, or else a domain and a path');
+      if (c.expires !== undefined && c.expires !== 0 && c.expires !== -1 && !(c.expires > 0 && c.expires <= MAX_COOKIE_EXPIRES)) {
+        return bad(`has expires ${c.expires} (only -1, or a unix time in seconds up to ${MAX_COOKIE_EXPIRES})`);
+      }
+      if (c.url !== undefined && !isHttpUrl(c.url)) return bad('has a url that is not an http or https URL');
     }
   }
   if (data.origins !== undefined) {
@@ -145,4 +162,35 @@ export function stateFileProblem(file) {
     return e && e.code ? `cannot be read (${e.code})` : 'is not valid JSON';
   }
   return storageStateProblem(data);
+}
+
+// isStorageStateError(e) → true when Playwright refused to open a context because of the storage state
+// it was given ("Error setting storage state"): the session file is the problem, so the fix is to sign
+// in again (needs_auth), not to install Playwright.
+export function isStorageStateError(e) {
+  return /storage ?state/i.test(String(e && e.message ? e.message : e));
+}
+
+// sessionValues(file) → every cookie value and localStorage value the session file holds (non-empty
+// strings), for the trace redaction (runner/trace-redact.mjs `values`). Fails safe: an unreadable or
+// malformed file gives [] (such a file never opens a context, so it reaches no trace).
+export function sessionValues(file) {
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(data)) return [];
+  const values = [];
+  const add = (v) => {
+    if (typeof v === 'string' && v !== '') values.push(v);
+  };
+  if (Array.isArray(data.cookies)) for (const c of data.cookies) if (isPlainObject(c)) add(c.value);
+  if (Array.isArray(data.origins)) {
+    for (const o of data.origins) {
+      if (isPlainObject(o) && Array.isArray(o.localStorage)) for (const e of o.localStorage) if (isPlainObject(e)) add(e.value);
+    }
+  }
+  return values;
 }

@@ -59,7 +59,7 @@ mkdir -p "$HOME" "$TMP/o"
 unset SELVEDGE_PLANNER SELVEDGE_PLAYWRIGHT_MODULE SELVEDGE_ENTRY SELVEDGE_RUN_BUDGET_MS \
   SELVEDGE_PLANNER_TOKEN_BUDGET SELVEDGE_STEP_TIMEOUT_MS SELVEDGE_RUN_DIR SELVEDGE_BASE NODE_PATH \
   PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK STUB_PW_GOTO_MS STUB_PW_TEXT STUB_PW_COUNTS \
-  STUB_PW_COUNTS_FILE STUB_PW_OPTS_LOG STUB_PLANNER_MODE STUB_PLANNER_LOG SELVEDGE_STORAGE_STATE \
+  STUB_PW_COUNTS_FILE STUB_PW_OPTS_LOG STUB_PW_STATE_ERROR STUB_PLANNER_MODE STUB_PLANNER_LOG SELVEDGE_STORAGE_STATE \
   SELVEDGE_AUTH_TIMEOUT_MS
 export APP_USER='alice-7Qx'
 export APP_PASS='pw-Zk93-fixture-never-printed'
@@ -357,11 +357,49 @@ RUN_FLAGS="--non-interactive" RUN_CWD="$R5" run ac7-shape "$F7s" "$STUB"
 check "with signed_in_check, a JSON object Playwright refuses (cookies not an array): BLOCKED needs_auth from the check, no browser opened" \
   'rc === 2 && vc(0).reason === "needs_auth" && err.includes("cookies is not an array") && launches() === 0'
 cp "$TMP/state-copy.json" "$S5"
+printf '{"cookies": [{"name": "s", "value": "v", "domain": "localhost", "path": "/", "expires": -5}]}' > "$SS"
+FS4="$(folder nocheck-expires "$RS" "$(stub_spec 19)")"
+RUN_CWD="$RS" run nocheck-expires "$FS4" "$STUB"
+check "a cookie whose expires is negative but not -1 (Playwright refuses it): BLOCKED needs_auth naming the expires rule, no browser opened" \
+  'rc === 2 && vc(0).reason === "needs_auth" && err.includes("has expires -5") && launches() === 0'
+printf '{"cookies": [{"name": "s", "value": "v", "url": "not a url"}]}' > "$SS"
+FS5="$(folder nocheck-url "$RS" "$(stub_spec 20)")"
+RUN_CWD="$RS" run nocheck-url "$FS5" "$STUB"
+check "a cookie whose url is not an http(s) URL (Playwright refuses it): BLOCKED needs_auth, no browser opened" \
+  'rc === 2 && vc(0).reason === "needs_auth" && err.includes("not an http or https URL") && launches() === 0'
 printf '{"cookies":[],"origins":[]}' > "$SS"
+FS6="$(folder nocheck-pwrefuses "$RS" "$(stub_spec 21)")"
+RUN_CWD="$RS" run nocheck-pwrefuses "$FS6" "$STUB" "STUB_PW_STATE_ERROR=browser.newContext: Error setting storage state:"
+check "Playwright refuses a stored session the check passed (a rule it does not model): the criterion is BLOCKED needs_auth, never playwright_unavailable" \
+  'rc === 2 && vc(0).reason === "needs_auth"'
+F7p="$(folder ac7-pwrefuses "$R5" "$(stub_spec 22)")"
+RUN_FLAGS="--non-interactive" RUN_CWD="$R5" run ac7-pwrefuses "$F7p" "$STUB" "STUB_PW_STATE_ERROR=browser.newContext: Error setting storage state:"
+check "with signed_in_check, Playwright refuses the stored session: the check says needs_auth (never playwright_unavailable), one launch" \
+  'rc === 2 && vc(0).reason === "needs_auth" && launches() === 1 && err.includes("would not load the stored session")'
 FS3="$(folder nocheck-ok "$RS" "$(stub_spec 18)")"
 RUN_CWD="$RS" run nocheck-ok "$FS3" "$STUB"
 check "no signed_in_check, a stored session Playwright loads: the criterion runs (PASS) from it" \
   'rc === 0 && vc(0).verdict === "PASS" && ctxs().length === 1 && ctxs()[0].storageState === E.SS'
+
+echo "-- run --trace: the stored session's cookie and localStorage values never reach a kept trace (no browser)"
+tr="$(node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const T = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/runner/trace-redact.mjs').href);
+const state = { cookies: [{ name: 'sid', value: 'COOKIEVAL7f3a9', domain: 'localhost', path: '/', expires: -1 }], origins: [{ origin: 'http://localhost:9', localStorage: [{ name: 'token', value: 'LSTOKENq8z2x' }] }] };
+const line = (o) => JSON.stringify(o);
+const entry = (name, text) => ({ name, nameBytes: Buffer.from(name), flags: 0x0800, time: 0, date: 33, data: Buffer.from(text) });
+const trace = [line({ type: 'context-options', options: { serviceWorkers: 'block', storageState: state } }), line({ type: 'frame-snapshot', html: '<p>LSTOKENq8z2x</p>' })].join(String.fromCharCode(10));
+const zip = T.readZip(T.writeZip([entry('trace.trace', trace)]));
+const a = T.redactEntries(zip, []).entries[0].data.toString();
+const b = T.redactEntries([entry('trace.trace', line({ type: 'frame-snapshot', html: '<i>OTHERLS-41</i>' }))], [], ['OTHERLS-41']).entries[0].data.toString();
+process.stdout.write(JSON.stringify({ a, b }));
+" 2>&1)"
+export TR="$tr"
+node -e 'const { a, b } = JSON.parse(process.env.TR); process.exit(!a.includes("LSTOKENq8z2x") && !a.includes("COOKIEVAL7f3a9") && a.includes("\"storageState\":\"[redacted]\"") && a.includes("<p>[redacted]</p>") && !b.includes("OTHERLS-41") ? 0 : 1)' 2>/dev/null \
+  && ok "trace-redact: the context-options storageState becomes [redacted], and a localStorage value is redacted wherever the trace shows it; a passed session value is redacted too" \
+  || ko "trace-redact kept a session value: $(printf '%s' "$tr" | head -c 900)"
+grep -qE "sessionValues\(storageState\)" "$LIB/runner/execute.mjs" \
+  && ok "execute.mjs hands the stored session's values to the trace redaction" || ko "execute.mjs does not pass sessionValues to redactTraceZip"
 
 echo "-- real Chromium: AC5, AC6, AC7, AC9 against the fixture app's login wall"
 HOME="$REAL_HOME" pw_require_or_skip; pwrc=$?
@@ -403,6 +441,20 @@ if [ "$pwrc" -eq 0 ]; then
   leak="$(grep -rlF --exclude-dir=screenshots "$APP_PASS" "$FR6" "$RR/.selvedge/runs.jsonl" "$OUT" "$ERR" 2>/dev/null)"
   [ -z "$leak" ] && ok "AC9 (Chromium) grep -rF \$APP_PASS over the run folder (screenshots aside), runs.jsonl and stdout / stderr finds nothing" \
     || ko "AC9 (Chromium) the password leaked into: $leak"
+
+  SR="$(state_of "$RR")"
+  cp "$SR" "$TMP/state-real.json"
+  export LS_TOKEN='LSTOKEN-q8z2x-fixture'
+  node -e 'const [f, o] = process.argv.slice(1); const s = JSON.parse(require("fs").readFileSync(f, "utf8")); s.origins = [{ origin: o, localStorage: [{ name: "token", value: process.env.LS_TOKEN }] }]; require("fs").writeFileSync(f, JSON.stringify(s));' "$SR" "$AURL"
+  COOKIE_VAL="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).cookies[0].value)' "$SR")"
+  FRT="$(folder rtrace "$RR" "{\"criteria\":[$AUTH_C]}")"
+  RUN_FLAGS="--trace" RUN_CWD="$RR" run rtrace "$FRT" "$PW"
+  check "--trace (Chromium) with a stored session holding a localStorage token: PASS and the trace is kept, redacted" \
+    'rc === 0 && vc(0).verdict === "PASS" && fs.readdirSync(path.join(E.DIR, "traces")).length === 1 && err.includes("(redacted)")'
+  leak="$(grep -rlF -e "$LS_TOKEN" -e "$COOKIE_VAL" "$FRT" "$RR/.selvedge/runs.jsonl" "$OUT" "$ERR" 2>/dev/null)"
+  { [ -n "$COOKIE_VAL" ] && [ -z "$leak" ]; } && ok "--trace (Chromium) the session's cookie value and localStorage token appear nowhere in the run folder (trace zip included), runs.jsonl or stdout / stderr" \
+    || ko "--trace (Chromium) a session value leaked into: ${leak:-<no cookie value read>}"
+  cp "$TMP/state-real.json" "$SR"
 
   node -e 'fetch(process.env.AURL + "/control/expire-sessions").then((r) => r.text())' >/dev/null
   FR7="$(folder r7 "$RR" "{\"criteria\":[$AUTH_C]}")"

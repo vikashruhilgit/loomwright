@@ -27,9 +27,10 @@
 // Node >= 18, standard library only (Playwright is resolved at run time).
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, lstatSync, openSync, renameSync, rmSync, chmodSync, writeSync } from 'node:fs';
+import { chmodSync, lstatSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS, UsageError, isLocalOrigin, isMain, loadConfig, parseCliArgs } from './env-config.mjs';
+import { writePrivateFileAtomic } from './env-approvals.mjs';
 import { FILE_MODE, STORAGE_STATE_ENV, ensureStateDir, stateFileProblem, usableStatePath, validateSignedInCheck } from './auth-state.mjs';
 import { SELVEDGE_BIN } from './plan.mjs';
 import { firstLine, resolvePlaywright } from './snapshot-playwright.mjs';
@@ -90,25 +91,10 @@ function tempBeside(file, suffix) {
   return path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomBytes(6).toString('hex')}${suffix}`);
 }
 
-// Writes `data` to `file` atomically (temp file created 0600 + rename), whatever the umask.
+// Writes `data` to `file` atomically, mode exactly 0600 whatever the umask (the one writer the
+// approvals store uses too, env-approvals.mjs writePrivateFileAtomic).
 function writeStateFile(file, data) {
-  const tmp = tempBeside(file, '.tmp');
-  let fd;
-  try {
-    fd = openSync(tmp, 'wx', FILE_MODE);
-    writeSync(fd, `${JSON.stringify(data)}\n`);
-    fsyncSync(fd);
-    closeSync(fd);
-    fd = undefined;
-    chmodSync(tmp, FILE_MODE);
-    renameSync(tmp, file);
-  } catch (e) {
-    if (fd !== undefined) {
-      try { closeSync(fd); } catch { /* already closed */ }
-    }
-    rmSync(tmp, { force: true });
-    throw e;
-  }
+  writePrivateFileAtomic(file, `${JSON.stringify(data)}\n`, { exactMode: true });
 }
 
 // ---- auth setup (the hook) ---------------------------------------------------------------------

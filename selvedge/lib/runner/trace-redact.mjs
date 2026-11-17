@@ -1,6 +1,6 @@
 // runner/trace-redact.mjs — strips secrets from a Playwright trace zip before `run --trace` keeps it.
 //
-// redactTraceZip(inFile, outFile, { secrets }) reads the zip Playwright wrote, redacts every entry
+// redactTraceZip(inFile, outFile, { secrets, values }) reads the zip Playwright wrote, redacts every entry
 // that decodes as UTF-8 text (trace.trace, trace.network, trace.stacks, resources/*), and writes
 // outFile (a temp name, then a rename). → { kept: true, entries } or { kept: false, why }: a zip it
 // cannot read whole — zip64, encryption, a compression method other than stored / deflate, a CRC or
@@ -15,6 +15,10 @@
 //      whole trace, and every Authorization value (whole, and its credentials after the scheme), is
 //      replaced by "[redacted]" wherever it appears — in a page's HTML, a script, a snapshot
 //   3. every resolved {{NAME}} value of the run goes back to {{NAME}} (redactValues, snapshot.mjs)
+//   4. a `storageState` key's whole value becomes "[redacted]" (the context-options event records the
+//      context's storage state), and every value in a `cookies` or `localStorage` list of
+//      { name, value } — and every value passed in `values` (the stored session's, execute.mjs) — is
+//      replaced by "[redacted]" wherever it appears, as in 2
 // JSON lines are parsed and redacted string by string (so they stay valid JSON); other text is
 // redacted as text. Binary entries (images) are copied, and the whole trace is dropped when one
 // holds a secret's bytes. A value the page shows transformed (cut, reversed) is not caught — the
@@ -34,6 +38,12 @@ export const REDACTED = '[redacted]';
 // Header names (lower case) whose values are never kept.
 export const REDACTED_HEADERS = Object.freeze(['cookie', 'set-cookie', 'authorization']);
 const COOKIE_HEADERS = Object.freeze(['cookie', 'set-cookie']);
+// Keys whose array holds { name, value } entries whose every value is a secret (HAR / storage-state
+// cookies, a storage state's origins[].localStorage).
+const VALUE_LISTS = Object.freeze(['cookies', 'localStorage']);
+// Keys whose whole value is replaced by REDACTED: the context's storage state, which Playwright
+// records in the trace's context-options event.
+export const REDACTED_KEYS = Object.freeze(['storageState']);
 
 const SIG = Object.freeze({ local: 0x04034b50, central: 0x02014b50, end: 0x06054b50, end64Locator: 0x07064b50 });
 const METHOD = Object.freeze({ stored: 0, deflate: 8 });
@@ -229,11 +239,12 @@ function collectHeader(name, value, into) {
   }
 }
 
-// Walks a parsed JSON value, collecting secret values from headers and HAR cookie entries.
+// Walks a parsed JSON value, collecting secret values from headers, HAR cookie entries and a storage
+// state's cookies and localStorage entries.
 function collectJson(v, into, key = null) {
   if (Array.isArray(v)) {
     for (const x of v) {
-      if (key === 'cookies' && isPlainObject(x) && typeof x.value === 'string' && x.value !== '') into.add(x.value);
+      if (VALUE_LISTS.includes(key) && isPlainObject(x) && typeof x.value === 'string' && x.value !== '') into.add(x.value);
       collectJson(x, into);
     }
     return;
@@ -273,7 +284,7 @@ function redactJson(v, replaceValues, secrets) {
   const out = {};
   for (const [k, x] of Object.entries(v)) {
     const key = redactString(k, replaceValues, secrets);
-    if ((headerObject && k === 'value') || (isRedactedHeader(k) && typeof x === 'string')) out[key] = REDACTED;
+    if ((headerObject && k === 'value') || (isRedactedHeader(k) && typeof x === 'string') || (REDACTED_KEYS.includes(k) && x !== null && x !== undefined)) out[key] = REDACTED;
     else out[key] = redactJson(x, replaceValues, secrets);
   }
   return out;
@@ -307,8 +318,10 @@ function redactRaw(line, replaceValues, secrets) {
   return redactString(headersGone, replaceValues, secrets);
 }
 
-// redactEntries(entries, secrets) → { entries, leaked: null | entry name }. Pure: no file access.
-export function redactEntries(entries, secretList = []) {
+// redactEntries(entries, secrets, values) → { entries, leaked: null | entry name }. Pure: no file
+// access. `values` are raw strings redacted as cookie values are (the stored session's, known before
+// the trace is read).
+export function redactEntries(entries, secretList = [], extraValues = []) {
   const secrets = Object.assign([...secretList], { forms: secretList.flatMap((s) => encodedForms(s.value)) });
   const texts = entries.map((e) => {
     try {
@@ -318,7 +331,7 @@ export function redactEntries(entries, secretList = []) {
     }
   });
   // pass 1: every cookie and Authorization value in the whole trace
-  const values = new Set();
+  const values = new Set(extraValues.filter((v) => typeof v === 'string' && v !== ''));
   for (const text of texts) {
     if (text === null) continue;
     for (const line of text.split('\n')) {
@@ -347,8 +360,8 @@ export function redactEntries(entries, secretList = []) {
   return { entries: out, leaked: null };
 }
 
-// redactTraceZip(inFile, outFile, { secrets }) → { kept: true, entries } | { kept: false, why }
-export function redactTraceZip(inFile, outFile, { secrets = [] } = {}) {
+// redactTraceZip(inFile, outFile, { secrets, values }) → { kept: true, entries } | { kept: false, why }
+export function redactTraceZip(inFile, outFile, { secrets = [], values = [] } = {}) {
   let entries;
   try {
     entries = readZip(readFileSync(inFile));
@@ -356,7 +369,7 @@ export function redactTraceZip(inFile, outFile, { secrets = [] } = {}) {
     if (e instanceof TraceZipError) return { kept: false, why: e.message };
     return { kept: false, why: `unreadable (${e && e.code ? e.code : e && e.message})` };
   }
-  const red = redactEntries(entries, secrets);
+  const red = redactEntries(entries, secrets, values);
   if (red.leaked !== null) return { kept: false, why: `a binary entry holds a secret value (${red.leaked})` };
   const tmp = `${outFile}.tmp-${process.pid}`;
   try {

@@ -6,7 +6,7 @@
 // when the locator matches at least one element within the step timeout. Anything else — the page
 // answers >= 400, a redirect the guard refuses, the locator matching nothing (a login page instead),
 // a stored session file Playwright would not load (auth-state.mjs stateFileProblem, read before any
-// browser opens) — is needs_auth. A guarded browser that does not open is that failure's own reason
+// browser opens, or Playwright's own "storage state" refusal, isStorageStateError) — is needs_auth. A guarded browser that does not open is that failure's own reason
 // (its EnvError's reason, else playwright_unavailable), never needs_auth.
 //
 // signedInGate decides what a failed check means for the run:
@@ -18,7 +18,7 @@
 // `run` never signs in itself: it never runs the auth_setup hook (only `selvedge auth setup` does).
 //
 // Node >= 18, standard library only (Playwright is the caller's; never imported here).
-import { stateFileProblem } from '../auth-state.mjs';
+import { isStorageStateError, stateFileProblem } from '../auth-state.mjs';
 import { EnvError, REASONS, readOneLine } from '../env-config.mjs';
 import { NAVIGATION_TIMEOUT_MS, STEP_TIMEOUT_MS, redactValues } from '../snapshot.mjs';
 import { firstLine } from '../snapshot-playwright.mjs';
@@ -48,6 +48,9 @@ export async function checkSignedIn({ chromium, config, storageState = null, ste
   try {
     guard = await openGuardedContext(options);
   } catch (e) {
+    if (options.storageState && !(e instanceof EnvError) && isStorageStateError(e)) {
+      return { signedIn: false, reason: REASONS.needs_auth, detail: `Playwright would not load the stored session ${storageState}: ${clean(firstLine(e))}` };
+    }
     return { signedIn: false, reason: e instanceof EnvError ? e.reason : REASONS.playwright_unavailable, detail: `the guarded browser did not open for the sign-in check: ${clean(firstLine(e))}` };
   }
   const session = storageState ? 'with the stored session (it may have expired)' : 'with no stored session';

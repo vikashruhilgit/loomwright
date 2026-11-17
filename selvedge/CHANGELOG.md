@@ -32,9 +32,15 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
 - Every `auth.env` value is redacted like a `{{NAME}}` value (written back as `{{NAME}}`) in
   `evidence.jsonl`, `verdict.json`, traces and stderr, and in what `selvedge snapshot` prints (the
   page a planner looks at), so a credential a page shows reaches the planner only as `{{NAME}}`.
-- A stored session file Playwright would not load (not JSON, or a JSON object without a storage
-  state's `cookies` / `origins` shape) is BLOCKED `needs_auth` before any browser opens, with or
-  without `auth.signed_in_check`; `auth setup` keeps no hook-written file of that kind.
+- `run --trace` with a stored session keeps no session value: the storage state Playwright records
+  in the trace's context options reads `[redacted]`, and every cookie and local storage value the
+  session holds is replaced by `[redacted]` wherever the trace shows it.
+- A stored session file Playwright would not load (not JSON, a JSON object without a storage
+  state's `cookies` / `origins` shape, or a cookie breaking Playwright's rules: `expires` other than
+  -1 or a unix time up to year 9999, a `url` that is not `http`/`https`) is BLOCKED `needs_auth`
+  before any browser opens, with or without `auth.signed_in_check`; `auth setup` keeps no
+  hook-written file of that kind. A session Playwright still refuses when a context opens is
+  `needs_auth` too, never `playwright_unavailable`.
 - The README documents `auth setup`, where the session lives, the `needs_auth` behaviour, and the
   honest limit: an agent with shell access can read any file you can, so selvedge keeps secrets out
   of plans, evidence, PR comments and model prompts, and does not claim they are out of reach.

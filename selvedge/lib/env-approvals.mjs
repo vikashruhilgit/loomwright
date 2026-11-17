@@ -146,14 +146,27 @@ export function writeApproval({ root, identity, sha256, env = process.env }) {
   const data = read.data;
   data.schema_version = APPROVALS_SCHEMA_VERSION;
   data.approvals[identity] = { hooks_sha256: sha256, approved_at: new Date().toISOString() };
-  const tmp = path.join(dir, `.approvals.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  writePrivateFileAtomic(file, `${JSON.stringify(data, null, 2)}\n`, { tmpStem: 'approvals' });
+  return file;
+}
+
+// writePrivateFileAtomic(file, text, { tmpStem, exactMode }) — the ONE atomic 0600 writer of the
+// user-scoped stores (approvals.json here, the auth state in auth.mjs): a temp file
+// `.<tmpStem>.<pid>.<random>.tmp` beside `file`, created exclusively with FILE_MODE (umask can only
+// narrow it), written and fsynced, then renamed over `file`; on any failure the temp file is removed
+// and the error thrown. `exactMode` also chmods the temp file to FILE_MODE before the rename, so a
+// umask that narrowed it cannot leave the owner unable to read it back. tmpStem defaults to the
+// file's base name.
+export function writePrivateFileAtomic(file, text, { tmpStem = path.basename(file), exactMode = false } = {}) {
+  const tmp = path.join(path.dirname(file), `.${tmpStem}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   let fd;
   try {
     fd = openSync(tmp, 'wx', FILE_MODE);
-    writeSync(fd, `${JSON.stringify(data, null, 2)}\n`);
+    writeSync(fd, text);
     fsyncSync(fd);
     closeSync(fd);
     fd = undefined;
+    if (exactMode) chmodSync(tmp, FILE_MODE);
     renameSync(tmp, file);
   } catch (err) {
     if (fd !== undefined) {
@@ -162,5 +175,4 @@ export function writeApproval({ root, identity, sha256, env = process.env }) {
     rmSync(tmp, { force: true });
     throw err;
   }
-  return file;
 }

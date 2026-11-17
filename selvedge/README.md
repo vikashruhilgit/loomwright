@@ -470,8 +470,10 @@ new folder behind.
 before it is written: every `Cookie`, `Set-Cookie` and `Authorization` header value reads
 `[redacted]`; every cookie value seen in any of those headers, and every `Authorization` value, is
 replaced by `[redacted]` wherever it appears in the trace (a page's HTML or script included); and
-every resolved `{{NAME}}` value goes back to `{{NAME}}`. The raw trace is written to a private
-temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
+every resolved `{{NAME}}` value goes back to `{{NAME}}`. With a stored sign-in session (below), the
+storage state Playwright records for the context reads `[redacted]`, and every cookie and local
+storage value the session holds is replaced by `[redacted]` wherever it appears. The raw trace is
+written to a private temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
 and a trace it cannot redact whole (zip64, encryption, an unknown compression method, a bad
 checksum, a binary entry holding a secret) is dropped, never kept: stderr says
 `trace: dropped (<why>)`. Traces carry DOM snapshots but no screenshots (an image of a typed value
@@ -497,7 +499,8 @@ plan or run, and keeps the session (a Playwright storage state: cookies and loca
   value) and the hook does not run. The hook writes the storage state as JSON to the path in
   `SELVEDGE_STORAGE_STATE`; a hook that exits 0 without writing it, or writes something that is not a
   storage state Playwright loads (a JSON object whose `cookies` and `origins` have Playwright's
-  shape), exits 1 and nothing is kept. With no `hooks.auth_setup` and no `--headed` it is a usage
+  shape and cookie rules: an `expires` of -1 or a unix time, an `http`/`https` `url`), exits 1 and
+  nothing is kept. With no `hooks.auth_setup` and no `--headed` it is a usage
   error naming both.
 - **`setup --headed`** needs `auth.signed_in_check`: it opens the guarded browser visibly at its
   `url` and waits (up to `SELVEDGE_AUTH_TIMEOUT_MS`, default 300000) while you sign in, until the
@@ -513,8 +516,9 @@ unchanged): every criterion's context starts from the stored session when the fi
 value of every variable `auth.env` names is redacted like a `{{NAME}}` value (written back as
 `{{APP_PASS}}`) in `evidence.jsonl`, `verdict.json` and stderr (and in what `selvedge snapshot`
 prints, the page a planner looks at). A stored session file Playwright would not load (not JSON, or
-not a storage state's shape) makes every criterion BLOCKED `needs_auth` before any browser opens,
-with or without a sign-in check. With `auth.signed_in_check` set, the
+not a storage state's shape or cookie rules) makes every criterion BLOCKED `needs_auth` before any
+browser opens, with or without a sign-in check; a session Playwright itself refuses when the context
+opens is `needs_auth` too, never `playwright_unavailable`. With `auth.signed_in_check` set, the
 run checks the sign-in **once**, after the hooks and before the first criterion: one guarded
 context with the stored session opens the check `url`, and the locator must match at least one
 element within `SELVEDGE_STEP_TIMEOUT_MS`. When it does not (no session, an expired one, a redirect
