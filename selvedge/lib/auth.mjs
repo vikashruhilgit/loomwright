@@ -11,8 +11,9 @@
 //                    approved hook through `selvedge env hook auth_setup` with SELVEDGE_STORAGE_STATE
 //                    set to a temp path beside the state file (its exit 2 and `BLOCKED <reason>` line
 //                    are passed through; any other failure is exit 1); the hook's file must be a
-//                    regular file holding a JSON object, else exit 1 with nothing kept; then it is made
-//                    0600 and renamed into place. The credentials reach the hook through the
+//                    regular file holding a storage state Playwright loads (auth-state.mjs
+//                    stateFileProblem, the check `run` makes too), else exit 1 with nothing kept; then
+//                    it is made 0600 and renamed into place. The credentials reach the hook through the
 //                    environment it inherits; selvedge never reads, prints or stores a value.
 //   setup --headed   a human signs in: needs `auth.signed_in_check` (validateSignedInCheck first, so a
 //                    CSS locator is config_schema_violation before anything launches), opens the
@@ -26,10 +27,10 @@
 // Node >= 18, standard library only (Playwright is resolved at run time).
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, rmSync, chmodSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, lstatSync, openSync, renameSync, rmSync, chmodSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS, UsageError, isLocalOrigin, isMain, loadConfig, parseCliArgs } from './env-config.mjs';
-import { FILE_MODE, STORAGE_STATE_ENV, ensureStateDir, usableStatePath, validateSignedInCheck } from './auth-state.mjs';
+import { FILE_MODE, STORAGE_STATE_ENV, ensureStateDir, stateFileProblem, usableStatePath, validateSignedInCheck } from './auth-state.mjs';
 import { SELVEDGE_BIN } from './plan.mjs';
 import { firstLine, resolvePlaywright } from './snapshot-playwright.mjs';
 import { openGuardedContext } from './runner/route-guard.mjs';
@@ -145,15 +146,8 @@ function setupWithHook({ config, root, base }) {
       throw new Error(`the auth_setup hook exited 0 but wrote nothing to $${STORAGE_STATE_ENV}; nothing was written`);
     }
     if (!st.isFile()) throw new Error(`$${STORAGE_STATE_ENV} is not a regular file after the hook (a symlink or a directory is never kept); nothing was written`);
-    let data;
-    try {
-      data = JSON.parse(readFileSync(tmp, 'utf8'));
-    } catch (e) {
-      throw new Error(`the file the hook wrote to $${STORAGE_STATE_ENV} is not valid JSON (${firstLine(e)}); nothing was written`);
-    }
-    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
-      throw new Error(`the file the hook wrote to $${STORAGE_STATE_ENV} is not a Playwright storage state (a JSON object); nothing was written`);
-    }
+    const problem = stateFileProblem(tmp); // the same check `run` makes before it loads the file
+    if (problem) throw new Error(`the file the hook wrote to $${STORAGE_STATE_ENV} ${problem}; nothing was written`);
     chmodSync(tmp, FILE_MODE);
     renameSync(tmp, file);
   } finally {

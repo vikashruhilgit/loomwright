@@ -8,9 +8,14 @@
 // same constants, as the user-scoped approvals store — and a path that resolves inside the repo is
 // never written or read (insideRepo, also from env-approvals.mjs). Nothing here copies those rules.
 //
+// stateFileProblem is the ONE check that a session file is a storage state Playwright loads (every
+// reader and writer of the file asks it: `auth setup` before it keeps a hook's file, `run` before any
+// browser opens with it). authEnvValues is the ONE list of the `auth.env` values a command redacts
+// (`run`'s evidence and stderr, `snapshot`'s output, which is what a planner reads).
+//
 // Node >= 18, standard library only.
 import { createHash } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS } from './env-config.mjs';
 import { DIR_MODE, FILE_MODE, insideRepo, repoIdentity } from './env-approvals.mjs';
@@ -85,4 +90,59 @@ export function validateSignedInCheck(config) {
     throw new EnvError(REASONS.config_schema_violation, `"auth.signed_in_check": ${detail}`);
   }
   return steps;
+}
+
+// authEnvValues(config, env, taken) → [{ name, value }] (the redaction list's shape, snapshot.mjs
+// redactValues) for each `auth.env` name set to a non-empty value and not already in `taken`.
+export function authEnvValues(config, env = process.env, taken = []) {
+  const names = config && config.auth ? config.auth.env : [];
+  return names
+    .filter((n) => typeof env[n] === 'string' && env[n] !== '' && !taken.some((s) => s.name === n))
+    .map((n) => ({ name: n, value: env[n] }));
+}
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const SAME_SITE = ['Strict', 'Lax', 'None'];
+
+// storageStateProblem(data) → why Playwright would refuse `data` as a context's storageState, or
+// null. Mirrors what Playwright checks before a context opens (its protocol validator and its cookie
+// rules): an object whose optional `cookies` is an array of cookies (string name and value, typed
+// optional fields, and a url or else a domain and path) and whose optional `origins` is an array of
+// { origin, localStorage: [{ name, value }] }.
+export function storageStateProblem(data) {
+  if (!isPlainObject(data)) return 'is not a storage state (a JSON object)';
+  const opt = (v, type) => v === undefined || typeof v === type;
+  if (data.cookies !== undefined) {
+    if (!Array.isArray(data.cookies)) return 'is not a storage state (cookies is not an array)';
+    for (const [i, c] of data.cookies.entries()) {
+      const bad = (why) => `is not a storage state (cookies[${i}] ${why})`;
+      if (!isPlainObject(c)) return bad('is not an object');
+      if (typeof c.name !== 'string' || c.name === '' || typeof c.value !== 'string') return bad('needs a string name and value');
+      if (!opt(c.url, 'string') || !opt(c.domain, 'string') || !opt(c.path, 'string') || !opt(c.expires, 'number')
+        || !opt(c.httpOnly, 'boolean') || !opt(c.secure, 'boolean') || !(c.sameSite === undefined || SAME_SITE.includes(c.sameSite))) {
+        return bad('has a field of the wrong type');
+      }
+      if (c.url ? c.domain || c.path : !(c.domain && c.path)) return bad('needs a url, or else a domain and a path');
+    }
+  }
+  if (data.origins !== undefined) {
+    if (!Array.isArray(data.origins)) return 'is not a storage state (origins is not an array)';
+    for (const [i, o] of data.origins.entries()) {
+      const ok = isPlainObject(o) && typeof o.origin === 'string' && Array.isArray(o.localStorage)
+        && o.localStorage.every((e) => isPlainObject(e) && typeof e.name === 'string' && typeof e.value === 'string');
+      if (!ok) return `is not a storage state (origins[${i}] needs an origin and a localStorage list of { name, value })`;
+    }
+  }
+  return null;
+}
+
+// stateFileProblem(file) → why the session file at `file` cannot be loaded, or null.
+export function stateFileProblem(file) {
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (e) {
+    return e && e.code ? `cannot be read (${e.code})` : 'is not valid JSON';
+  }
+  return storageStateProblem(data);
 }

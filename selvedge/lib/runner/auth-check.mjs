@@ -5,8 +5,9 @@
 // the stored session (auth-state.mjs; none when no state file exists), goes to that page and passes
 // when the locator matches at least one element within the step timeout. Anything else — the page
 // answers >= 400, a redirect the guard refuses, the locator matching nothing (a login page instead),
-// a stored session file that is not a JSON object (read before any browser opens) — is needs_auth. A guarded browser that does not open is that failure's own reason (its EnvError's
-// reason, else playwright_unavailable), never needs_auth.
+// a stored session file Playwright would not load (auth-state.mjs stateFileProblem, read before any
+// browser opens) — is needs_auth. A guarded browser that does not open is that failure's own reason
+// (its EnvError's reason, else playwright_unavailable), never needs_auth.
 //
 // signedInGate decides what a failed check means for the run:
 //   non-interactive (stdin is not a terminal, or `run --non-interactive`): one check only; a failure
@@ -16,14 +17,9 @@
 //                  goes on or returns needs_auth. There is never a third check.
 // `run` never signs in itself: it never runs the auth_setup hook (only `selvedge auth setup` does).
 //
-// authEnvValues lists the values of the environment variables `auth.env` names, as the run's
-// redaction list takes them ({ name, value }), so a credential a page shows is written back as
-// {{NAME}}.
-//
 // Node >= 18, standard library only (Playwright is the caller's; never imported here).
-import { readFileSync } from 'node:fs';
-import readline from 'node:readline';
-import { EnvError, REASONS } from '../env-config.mjs';
+import { stateFileProblem } from '../auth-state.mjs';
+import { EnvError, REASONS, readOneLine } from '../env-config.mjs';
 import { NAVIGATION_TIMEOUT_MS, STEP_TIMEOUT_MS, redactValues } from '../snapshot.mjs';
 import { firstLine } from '../snapshot-playwright.mjs';
 import { openGuardedContext } from './route-guard.mjs';
@@ -34,38 +30,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // What a person can run to sign in (named in every needs_auth message).
 export const SIGN_IN_HINT = '`selvedge auth setup --headed` (you sign in, in a browser window), or `selvedge auth setup` (the approved hooks.auth_setup)';
-
-// authEnvValues(config, env, taken) → [{ name, value }] for each `auth.env` name set to a non-empty
-// value and not already in `taken` (the run's other secrets).
-export function authEnvValues(config, env = process.env, taken = []) {
-  const names = config && config.auth ? config.auth.env : [];
-  return names
-    .filter((n) => typeof env[n] === 'string' && env[n] !== '' && !taken.some((s) => s.name === n))
-    .map((n) => ({ name: n, value: env[n] }));
-}
-
-// Why the stored session file cannot be loaded (Playwright would refuse it), or null.
-function stateFileProblem(file) {
-  let data;
-  try {
-    data = JSON.parse(readFileSync(file, 'utf8'));
-  } catch (e) {
-    return e && e.code ? `cannot be read (${e.code})` : 'is not valid JSON';
-  }
-  return data !== null && typeof data === 'object' && !Array.isArray(data) ? null : 'is not a storage state (a JSON object)';
-}
-
-// One line from stdin (the line discipline delivers it), or null at EOF.
-export async function readOneLine(input = process.stdin) {
-  const rl = readline.createInterface({ input, terminal: false });
-  try {
-    for await (const line of rl) return line;
-    return null;
-  } finally {
-    rl.close();
-    input.pause();
-  }
-}
 
 // checkSignedIn({ chromium, config, storageState, stepTimeoutMs, secrets }) → Promise<
 //   { signedIn: true } | { signedIn: false, reason, detail }>
@@ -119,7 +83,7 @@ export async function checkSignedIn({ chromium, config, storageState = null, ste
 //   storageState   () → the stored session's path or null, asked before EACH check (a person may sign
 //                  in between the two)
 //   interactive    true only when someone can answer (the header); readLine is called only then
-//   readLine       () → Promise<line | null>; one line from stdin by default
+//   readLine       () → Promise<line | null>; one line from stdin by default (env-config.mjs readOneLine)
 //   say            one stderr line (default `selvedge run: <line>`)
 export async function signedInGate({
   chromium,

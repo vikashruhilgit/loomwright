@@ -211,7 +211,9 @@ writes locators: content that appears only after a click is not in the tree unti
   value cut, re-cased or otherwise transformed still shows it). **Open item:** any
   environment variable name resolves, not only names a plan declares, so whoever may run
   `snapshot` (a planner included) can make the page hold any variable's value; the redaction keeps
-  the plain value off the output, nothing more.
+  the plain value off the output, nothing more. The value of every variable `auth.env` names is
+  redacted the same way, prefix or not, so a page that shows a credential hands a planner
+  `{{NAME}}`.
 - **Before any browser launches** it refuses an unlisted `<url>` or prefix `goto` origin
   (`BLOCKED host_not_allowed`), a bad prefix (`plan_invalid`, one stderr line per problem), and a
   missing Playwright (`BLOCKED playwright_unavailable`).
@@ -494,7 +496,8 @@ plan or run, and keeps the session (a Playwright storage state: cookies and loca
   variables `auth.env` names; one unset is `BLOCKED placeholder_unset` (stderr names it, never a
   value) and the hook does not run. The hook writes the storage state as JSON to the path in
   `SELVEDGE_STORAGE_STATE`; a hook that exits 0 without writing it, or writes something that is not a
-  JSON object, exits 1 and nothing is kept. With no `hooks.auth_setup` and no `--headed` it is a usage
+  storage state Playwright loads (a JSON object whose `cookies` and `origins` have Playwright's
+  shape), exits 1 and nothing is kept. With no `hooks.auth_setup` and no `--headed` it is a usage
   error naming both.
 - **`setup --headed`** needs `auth.signed_in_check`: it opens the guarded browser visibly at its
   `url` and waits (up to `SELVEDGE_AUTH_TIMEOUT_MS`, default 300000) while you sign in, until the
@@ -508,7 +511,10 @@ plan or run, and keeps the session (a Playwright storage state: cookies and loca
 **What `run` does with it.** Only when `selvedge.json` has an `auth` key (without one, `run` is
 unchanged): every criterion's context starts from the stored session when the file exists, and the
 value of every variable `auth.env` names is redacted like a `{{NAME}}` value (written back as
-`{{APP_PASS}}`) in `evidence.jsonl`, `verdict.json` and stderr. With `auth.signed_in_check` set, the
+`{{APP_PASS}}`) in `evidence.jsonl`, `verdict.json` and stderr (and in what `selvedge snapshot`
+prints, the page a planner looks at). A stored session file Playwright would not load (not JSON, or
+not a storage state's shape) makes every criterion BLOCKED `needs_auth` before any browser opens,
+with or without a sign-in check. With `auth.signed_in_check` set, the
 run checks the sign-in **once**, after the hooks and before the first criterion: one guarded
 context with the stored session opens the check `url`, and the locator must match at least one
 element within `SELVEDGE_STEP_TIMEOUT_MS`. When it does not (no session, an expired one, a redirect

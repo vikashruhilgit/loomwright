@@ -42,10 +42,11 @@
 // Each call launches its own guarded browser and context (openGuardedContext) and closes it before
 // it returns: no cookie, storage or page state carries from one call to the next.
 //
-// {{NAME}} values never reach stdout or stderr as given: before printing, every resolved value is
-// replaced by its `{{NAME}}` (longest first, empty values skipped) in aria_snapshot, error and
-// stderr (redactValues), and snapshots.jsonl keeps the steps as given. A short value (a "2") is
-// redacted wherever it occurs, so the tree can read oddly. The value is found as given and in each
+// {{NAME}} values never reach stdout or stderr as given, and neither does the value of a variable
+// selvedge.json's `auth.env` names (a page that shows a credential): before printing, every such
+// value is replaced by its `{{NAME}}` (longest first, empty values skipped) in aria_snapshot, error
+// and stderr (redactValues), and snapshots.jsonl keeps the steps as given. A short value (a "2")
+// is redacted wherever it occurs, so the tree can read oddly. The value is found as given and in each
 // form Playwright's YAML / JSON quoting and whitespace normalization give it (encodedForms); a page
 // that shows it otherwise transformed (cut, re-cased, reversed, HTML-escaped) still shows it.
 // OPEN (owner decision): any environment variable name is resolvable, not only names a plan
@@ -64,6 +65,7 @@
 // Node >= 18, standard library only (Playwright is resolved at run time, never imported here).
 import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { authEnvValues } from './auth-state.mjs';
 import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
 import { ACTION_TYPES, placeholderNames, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
 import { problemLine } from './plan-validate.mjs';
@@ -348,6 +350,8 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
   }
   record.prefix_steps = steps;
   const { config, root, source } = loadConfig({ cwd, base });
+  // the auth.env values (auth-state.mjs): a page that shows a credential hands the planner {{NAME}}
+  secrets.push(...authEnvValues(config, env));
 
   // 1. the prefix: the one step validator, prefix mode. An unlisted goto is the origin check's.
   const problems = readProblems.length ? readProblems : validateSteps(steps, { config, prefix: true });
@@ -373,7 +377,7 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
   // 4. {{NAME}} values: an unset name is BLOCKED (never an empty string). `resolved` is used to
   //    drive the page only; the record keeps `steps`.
   const resolved = resolvePlaceholders(steps, env);
-  secrets.push(...placeholderValues(steps, env));
+  secrets.push(...placeholderValues(steps, env).filter((p) => !secrets.some((s) => s.name === p.name)));
 
   // 5. Playwright.
   const pw = await resolvePlaywright({ root, env, cwd });

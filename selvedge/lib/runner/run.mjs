@@ -43,7 +43,9 @@
 // on a terminal it asks for one sign-in (`selvedge auth setup --headed`), reads one line and checks
 // once more. No retry loop, and run never runs the auth_setup hook itself. With `auth` set, every
 // criterion context starts from the stored session when it exists, and every value of an `auth.env`
-// variable joins the redaction list, written back as {{NAME}}.
+// variable joins the redaction list, written back as {{NAME}}. With `auth` but no signed_in_check, a
+// stored session file Playwright would not load (auth-state.mjs stateFileProblem) makes every
+// criterion BLOCKED needs_auth before any browser opens.
 // Per criterion, before launch: a goto origin selvedge.json no longer allows is BLOCKED
 // host_not_allowed; an unset {{NAME}} is BLOCKED placeholder_unset; Playwright that does not resolve
 // makes every criterion still to run BLOCKED playwright_unavailable.
@@ -85,7 +87,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, repoRoot } from '../env-config.mjs';
-import { authStatePath, hasState, validateSignedInCheck } from '../auth-state.mjs';
+import { authEnvValues, authStatePath, hasState, stateFileProblem, validateSignedInCheck } from '../auth-state.mjs';
 import { PLANNER_TOKEN_BUDGET_ENV } from '../plan-planner.mjs';
 import { FREEZE_EVENT, RUN_FILES, initRun, readRunsLog, runsLogPath } from '../plan-runs.mjs';
 import { SELVEDGE_BIN, plannerTokenBudget } from '../plan.mjs';
@@ -93,7 +95,7 @@ import { resolvePlaceholders } from '../plan-steps.mjs';
 import { STEP_TIMEOUT_MS, placeholderValues } from '../snapshot.mjs';
 import { firstLine, resolvePlaywright } from '../snapshot-playwright.mjs';
 import { RUN_EVENT, deriveVerdict } from '../verdict.mjs';
-import { authEnvValues, signedInGate } from './auth-check.mjs';
+import { SIGN_IN_HINT, signedInGate } from './auth-check.mjs';
 import { CRITERION_OUTCOMES, DATA_STATES, EVIDENCE_FILE, EVIDENCE_KINDS, appendEvidence } from './evidence.mjs';
 import { executeCriterion } from './execute.mjs';
 
@@ -343,7 +345,17 @@ async function claimedRun({ runDir, env, started, replayOf, trace, interactive, 
       blockAll = { outcome: CRITERION_OUTCOMES.blocked, reason: hooks.blockedReason };
     }
   }
-  // 2b. the sign-in check, once, before any criterion (the header); its Playwright is step 4's
+  // 2b. with `auth` but no sign-in check: a stored session the criteria would load that Playwright
+  //     would refuse is needs_auth before any browser (with a check, checkSignedIn asks the same)
+  if (blockAll === null && config.auth && !config.auth.signed_in_check && planned.length) {
+    const file = storageState();
+    const problem = file === null ? null : stateFileProblem(file);
+    if (problem) {
+      err(`${REASONS.needs_auth}: the stored session ${file} ${problem}; every criterion is BLOCKED ${REASONS.needs_auth}. Sign in again with ${SIGN_IN_HINT}`);
+      blockAll = { outcome: CRITERION_OUTCOMES.blocked, reason: REASONS.needs_auth };
+    }
+  }
+  // 2c. the sign-in check, once, before any criterion (the header); its Playwright is step 4's
   let pw = null;
   if (blockAll === null && config.auth && config.auth.signed_in_check && planned.length) {
     try {

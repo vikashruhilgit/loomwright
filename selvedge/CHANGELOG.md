@@ -30,7 +30,11 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   terminal it asks for one sign-in, reads one line and checks once more. `run` never runs
   `auth_setup` itself. With no `auth` key, `run` is unchanged.
 - Every `auth.env` value is redacted like a `{{NAME}}` value (written back as `{{NAME}}`) in
-  `evidence.jsonl`, `verdict.json`, traces and stderr; none reaches the planner prompt.
+  `evidence.jsonl`, `verdict.json`, traces and stderr, and in what `selvedge snapshot` prints (the
+  page a planner looks at), so a credential a page shows reaches the planner only as `{{NAME}}`.
+- A stored session file Playwright would not load (not JSON, or a JSON object without a storage
+  state's `cookies` / `origins` shape) is BLOCKED `needs_auth` before any browser opens, with or
+  without `auth.signed_in_check`; `auth setup` keeps no hook-written file of that kind.
 - The README documents `auth setup`, where the session lives, the `needs_auth` behaviour, and the
   honest limit: an agent with shell access can read any file you can, so selvedge keeps secrets out
   of plans, evidence, PR comments and model prompts, and does not claim they are out of reach.

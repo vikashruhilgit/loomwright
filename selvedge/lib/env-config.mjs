@@ -10,6 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 // The closed reason list. Every emitter imports a value from here; no reason is a string literal
@@ -186,6 +187,20 @@ export function parseCliArgs(args, { values = [], booleans = [] } = {}) {
     flags[name] = value;
   }
   return { flags, positional };
+}
+
+// readOneLine(input) → Promise<one line from `input` (stdin by default), or null at EOF>. No raw
+// mode: the line discipline delivers the line. The ONE stdin line reader: `env init`'s and `env
+// approve`'s prompts and `run`'s sign-in prompt (runner/auth-check.mjs) all import it.
+export async function readOneLine(input = process.stdin) {
+  const rl = readline.createInterface({ input, terminal: false });
+  try {
+    for await (const line of rl) return line;
+    return null;
+  } finally {
+    rl.close();
+    input.pause();
+  }
 }
 
 function isPlainObject(v) {

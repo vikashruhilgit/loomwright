@@ -15,10 +15,10 @@
 #
 # Plans are hand-written (the generator in tests/lib/run-helpers.sh) and frozen with `selvedge plan
 # --init` + `--freeze`, no planner; AC9's planner arm runs the default planner against a PATH-stub
-# `claude` (tests/fixtures/stub-claude.sh) that records its argv (the prompt). Hermetic: a fresh temp
-# HOME (PLAYWRIGHT_BROWSERS_PATH is exported BEFORE HOME moves), temp git repos, a recording
-# SELVEDGE_PLANNER and PATH-stub claude for every run (asserted never called), no network beyond the
-# helper's pinned install. stdin is /dev/null for every run (not a terminal). Needs node and git.
+# `claude` (tests/fixtures/stub-claude.sh) that records its argv (the prompt) and what the
+# `selvedge snapshot` it runs hands back. Hermetic: a fresh temp HOME (PLAYWRIGHT_BROWSERS_PATH is
+# exported BEFORE HOME moves), temp git repos, a recording SELVEDGE_PLANNER and PATH-stub claude for
+# every run (asserted never called), no network beyond the helper's pinned install. stdin is /dev/null for every run (not a terminal). Needs node and git.
 set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -322,12 +322,46 @@ STUBCLAUDE="$TMP/stubclaude"; mkdir -p "$STUBCLAUDE"
 printf '#!/bin/sh\nexec bash "%s" "$@"\n' "$TESTS_DIR/fixtures/stub-claude.sh" > "$STUBCLAUDE/claude"
 chmod +x "$STUBCLAUDE/claude"
 printf -- '- The account page reads "Signed in as alice-7Qx"\n' | (cd "$R5" && bash "$CLI" criteria from-text) > "$TMP/crit-plan9.json" 2>/dev/null
-P9="$(cd "$R5" && env -u SELVEDGE_PLANNER "PATH=$STUBCLAUDE:$PATH" STUB_CLAUDE_ARGV="$TMP/claude-argv.json" bash "$CLI" plan "$TMP/crit-plan9.json" 2>"$TMP/o/plan9.err" </dev/null)"; prc=$?
+# The planner looks at a page that shows APP_PASS (the stub page's text) through `selvedge snapshot`,
+# as a model would; what snapshot hands back is what reaches the model besides the prompt.
+SNAP9="$TMP/claude-snapshot.txt"
+P9="$(cd "$R5" && env -u SELVEDGE_PLANNER "PATH=$STUBCLAUDE:$PATH" STUB_CLAUDE_ARGV="$TMP/claude-argv.json" STUB_CLAUDE_SNAPSHOT_OUT="$SNAP9" \
+  "$STUB" "STUB_PW_TEXT=Your password is $APP_PASS" bash "$CLI" plan "$TMP/crit-plan9.json" 2>"$TMP/o/plan9.err" </dev/null)"; prc=$?
 { [ "$prc" -eq 0 ] && [ -s "$TMP/claude-argv.json" ] && grep -qF 'Signed in as alice-7Qx' "$TMP/claude-argv.json"; } \
   && ok "setup: selvedge plan ran the default planner (the PATH-stub claude recorded its prompt)" || ko "setup: plan rc=$prc: $(tail -n 3 "$TMP/o/plan9.err")"
-leak="$(grep -rlF "$APP_PASS" "$TMP/claude-argv.json" "$P9" "$TMP/o/plan9.err" 2>/dev/null)"
-[ -z "$leak" ] && ok "AC9 the planner prompt (claude's argv), the plan folder and plan's stderr do not contain APP_PASS" \
+grep -qF 'Your password is {{APP_PASS}}' "$SNAP9" \
+  && ok "AC9 the planner's snapshot of a page that shows APP_PASS reads it back as {{APP_PASS}} (auth.env values are snapshot's redaction list too)" \
+  || ko "AC9 the planner's snapshot did not show {{APP_PASS}}: $(head -c 600 "$SNAP9" 2>/dev/null)"
+leak="$(grep -rlF "$APP_PASS" "$TMP/claude-argv.json" "$SNAP9" "$P9" "$TMP/o/plan9.err" 2>/dev/null)"
+[ -z "$leak" ] && ok "AC9 the planner prompt (claude's argv), the snapshot it read, the plan folder and plan's stderr do not contain APP_PASS" \
   || ko "AC9 the password reached the planner: $leak"
+
+echo "-- a stored session Playwright would not load, with auth but no signed_in_check: needs_auth, no browser (stub browser)"
+RS="$TMP/repo-nocheck"; newrepo "$RS"
+node -e 'const [f, o] = process.argv.slice(1); require("fs").writeFileSync(f, JSON.stringify({ schema_version: 1, origins: [o], auth: { env: ["APP_USER", "APP_PASS"] } }));' "$RS/selvedge.json" "$AURL"
+SS="$(state_of "$RS")"; export SS
+mkdir -p "$(dirname "$SS")"
+printf '{"cookies": [' > "$SS"
+FS1="$(folder nocheck-json "$RS" "$(stub_spec 15)")"
+RUN_CWD="$RS" run nocheck-json "$FS1" "$STUB"
+check "no signed_in_check, a stored session that is not JSON: BLOCKED needs_auth naming the file (never playwright_unavailable), no browser opened" \
+  'rc === 2 && vc(0).reason === "needs_auth" && err.includes("is not valid JSON") && err.includes(E.SS) && launches() === 0 && ev[ev.length - 1].kind === "run_end"'
+printf '{"cookies": [{"name": "s", "value": "v"}]}' > "$SS"
+FS2="$(folder nocheck-shape "$RS" "$(stub_spec 16)")"
+RUN_CWD="$RS" run nocheck-shape "$FS2" "$STUB"
+check "no signed_in_check, a JSON object Playwright refuses (a cookie with no url and no domain/path): BLOCKED needs_auth, no browser opened" \
+  'rc === 2 && vc(0).reason === "needs_auth" && err.includes("cookies[0]") && launches() === 0'
+printf '{"cookies": "none"}' > "$S5"
+F7s="$(folder ac7-shape "$R5" "$(stub_spec 17)")"
+RUN_FLAGS="--non-interactive" RUN_CWD="$R5" run ac7-shape "$F7s" "$STUB"
+check "with signed_in_check, a JSON object Playwright refuses (cookies not an array): BLOCKED needs_auth from the check, no browser opened" \
+  'rc === 2 && vc(0).reason === "needs_auth" && err.includes("cookies is not an array") && launches() === 0'
+cp "$TMP/state-copy.json" "$S5"
+printf '{"cookies":[],"origins":[]}' > "$SS"
+FS3="$(folder nocheck-ok "$RS" "$(stub_spec 18)")"
+RUN_CWD="$RS" run nocheck-ok "$FS3" "$STUB"
+check "no signed_in_check, a stored session Playwright loads: the criterion runs (PASS) from it" \
+  'rc === 0 && vc(0).verdict === "PASS" && ctxs().length === 1 && ctxs()[0].storageState === E.SS'
 
 echo "-- real Chromium: AC5, AC6, AC7, AC9 against the fixture app's login wall"
 HOME="$REAL_HOME" pw_require_or_skip; pwrc=$?
