@@ -155,6 +155,11 @@ cp "$F9/plan.json" "$F9b/plan.json"
 run ac9-nofreeze "$F9b" "$STUB"
 check "AC9 a folder with no plan.sha256: exit 2 not_frozen, no evidence.jsonl, no browser launched" \
   'rc === 2 && err.includes("not_frozen") && !has("evidence.jsonl") && launches() === 0'
+F9c="$(folder ac9-both "$R" "$(stub_spec 40)")"
+node -e 'const fs = require("fs"), c = require("crypto"); const d = process.argv[1]; const f = d + "/plan.json"; const b = fs.readFileSync(f); const i = b.indexOf("stub"); b[i] = "S".charCodeAt(0); fs.writeFileSync(f, b); fs.writeFileSync(d + "/plan.sha256", c.createHash("sha256").update(b).digest("hex") + "  plan.json\n");' "$F9c"
+run ac9-both "$F9c" "$STUB"
+check "AC9 a first run: plan.json and plan.sha256 edited together still exit 2 plan_modified (the folder's freeze line in runs.jsonl disagrees), no evidence.jsonl, no browser launched" \
+  'rc === 2 && err.includes("plan_modified") && err.includes("freeze line") && !has("evidence.jsonl") && !has("run.claim") && launches() === 0'
 
 echo "-- AC10, AC18, AC17 a run, a second run of the same folder, the runs.jsonl line (stub browser)"
 R18="$TMP/repo18"; newrepo "$R18"; export R18
@@ -210,7 +215,32 @@ check "AC20 an approved reset hook runs before the first browser launch; data_st
   'rc === 0 && txt(E.STUB_PW_LOG) === "reset\nlaunch\n" && vj.data_state === "managed" && JSON.stringify(vj.hooks_run) === "[\"reset\"]" && !("plan_time_actions" in vj)'
 RUN_CWD="$RH" run ac10-hook "$F20b" "$STUB"
 check "AC10 a folder that already ran, in a repo with an approved reset hook: already_run is refused before the hook runs or a browser launches" \
-  'rc === 2 && err.includes("already_run") && txt(E.STUB_PW_LOG) === ""'
+  'rc === 2 && err.includes("already_run") && txt(E.STUB_PW_LOG) === "" && !has("run.claim")'
+F20h="$(folder ac20h "$RH" "$(stub_spec 41)")"
+: > "$F20h/run.claim"
+RUN_CWD="$RH" run claim-held "$F20h" "$STUB"
+check "a folder another run has claimed (run.claim): exit 2 already_run before the hook runs or a browser launches; the other run's claim is left alone" \
+  'rc === 2 && err.includes("already_run") && err.includes("run.claim") && txt(E.STUB_PW_LOG) === "" && !has("evidence.jsonl") && has("run.claim")'
+RS="$TMP/repo-slow-hook"; newrepo "$RS"
+printf '{"schema_version":1,"origins":["%s"],"hooks":{"reset":"sleep 1; echo reset >> \\"$STUB_PW_LOG\\""}}\n' "$AURL" > "$RS/selvedge.json"
+(cd "$RS" && node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const A = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/env-approvals.mjs').href);
+const E = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/env-config.mjs').href);
+const { config, root } = E.loadConfig();
+A.writeApproval({ root, identity: A.repoIdentity(root), sha256: A.hooksSha256(config.hooks) });")
+FR="$(folder race "$RS" "$(stub_spec 42)")"
+: > "$STUB_PW_LOG"
+race_pids=""
+for n in 1 2; do
+  (cd "$RS" && env "SELVEDGE_PLANNER=sh $TMP/planner-shim.sh" "PATH=$TMP/stubbin:$PATH" "$STUB" bash "$CLI" run "$FR" >"$TMP/o/race$n.out" 2>"$TMP/o/race$n.err"; echo $? > "$TMP/o/race$n.rc") &
+  race_pids="$race_pids $!"
+done
+# shellcheck disable=SC2086  # the two pids, split on purpose; a bare `wait` would also wait on the fixture app
+wait $race_pids
+OUT="$TMP/o/race1.out"; ERR="$TMP/o/race2.err"; RC=0; DIR="$FR"; export OUT ERR RC DIR TMP
+check "two runs started together on one folder with a slow approved reset hook: the hook runs once, one run exits 0 and the other 2 already_run, no run.claim left" \
+  'const rcs = [1, 2].map((n) => Number(txt(E.TMP + "/o/race" + n + ".rc").trim())).sort(); const errs = txt(E.TMP + "/o/race1.err") + txt(E.TMP + "/o/race2.err"); txt(E.STUB_PW_LOG).split("\n").filter((l) => l === "reset").length === 1 && JSON.stringify(rcs) === "[0,2]" && errs.includes("already_run") && has("evidence.jsonl") && !has("run.claim")'
 RU="$TMP/repo-unapproved"; newrepo "$RU"
 printf '{"schema_version":1,"origins":["%s"],"hooks":{"reset":"echo reset >> \\"$STUB_PW_LOG\\""}}\n' "$AURL" > "$RU/selvedge.json"
 F20c="$(folder ac20c "$RU" "$(stub_spec 12 13)")"
@@ -275,7 +305,7 @@ A.writeApproval({ root, identity: A.repoIdentity(root), sha256: A.hooksSha256(co
 FF="$(folder failhook "$RF" "$(stub_spec 15)")"
 RUN_CWD="$RF" run failhook "$FF" "$STUB"
 check "an approved reset hook that fails (exit 7): exit 1, nothing written to the run folder, no browser launched" \
-  'rc === 1 && err.includes("hook reset failed") && !has("evidence.jsonl") && !has("verdict.json") && launches() === 0'
+  'rc === 1 && err.includes("hook reset failed") && !has("evidence.jsonl") && !has("verdict.json") && !has("run.claim") && launches() === 0'
 run badbudget "$FF" "$STUB" SELVEDGE_RUN_BUDGET_MS=soon
 check "SELVEDGE_RUN_BUDGET_MS=soon: a usage error (exit 2) naming it; nothing written" 'rc === 2 && err.includes("SELVEDGE_RUN_BUDGET_MS") && !has("evidence.jsonl") && launches() === 0'
 run badtimeout "$FF" "$STUB" SELVEDGE_STEP_TIMEOUT_MS=0
