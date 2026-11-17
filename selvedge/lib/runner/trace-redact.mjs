@@ -13,13 +13,16 @@
 //      `Name: value` line in raw text
 //   2. every cookie value seen in any Cookie / Set-Cookie header (or HAR `cookies` entry) of the
 //      whole trace, and every Authorization value (whole, and its credentials after the scheme), is
-//      replaced by "[redacted]" wherever it appears — in a page's HTML, a script, a snapshot
+//      replaced by "[redacted]" wherever it appears — in a page's HTML, a script, a snapshot —
+//      except a stored-session value shorter than MIN_SESSION_VALUE_LENGTH (item 4)
 //   3. every resolved {{NAME}} value of the run goes back to {{NAME}} (redactValues, snapshot.mjs)
 //   4. a `storageState` key's whole value becomes "[redacted]" (the context-options event records the
 //      context's storage state), and every value in a `cookies` or `localStorage` list of
 //      { name, value } inside it — and every value passed in `values` (the stored session's,
 //      execute.mjs) — is replaced by "[redacted]" wherever it appears, as stored and URL-encoded;
-//      a session value shorter than MIN_SESSION_VALUE_LENGTH is left outside the storage state
+//      a stored-session value shorter than MIN_SESSION_VALUE_LENGTH is left alone outside the storage
+//      state, on every path (a Cookie / Set-Cookie header or a HAR `cookies` list that replays it
+//      included; such a header's value is still "[redacted]" whole, item 1)
 // JSON lines are parsed and redacted string by string (so they stay valid JSON); other text is
 // redacted as text. Binary entries (images) are copied, and the whole trace is dropped when one
 // holds a secret's bytes. A value the page shows transformed (cut, reversed) is not caught — the
@@ -259,9 +262,12 @@ function collectJson(v, into, session, key = null, inState = false) {
   }
 }
 
-// A stored-session value shorter than this is not redacted outside the storage state (which reads
-// "[redacted]" whole): a "1" replaced wherever it occurs would mangle the trace (versions, ports) or
-// drop it (a binary entry holding the byte). Header values and {{NAME}} / auth.env values have no floor.
+// A stored-session value (one passed in `values`, or found in a storage state) shorter than this is
+// not redacted outside the storage state (which reads "[redacted]" whole) — not even when a Cookie /
+// Set-Cookie header or a HAR `cookies` list replays it: a "1" replaced wherever it occurs would mangle
+// the trace (versions, ports) or drop it (a binary entry holding the byte). The header's own value is
+// still "[redacted]" whole. Values not known to be stored-session values — other cookie values,
+// Authorization values, {{NAME}} / auth.env values — have no floor.
 export const MIN_SESSION_VALUE_LENGTH = 8;
 
 // The forms a stored-session value is redacted in: as stored, and URL-encoded (a page that sends it
@@ -273,6 +279,20 @@ function sessionForms(v) {
   } catch {
     return [v]; // a lone surrogate has no URL-encoded form
   }
+}
+
+// Every form a short stored-session value can reach `values` in from a header or a HAR cookie entry:
+// as stored, URL-encoded and percent-decoded.
+function shortSessionForms(v) {
+  const forms = [v];
+  for (const f of [encodeURIComponent, decodeURIComponent]) {
+    try {
+      forms.push(f(v));
+    } catch {
+      // a lone surrogate / not percent-encoded
+    }
+  }
+  return forms;
 }
 
 // Escapes a string for a RegExp alternation.
@@ -359,6 +379,11 @@ export function redactEntries(entries, secretList = [], extraValues = []) {
       else collectRaw(line, values);
     }
   }
+  // A short stored-session value (and its URL-encoded / decoded form) is floored on every path: a
+  // Cookie / Set-Cookie header or a HAR `cookies` list that replays it adds it to `values` unfloored,
+  // so it comes out again here (that header's value itself still reads [redacted], step 1). Removed
+  // before the long values go in, so a long session value is never taken out by a short one's form.
+  for (const v of session) if (v.length < MIN_SESSION_VALUE_LENGTH) for (const f of shortSessionForms(v)) values.delete(f);
   for (const v of session) for (const f of sessionForms(v)) values.add(f);
   const replaceValues = valueReplacer(values);
   // pass 2: redact every text entry

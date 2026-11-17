@@ -194,7 +194,7 @@ git -C "$I" remote add origin 'https://someone:s3cr3t-token@example.invalid/o/r.
 cfg "$I/selvedge.json" "$HOOK" '{"env":["APP_USER","APP_PASS"]}'
 approve_hook 'https://example.invalid/o/r.git' "$HOOK"
 (cd "$I" && APP_USER="$USER_VALUE" APP_PASS="$PASS_VALUE" bash "$CLI" auth setup >/dev/null 2>&1 </dev/null); rc=$?
-{ [ "$rc" -eq 0 ] && [ -f "$(state_file "$I" 'https://example.invalid/o/r.git')" ] && ! find "$HOME/.local/state" | grep -qF 's3cr3t'; } \
+{ [ "$rc" -eq 0 ] && [ -f "$(state_file "$I" 'https://example.invalid/o/r.git')" ] && ! grep -qF 's3cr3t' < <(find "$HOME/.local/state"); } \
   && ok "AC2 with an origin remote, <repo-id> is the sha256 of the remote URL without its userinfo" || ko "AC2 remote identity: rc=$rc"
 # never inside the repo: a HOME that points into the repo is refused before the hook runs
 rm -f "$MARK"

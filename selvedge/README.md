@@ -474,7 +474,7 @@ every resolved `{{NAME}}` value goes back to `{{NAME}}`. With a stored sign-in s
 storage state Playwright records for the context reads `[redacted]`, and every cookie and local
 storage value the session holds is replaced by `[redacted]` wherever it appears, as stored and
 URL-encoded; a session value shorter than 8 characters (a `"1"` flag) is left alone outside the
-storage state, since replacing it everywhere would mangle the trace. A `{{NAME}}` value is caught
+storage state, even where a header replays it (the header itself still reads `[redacted]`), since replacing it everywhere would mangle the trace. A `{{NAME}}` value is caught
 URL-encoded too. The raw trace is
 written to a private temp folder and deleted. Selvedge reads and rewrites the zip itself (Node's `zlib`, no zip tool),
 and a trace it cannot redact whole (zip64, encryption, an unknown compression method, a bad

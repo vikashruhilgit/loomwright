@@ -423,6 +423,27 @@ node -e 'const { leaked, short } = JSON.parse(process.env.TR2); process.exit(lea
 node -e 'const { url } = JSON.parse(process.env.TR2); process.exit(!url.includes("Ab%2Bc%2Fd%3DLS9token") && !url.includes("p%40ss%20w%2Frd%2B9") && url.includes("t=[redacted]") && url.includes("p={{APP_PASS}}") ? 0 : 1)' 2>/dev/null \
   && ok "trace-redact: a session value and a {{NAME}} / auth.env value the page sends URL-encoded are redacted in that form too" \
   || ko "trace-redact kept a URL-encoded secret: $(printf '%s' "$tr2" | head -c 900)"
+
+tr3="$(node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const T = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/runner/trace-redact.mjs').href);
+const line = (o) => JSON.stringify(o);
+const entry = (name, text) => ({ name, nameBytes: Buffer.from(name), flags: 0x0800, time: 0, date: 33, data: Buffer.from(text) });
+const bin = (name, bytes) => ({ name, nameBytes: Buffer.from(name), flags: 0x0800, time: 0, date: 33, data: Buffer.from(bytes) });
+// a short stored-session cookie replayed in a Cookie header and a HAR cookies list, next to a long one
+const state = { cookies: [{ name: 'sid', value: '7', domain: '127.0.0.1', path: '/', expires: -1 }, { name: 'tok', value: 'LONGSID9x8y7', domain: '127.0.0.1', path: '/', expires: -1 }], origins: [] };
+const trace = [line({ type: 'context-options', options: { storageState: state } }), line({ type: 'frame-snapshot', html: '<p>LONGSID9x8y7</p>' })].join(String.fromCharCode(10));
+const net = line({ snapshot: { request: { url: 'http://127.0.0.1:7070/v1.7/a', headers: [{ name: 'Cookie', value: 'sid=7; tok=LONGSID9x8y7' }], cookies: [{ name: 'sid', value: '7' }, { name: 'tok', value: 'LONGSID9x8y7' }] }, response: { content: { text: 'build 1.7.0 tok=LONGSID9x8y7' } } } });
+const r = T.redactEntries([entry('trace.trace', trace), entry('trace.network', net), bin('resources/y.png', [0x89, 0x37, 0x00])], [], ['7', 'LONGSID9x8y7']);
+process.stdout.write(JSON.stringify({ leaked: r.leaked, trace: r.entries[0].data.toString(), net: r.entries[1].data.toString() }));
+" 2>&1)"
+export TR3="$tr3"
+node -e 'const { leaked, net } = JSON.parse(process.env.TR3); process.exit(leaked === null && net.includes("{\"name\":\"Cookie\",\"value\":\"[redacted]\"}") && net.includes("http://127.0.0.1:7070/v1.7/a") && net.includes("build 1.7.0") ? 0 : 1)' 2>/dev/null \
+  && ok "trace-redact: a short stored-session cookie ('7') replayed in a Cookie header and a HAR cookies list keeps the trace; the header reads [redacted], ports and versions holding '7' are untouched" \
+  || ko "trace-redact mangled or dropped a trace over a short session cookie in a header: $(printf '%s' "$tr3" | head -c 900)"
+node -e 'const { trace, net } = JSON.parse(process.env.TR3); process.exit(!trace.includes("LONGSID9x8y7") && !net.includes("LONGSID9x8y7") && net.includes("tok=[redacted]") && trace.includes("<p>[redacted]</p>") ? 0 : 1)' 2>/dev/null \
+  && ok "trace-redact: a long stored-session cookie in the same header is still redacted everywhere (HAR cookies list, response body, snapshot)" \
+  || ko "trace-redact kept a long session cookie: $(printf '%s' "$tr3" | head -c 900)"
 grep -qE "sessionValues\(storageState\)" "$LIB/runner/execute.mjs" \
   && ok "execute.mjs hands the stored session's values to the trace redaction" || ko "execute.mjs does not pass sessionValues to redactTraceZip"
 
