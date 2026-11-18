@@ -104,6 +104,8 @@ doctor SELVEDGE_PLAYWRIGHT_MODULE=
 l="$(line_of "Playwright library")"
 { [ "$RC" -eq 1 ] && grep -qF "FAIL Playwright library: " <<<"$l" && grep -qF "npm i -D playwright" <<<"$l"; } \
   && ok "Playwright missing: FAIL Playwright library with 'npm i -D playwright', exit 1" || ko "Playwright missing: rc=$RC out='$OUT'"
+grep -qE '^FAIL Chromium browser: npx playwright install chromium \(after the Playwright library' <<<"$OUT" \
+  && ok "Playwright missing: the browser line says to install the library first" || ko "browser line without a library: '$OUT'"
 doctor SELVEDGE_PLAYWRIGHT_MODULE="$TMP/no-such/index.mjs"
 l="$(line_of "Playwright library")"
 { [ "$RC" -eq 1 ] && grep -qF "SELVEDGE_PLAYWRIGHT_MODULE does not load" <<<"$l" && grep -qF "npm i -D playwright" <<<"$l"; } \
@@ -125,12 +127,18 @@ l="$(line_of "Chromium browser")"
   && has "ok Playwright library"; } \
   && ok "browser missing: FAIL Chromium browser with 'npx playwright install chromium', exit 1" || ko "browser missing: rc=$RC out='$OUT'"
 
+doctor STUB_EXE=
+{ [ "$RC" -eq 1 ] && grep -qE '^FAIL Chromium browser: npx playwright install chromium \(this Playwright reports no browser path' <<<"$OUT"; } \
+  && ok "a Playwright that reports no browser path: FAIL Chromium browser, exit 1" || ko "no browser path: rc=$RC out='$OUT'"
+
 # --- selvedge.json ------------------------------------------------------------------------------
 rm "$REPO/selvedge.json"
 doctor
 l="$(line_of "selvedge.json")"
 { [ "$RC" -eq 1 ] && grep -qF "FAIL selvedge.json: " <<<"$l" && grep -qF "selvedge env init --port" <<<"$l"; } \
   && ok "no selvedge.json: FAIL selvedge.json with 'selvedge env init --port', exit 1" || ko "no selvedge.json: rc=$RC out='$OUT'"
+has "ok hook approvals (no hooks: no valid selvedge.json yet)" \
+  && ok "no selvedge.json: hook approvals reads 'no hooks: no valid selvedge.json yet'" || ko "approvals without a config: '$OUT'"
 printf '{\n' > "$REPO/selvedge.json"
 doctor
 l="$(line_of "selvedge.json")"
@@ -167,6 +175,9 @@ l="$(line_of "planner")"
 { [ "$RC" -eq 1 ] && grep -qF "FAIL planner: " <<<"$l" && grep -qF "or set SELVEDGE_PLANNER" <<<"$l"; } \
   && ok "no planner (no claude on PATH, SELVEDGE_PLANNER unset): FAIL planner with 'or set SELVEDGE_PLANNER', exit 1" \
   || ko "no planner: rc=$RC out='$OUT'"
+doctor SELVEDGE_PLANNER="   "
+{ [ "$RC" -eq 1 ] && has "FAIL planner: "; } \
+  && ok "a blank SELVEDGE_PLANNER counts as unset (as plan treats it): FAIL planner" || ko "blank planner: rc=$RC out='$OUT'"
 doctor SELVEDGE_PLANNER= PATH="$BIN_CLAUDE:$PATH_OK"
 { [ "$RC" -eq 0 ] && grep -qE '^ok planner \(claude at .*/bin-claude/claude\)$' <<<"$OUT"; } \
   && ok "claude on PATH: ok planner" || ko "claude on PATH: rc=$RC out='$OUT'"

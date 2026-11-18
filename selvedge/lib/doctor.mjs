@@ -111,7 +111,9 @@ function checkApprovals(loaded, env) {
 
 function checkPlanner(env) {
   const name = 'planner';
-  if (env[PLANNER_ENV]) return { ok: true, name, detail: `${PLANNER_ENV} is set` };
+  // The same test `plan` applies: a blank SELVEDGE_PLANNER is unset, and `claude` is the planner.
+  const command = env[PLANNER_ENV];
+  if (typeof command === 'string' && command.trim() !== '') return { ok: true, name, detail: `${PLANNER_ENV} is set` };
   const found = onPath(CLAUDE_BIN, env.PATH);
   if (found) return { ok: true, name, detail: `${CLAUDE_BIN} at ${found}` };
   return { ok: false, name, fix: `install Claude Code (the ${CLAUDE_BIN} CLI) and sign in, or set SELVEDGE_PLANNER to your own planner command` };
