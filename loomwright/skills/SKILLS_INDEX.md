@@ -66,16 +66,10 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Playwright E2E | `playwright-e2e/` | QA Executor (preload) | ~1,500 | 1.0.0 | 2026-03 |
-| QA Strategy | `qa-strategy/` | QA Strategist (preload), QA Executor (preload) | ~1,100 | 1.0.0 | 2026-03 |
-| QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-04 |
-| QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-04 |
-| QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
-| Verify Walkthrough | `verify-walkthrough/` | QA Executor (reference — Read on demand in `--verify` mode), `/verify` (reference) | ~3,600 | 1.4.0 | 2026-09-26 |
 
 ---
 
-**Total: 42 skills**
+**Total: 36 skills**
 
 > **Moved (v15.6.0):** the 18 tech-stack skills (Next.js ×5, NestJS ×5, API Gateway ×4, MySQL/PostgreSQL/Redis Caching, Docker) now live in the **stackpack@atelier** plugin — `/plugin install stackpack@atelier`.
 

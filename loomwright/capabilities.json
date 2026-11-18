@@ -111,44 +111,6 @@
     },
     {
       "model": "inherit",
-      "name": "loomwright:qa-executor",
-      "result_block": "QA_RESULT",
-      "result_blocks": [
-        "MISSING_FUNCTIONALITY_REPORT",
-        "QA_RESULT",
-        "VERIFY_RESULT"
-      ],
-      "runtime_agent_type": "loomwright:loomwright:qa-executor",
-      "tools": [
-        "Bash",
-        "Edit",
-        "Glob",
-        "Grep",
-        "LSP",
-        "Read",
-        "Task",
-        "Write"
-      ]
-    },
-    {
-      "model": "inherit",
-      "name": "loomwright:qa-strategist",
-      "result_block": "GATE_VERDICT",
-      "result_blocks": [
-        "GATE_VERDICT"
-      ],
-      "runtime_agent_type": "loomwright:loomwright:qa-strategist",
-      "tools": [
-        "Bash",
-        "Edit",
-        "Glob",
-        "Grep",
-        "Read",
-        "Write"
-      ]
-    },
-    {
-      "model": "inherit",
       "name": "loomwright:red-team-reviewer",
       "result_block": "RED_TEAM_RESULT",
       "result_blocks": [
@@ -299,14 +261,6 @@
       "name": "propose"
     },
     {
-      "description": "Discover app structure, generate and run Playwright tests with risk-based strategy",
-      "name": "qa-executor"
-    },
-    {
-      "description": "Plan risk-based QA test strategy and audit QA Executor results",
-      "name": "qa-strategist"
-    },
-    {
       "description": "Adversarial review - break, stress-test, find real-world failures",
       "name": "red-team-reviewer"
     },
@@ -329,10 +283,6 @@
     {
       "description": "Manage opt-in GitHub Issues telemetry — status, enable, disable, test",
       "name": "telemetry"
-    },
-    {
-      "description": "Walk a ticket's acceptance criteria through the RUNNING app — one evidenced PASS / FAIL / BLOCKED / NOT_VERIFIABLE verdict per criterion, advisory only",
-      "name": "verify"
     }
   ],
   "contract_schema_version": 1,
@@ -1315,9 +1265,6 @@
       "name": "pattern-detector"
     },
     {
-      "name": "playwright-e2e"
-    },
-    {
       "name": "pr-postmortem"
     },
     {
@@ -1325,18 +1272,6 @@
     },
     {
       "name": "product-discovery"
-    },
-    {
-      "name": "qa-gates"
-    },
-    {
-      "name": "qa-orchestration"
-    },
-    {
-      "name": "qa-strategy"
-    },
-    {
-      "name": "qa-test-patterns"
     },
     {
       "name": "quality-checklist"
@@ -1370,9 +1305,6 @@
     },
     {
       "name": "user-story-writing"
-    },
-    {
-      "name": "verify-walkthrough"
     },
     {
       "name": "workflow-management"

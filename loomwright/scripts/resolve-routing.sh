@@ -117,7 +117,6 @@ capability_check commands/capability-check.md CAPABILITY_REPORT -
 red_team commands/red-team-reviewer.md RED_TEAM_RESULT -
 code_reviewer commands/code-reviewer.md CODE_REVIEW_RESULT validate-code-review-result.py
 product_owner commands/product-owner.md HANDOFF -
-qa_strategist commands/qa-strategist.md Classification -
 SEATS
     exit 0
     ;;

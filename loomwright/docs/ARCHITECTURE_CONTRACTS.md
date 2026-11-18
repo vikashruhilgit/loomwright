@@ -39,7 +39,7 @@
 These are **defense-in-depth** restrictions for accidental misuse, NOT security boundaries against adversarial scenarios.
 
 **Since `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md` (unified `tools:` superset across
-all 14 agents), every agent below carries a `tools:` allowlist that is byte-identical across the
+all agents), every agent below carries a `tools:` allowlist that is byte-identical across the
 plugin (`Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch`). Each
 agent's per-row `disallowedTools` below is derived as `superset − observed effective toolset`, NOT
 `superset − previously-declared tools` — four agents (Launch Pad, Product Owner, QA Strategist, Red
@@ -83,7 +83,7 @@ today, not merely tidied a list.
 **Enforcement-model downgrade — recorded, not shipped silently (accepted for consistency and
 canonical ordering, cost stated below).** Both this doc and `AGENT_GUIDELINES.md` describe
 `disallowedTools` as defense-in-depth, NOT a security boundary — the `tools:` allowlist was meant to
-be the real restriction. Unifying `tools:` to one superset across all 14 agents moves the allowlist
+be the real restriction. Unifying `tools:` to one superset across all agents moves the allowlist
 half of enforcement to uniform-by-construction and leaves the denylist carrying the *entire*
 restriction for every agent, not just the six that already relied on it. The honest scope split:
 
@@ -119,7 +119,7 @@ restriction for every agent, not just the six that already relied on it. The hon
 
 ## Agent Invariants
 
-> Relocated from `CLAUDE.md` §"The 14 Agent Roles" in the v15.21.0 CLAUDE.md diet (content moved,
+> Relocated from `CLAUDE.md` §"The Agent Roles" in the v15.21.0 CLAUDE.md diet (content moved,
 > never deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is
 > now the authoritative home for the full per-agent invariants, the `/autonomous` orchestration
 > shell, the Shared Agent Contract, and the Parallel Execution Model; `CLAUDE.md` keeps only a
@@ -609,8 +609,6 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 12462 | 11382¹ | 0 |
 | `product-owner`     | 19533 | 17757¹ | 3 |
-| `qa-executor`       | 53332 | 48483¹ | 5 |
-| `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
 | `review-pr`         | 30226 | 27478¹ | 2 |
 | `rubric-grader`     | 2486  | 2260¹ | 0 |
@@ -732,14 +730,9 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `monitoring-observability` | 2092 | 1901 |
 | `mvp-scoping` | 1850 | 1681 |
 | `pattern-detector` | 853 | 775 |
-| `playwright-e2e` | 9017 | 8197 |
 | `pr-postmortem` | 7836 | 7124 |
 | `preflight-sync` | 5790 | 5263 |
 | `product-discovery` | 2059 | 1871 |
-| `qa-gates` | 7238 | 6580 |
-| `qa-orchestration` | 2076 | 1887 |
-| `qa-strategy` | 5989 | 5444 |
-| `qa-test-patterns` | 12183 | 11075 |
 | `quality-checklist` | 4262 | 3874 |
 | `review-heal` | 24186 | 21987 |
 | `rules` | 18926 | 17205 |
@@ -751,7 +744,6 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
 | `user-story-writing` | 6381 | 5801 |
-| `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
 ### Command size ceilings
@@ -776,15 +768,12 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `pr-postmortem` | 2215 | 2013 |
 | `product-owner` | 12779 | 11617 |
 | `propose` | 6018 | 5471 |
-| `qa-executor` | 1337 | 1215 |
-| `qa-strategist` | 4411 | 4010 |
 | `red-team-reviewer` | 2046 | 1860 |
 | `review-pr` | 2574 | 2340 |
 | `rules` | 9081 | 8255 |
 | `setup` | 31199 | 28362 |
 | `supervisor` | 11348 | 10316 |
 | `telemetry` | 5328 | 4843 |
-| `verify` | 6276 | 5705 |
 
 ---
 
@@ -836,9 +825,6 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/automate` dismissed-findings decision | automate-loop §6 "Dismissed-findings decision step" | as above | asks nothing; `pending_decisions: <n>` | unchanged. Also never asked, in an interactive run, when a sequential READY park's `park-ask-gate` prints `refuse — <reason>` (park not written, no merge-watch marker for the PR, `## Current` naming another item or PR, an unreadable run file; automate-speed/01): the drafts stay undecided with `pending_decisions: <n>` and the next PICK records them follow-up |
 | `/automate` READY-park validation waiver (`AUT-WAIVE`, human-only) | `scripts/automate-next-step.sh` step `validation` (automate-loop §6 step 4 GATE); §14 "Terminal park" (a lane relays it to the owner) | MI; MN; HP | new gate (af36-remainder/01) | not asked; the item stays escalated, escalation_cause: validation_unrun |
 | `/automate --parallel` wave-policy ask | automate-loop §14 "The per-wave loop" step 4, "Policy answers" | MI only (the coordinator, at wave planning) | new gate (parallel-automate/21) | not asked and no `wave-set`: no wave policy, so only a stamped project policy can answer a routine lane question; everything else is relayed to the owner |
-| qa-executor VERIFY sign-in | `agents/qa-executor.md` invocation notes; `skills/verify-walkthrough/SKILL.md` credential rule | SA only (Task-spawned by `/qa-executor`, `/verify`) | `status: paused`, `pause_reason: needs_auth` / `session_expired` | unchanged |
-| qa-executor URL fallback (found by the spawn-site audit; prose names no tool) | `agents/qa-executor.md` Phase 3 DETECT URL | SA only | undefined ("Ask user for URL") | `status: needs_human`, `error: "base_url_unresolved: {what was tried}"` (QA_RESULT, returned to `/qa-executor`) |
-| `/verify` queue ambiguous resume | `commands/verify.md` queue mode; `skills/verify-walkthrough/SKILL.md` §10 | MI; MN (`--non-interactive-fallback`) | `pause_reason: resume_ambiguous` | unchanged |
 | `/setup` offers and confirms (the memory module's learning-store consent ask and its `migrate` protect-waiver ask included) | `commands/setup.md`; `skills/setup/SKILL.md`; `docs/command-parts/setup/memory.md` | MI only (main-thread command) | writes nothing without an Accept (the consent ask records nothing, so nothing is published; with no answer to the waiver ask nothing is waived and the migration stops at `protect`) | unchanged |
 | `/telemetry` enable / import offer | `commands/telemetry.md` | MI only | writes nothing without an Accept (never auto-imports) | unchanged |
 | `/dreaming` per-item gate | `commands/dreaming.md` | MI only | writes nothing without an Accept; pushes nothing without a Pre-push confirmation (per item for the rules PR, one per-run question for the memory PR) | unchanged |
@@ -894,7 +880,6 @@ Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager app
 | plan-reviewer | inherit | inherit (gating) |
 | qa-strategist | inherit | inherit (gating) |
 | red-team-reviewer | inherit | inherit (adversarial creativity; as multi-voter VOTER see the phase45-multi-voter-verification row) |
-| qa-executor | inherit | future — not spawned by `/supervisor`; deferred to v2 when `/qa-executor --cheap` ships |
 
 The `phase45-multi-voter-verification` stage exists only when `--multi-voter-heal` is ON (authority: `skills/self-heal-advisory/multi-voter.md` §Multi-voter verification, Read only under that flag); when NOT in `--cheap`, Phase 4.5 verification spawns should route at the strongest available session tier — `model: inherit` stays the default everywhere, and no model IDs are hardcoded (Fable-class models are only available when the session itself runs on them).
 
@@ -1009,7 +994,7 @@ Makes single-run-per-repo **structural**, not merely documented (`automate-loop/
 >
 > **Naming convention differs from every other agent table here, deliberately.** The `Agent`
 > column carries the frontmatter identifier (`launch-pad-runner`, `supervisor-runner`,
-> `review-pr-runner`), not the display name used by CLAUDE.md §"The 14 Agent Roles" and
+> `review-pr-runner`), not the display name used by CLAUDE.md §"The Agent Roles" and
 > `README.md` (`Launch Pad`, `Supervisor`, `Review-PR`). Cross-reference by dropping the
 > `-runner` suffix. A display-name column would need a hand-maintained map keyed on the agent
 > set — the exact thing whose drift this table was generated to end.
@@ -1024,8 +1009,6 @@ Makes single-run-per-repo **structural**, not merely documented (`automate-loop/
 | orchestrator | Medium Purple | `#9370DB` |
 | plan-reviewer | Medium Turquoise | `#48D1CC` |
 | product-owner | Dark Orange | `#FF8C00` |
-| qa-executor | Orange Red | `#FF4500` |
-| qa-strategist | Tomato | `#FF6347` |
 | red-team-reviewer | Crimson | `#DC143C` |
 | review-pr-runner | Dark Turquoise | `#00CED1` |
 | rubric-grader | Yellow Green | `#9ACD32` |
@@ -1042,7 +1025,7 @@ The `effort:` frontmatter field on each agent maps to an adaptive thinking tier.
 | Tier | Agents | Rationale |
 |------|--------|-----------|
 | `xhigh` | red-team-reviewer | Adversarial deep analysis with persistent memory across audits |
-| `high` | code-reviewer, launch-pad, worker, qa-executor, qa-strategist, plan-reviewer | Implementation, exhaustive analysis, or cross-file validation |
+| `high` | code-reviewer, launch-pad, worker, plan-reviewer | Implementation, exhaustive analysis, or cross-file validation |
 | `medium` | supervisor, execute-manager, orchestrator | Pure orchestration / coordination |
 | omitted | context-keeper, product-owner | Haiku model (context-keeper) or no thinking budget needed (product-owner) |
 

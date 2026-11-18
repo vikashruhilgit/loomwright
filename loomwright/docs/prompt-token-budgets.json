@@ -11,8 +11,6 @@
     "orchestrator": {"budget": 10357, "measured": 9415, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "plan-reviewer": {"budget": 12462, "measured": 11382, "note": "Re-baselined to measured + ~10%: Criterion 23 Approach justification (23a-23d, two categories). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "product-owner": {"budget": 19533, "measured": 17757, "note": "Raised to measured + ~10%: the Defect evidence line and the PO-DEFECT unproven-defect flag (#919) breached 17356. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
-    "qa-executor": {"budget": 53332, "measured": 48483, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
-    "qa-strategist": {"budget": 24219, "measured": 22017, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "red-team-reviewer": {"budget": 6666, "measured": 6060, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "review-pr": {"budget": 30226, "measured": 27478, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "rubric-grader": {"budget": 2486, "measured": 2260, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
@@ -41,14 +39,9 @@
     "monitoring-observability": {"budget": 2092, "measured": 1901, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "mvp-scoping": {"budget": 1850, "measured": 1681, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "pattern-detector": {"budget": 853, "measured": 775, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "playwright-e2e": {"budget": 9017, "measured": 8197, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "pr-postmortem": {"budget": 7836, "measured": 7124, "note": "re-baselined to live measured + ~10% (approach-decisions/01: the approach_challenged flag H3, Step 3-5 fields and the trend-table row); earlier: automate-speed/18"},
     "preflight-sync": {"budget": 5790, "measured": 5263, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "product-discovery": {"budget": 2059, "measured": 1871, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "qa-gates": {"budget": 7238, "measured": 6580, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "qa-orchestration": {"budget": 2076, "measured": 1887, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "qa-strategy": {"budget": 5989, "measured": 5444, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "qa-test-patterns": {"budget": 12183, "measured": 11075, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "quality-checklist": {"budget": 4262, "measured": 3874, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "review-heal": {"budget": 24186, "measured": 21987, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "rules": {"budget": 18926, "measured": 17205, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
@@ -60,7 +53,6 @@
     "telemetry": {"budget": 3216, "measured": 2923, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "unit-testing": {"budget": 1691, "measured": 1537, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "user-story-writing": {"budget": 6381, "measured": 5801, "note": "raised to measured + ~10%: the Story Template Defect evidence bullet and its rule (#919)"},
-    "verify-walkthrough": {"budget": 9454, "measured": 8594, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "workflow-management": {"budget": 4915, "measured": 4468, "note": "re-baselined to live measured + ~10% (automate-speed/18)"}
   },
   "commands": {
@@ -80,14 +72,11 @@
     "pr-postmortem": {"budget": 2215, "measured": 2013, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "product-owner": {"budget": 12779, "measured": 11617, "note": "raised to measured + ~10%: the Defect evidence mirror and the PO-DEFECT unproven-defect flag (#919)"},
     "propose": {"budget": 6018, "measured": 5471, "note": "re-baselined to live measured + ~10% (dismissed-followups/01: follow_up state + followup-bundle docs)"},
-    "qa-executor": {"budget": 1337, "measured": 1215, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "qa-strategist": {"budget": 4411, "measured": 4010, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "red-team-reviewer": {"budget": 2046, "measured": 1860, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "review-pr": {"budget": 2574, "measured": 2340, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "rules": {"budget": 9081, "measured": 8255, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "setup": {"budget": 31199, "measured": 28362, "note": "raise (provider-routing-readonly-seats/07): providers module part + dashboard/usage rows; measured + ~10%"},
     "supervisor": {"budget": 11348, "measured": 10316, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "telemetry": {"budget": 5328, "measured": 4843, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "verify": {"budget": 6276, "measured": 5705, "note": "re-baselined to live measured + ~10% (automate-speed/18)"}
+    "telemetry": {"budget": 5328, "measured": 4843, "note": "re-baselined to live measured + ~10% (automate-speed/18)"}
   }
 }

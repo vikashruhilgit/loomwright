@@ -66,8 +66,6 @@ lens_role_shape() {
       printf '%s\n' 'Reply with the adversarial report, ending in the RED_TEAM_RESULT block exactly as your instructions above define it.' ;;
     product_owner)
       printf '%s\n' 'Reply with the requirements and stories your instructions above define, ending in the HANDOFF section.' ;;
-    qa_strategist)
-      printf '%s\n' 'Reply with the risk-based test strategy your instructions above define, including the risk Classification of each route or endpoint.' ;;
     *) return 1 ;;
   esac
   return 0

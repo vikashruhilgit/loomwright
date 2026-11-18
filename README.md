@@ -1,6 +1,6 @@
 # Loomwright
 
-A Claude Code plugin for AI agents to collaborate on software projects. 14 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Rubric Grader, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, Review-PR, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA automation.
+A Claude Code plugin for AI agents to collaborate on software projects. Specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Rubric Grader, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, Review-PR) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and standalone PR review-and-heal.
 
 **Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use [Beads issue tracker](https://github.com/anthropics/beads). Repeatable across any project.
 
@@ -181,9 +181,9 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 
 ---
 
-## The 14 Agents
+## The Agents
 
-### User-Facing Agents (9 + commit skill)
+### User-Facing Agents (plus the commit skill)
 
 
 | Agent                 | Command                         | Purpose                                                            | When                            |
@@ -195,16 +195,15 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
-| **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
-| **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
-| **Verify** (command)  | `/verify <ticket>`              | Walk one ticket's acceptance criteria through the RUNNING app with Playwright from Bash — one evidenced verdict per criterion (PASS / FAIL / BLOCKED / NOT_VERIFIABLE) into an append-only evidence store with a derived summary; advisory only | Proving a ticket landed in the running app |
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
 | **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (opt-in one-line run report; never overwrites a status line you already have), `base-branch` (view / pin the base branch), `providers` (route read and write seats to another AI CLI, per-repo consent); `/setup --help` lists them | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|retract\|audit\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/retract/audit/check (`audit` re-validates the standing store read-only) | Capturing durable team conventions |
 | **Propose** (command) | `/propose` · `/propose --domain` | Evidence-carrying candidate work items under `.supervisor/requirements/proposed/` from one basis per invocation: the churn ledger (inward, local, zero external calls); `--from-verify <run_id>`, one `/verify` run's evidence drafted into per-FAIL requirement files; `--from-scorecard`, an enhance-or-retire draft per feature the feature scorecard flags `review:`; or, with `--domain`, the project's domain — what competent apps in it do that this one does not, from `.agent/product.json` plus fetched sources — proposes, never queues | Deciding what to work on next   |
 
+> `/qa-strategist`, `/qa-executor` and `/verify` were removed — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](loomwright/docs/rationale/qa-split.md).
 
-### Internal Agents (5)
+
+### Internal Agents
 
 
 | Agent               | Spawned By                   | Purpose                                                               |
@@ -644,8 +643,8 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/marketplace.json:** Marketplace manifest (root)
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **loomwright/.claude-plugin/plugin.json:** Plugin manifest
-- **loomwright/agents/*.md:** Individual agent prompts (14 roles)
-- **loomwright/skills/*/SKILL.md:** 42 skill files for guidance
+- **loomwright/agents/*.md:** Individual agent prompts (one per role)
+- **loomwright/skills/*/SKILL.md:** skill files for guidance
 - **loomwright/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **loomwright/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **loomwright/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
@@ -658,10 +657,10 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `loomwright/agents/` (14 files)
+1. Agents are Markdown prompts in `loomwright/agents/` (one `.md` per agent)
 2. Commands are in `loomwright/commands/` (one `.md` per command)
-3. Skills are in `loomwright/skills/` (42 skills, versioned with SKILLS_INDEX.md; 18 tech-stack skills live in the sibling `stackpack/` plugin)
-4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `loomwright/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
+3. Skills are in `loomwright/skills/` (versioned with SKILLS_INDEX.md; 18 tech-stack skills live in the sibling `stackpack/` plugin)
+4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `loomwright/hooks/hooks.json` (Code Reviewer, TaskCompleted)
 5. Docs: `loomwright/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
@@ -732,7 +731,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Developers on a local checkout: replace the `add` source with `./` and run from the repo root so it resolves to your checkout (see **For Developers**).
-3. Verify with `/skills` — should show all 42 skills under "Plugin skills". Use `/agent-help` to confirm every slash command is registered.
+3. Verify with `/skills` — should show every Loomwright skill under "Plugin skills". Use `/agent-help` to confirm every slash command is registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start**.
 
