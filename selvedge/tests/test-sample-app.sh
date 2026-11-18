@@ -5,7 +5,9 @@
 # its origin and the `selvedge env init --port N` line, stops on SIGTERM with no process left; a
 # port already in use on 127.0.0.1, on [::1] only (skipped, with a note, where ::1 cannot be
 # bound), or by a listener with no host (Node's default listen(N): the wildcard, which a bind on
-# 127.0.0.1 alone sits beside) exits 1 naming the port; another listen error (EACCES on port 1, where this user may not
+# 127.0.0.1 alone sits beside) exits 1 naming the port; a port that neither accepts nor refuses a
+# connection (bound, not listening: silent on macOS; skipped, with a note, where it is refused) exits
+# 1 with "cannot check port N"; another listen error (EACCES on port 1, where this user may not
 # bind it; skipped elsewhere) exits 1 naming the port; `--port=N` and `--help` work.
 #
 # The server's stdout/stderr go to a temp file, never this test's stdout (sample mode has no
@@ -176,6 +178,43 @@ else
   ko "setup: could not hold the wildcard port $busy: $(cat "$TMP/hold.log")"
 fi
 stop_pid "$HOLD_PID"; HOLD_PID=""
+
+# --- a port that neither accepts nor refuses a connection exits 1 naming the port -----------------
+# The holder binds 127.0.0.1:N without listening (python3: Node cannot bind a TCP socket without
+# listening). On macOS a connect there gets no answer, so the probe's 1 s timeout fires: "cannot
+# check port N". On Linux the connect is refused instead, so that case is skipped with a note (it
+# would only reach the listen's own EADDRINUSE). Which one this machine does is read first with a
+# separate connect (2 s deadline), never from sample-app's output. The holder sleeps at most 120 s,
+# and the EXIT trap stops it.
+if command -v python3 >/dev/null 2>&1; then
+  busy="$(free_port)"
+  stop_pid "$HOLD_PID"; HOLD_PID=""
+  : >"$TMP/hold.log"
+  python3 -c 'import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError as e:
+    print("bind failed: %s" % e, flush=True); sys.exit(1)
+print("held", flush=True)
+time.sleep(120)' "$busy" >"$TMP/hold.log" 2>&1 &
+  HOLD_PID=$!
+  j=0
+  while ! grep -q . "$TMP/hold.log" 2>/dev/null && alive "$HOLD_PID" && [ "$j" -lt 50 ]; do j=$((j + 1)); sleep 0.1; done
+  if grep -qF held "$TMP/hold.log"; then
+    answer="$(node -e 'const c = require("net").connect({ host: "127.0.0.1", port: Number(process.argv[1]) }); const done = (s) => { process.stdout.write(s); c.destroy(); process.exit(0); }; setTimeout(() => done("none"), 2000); c.once("connect", () => done("accepted")); c.once("error", (e) => done(e.code || "error"));' "$busy")"
+    if [ "$answer" = "none" ]; then
+      expect_exit1 "$busy" "a port that gives no answer (bound, not listening)" "cannot check port $busy: no answer from 127.0.0.1:$busy within 1000 ms"
+    else
+      echo "  note: a connect to a bound-but-not-listening 127.0.0.1:$busy gets '$answer' here, not silence; the no-answer (probe timeout) case is skipped"
+    fi
+  else
+    ko "setup: could not bind 127.0.0.1:$busy without listening: $(cat "$TMP/hold.log")"
+  fi
+  stop_pid "$HOLD_PID"; HOLD_PID=""
+else
+  echo "  note: python3 is not on PATH; the no-answer (probe timeout) case is skipped"
+fi
 
 # --- a listen error other than in-use exits 1 naming the port (port 1: EACCES where unprivileged) --
 if node -e 'const s = require("net").createServer(); s.on("error", (e) => process.exit(e.code === "EACCES" ? 0 : 1)); s.listen(1, "127.0.0.1", () => s.close(() => process.exit(1)));' 2>/dev/null; then
