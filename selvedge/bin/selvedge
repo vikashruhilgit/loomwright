@@ -6,10 +6,13 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run`, `verdict` and `comment` commands run
-# lib/<command>.mjs (`run`: lib/runner/run.mjs) and are the only ones that need Node (>= 18;
+# The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run`, `verdict`, `comment` and `doctor`
+# commands run lib/<command>.mjs (`run`: lib/runner/run.mjs), and `sample-app` runs the bundled
+# sample app (tests/fixtures/app-server.mjs sample); they are the only ones that need Node (>= 18;
 # `snapshot`, `run` and `auth setup --headed` also need Playwright, found at run time; `comment`
-# also needs gh); --version, help and install-cli stay bash-only.
+# also needs gh); --version, help and install-cli stay bash-only. `doctor` checks Node itself, in
+# bash, before it runs lib/doctor.mjs (a missing Node cannot run a .mjs); every other check is
+# lib/doctor.mjs's.
 #
 # Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line),
 # 3 NOT_VERIFIABLE (a named reason on its own line). Precedence when several apply: 1 > 2 > 3 > 0.
@@ -78,6 +81,11 @@ Commands:
   comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]
                        post the run folder's verdicts to PR <n> as ONE text-only comment, updated
                        in place (needs Node >= 18 and gh; \`selvedge comment help\`)
+  doctor               check Node, Playwright and its Chromium, selvedge.json, hook approvals
+                       and the planner: one line each, ok or FAIL with the one fix
+  sample-app [--port N]
+                       serve the bundled sample app on http://localhost:N (default 4173) until
+                       Ctrl-C, for the quick start (needs Node >= 18)
   help, -h, --help     print this help
 EOF
 }
@@ -91,6 +99,31 @@ cmd_node() {
   esac
   command -v node >/dev/null 2>&1 || die "the $name commands need Node.js >= 18 on PATH (node not found)"
   exec node "$BIN_DIR/../lib/$module.mjs" "$@"
+}
+
+# doctor's Node check, in bash: a missing or older Node cannot load lib/doctor.mjs. The other checks
+# are named only in lib/doctor.mjs, so this says they were skipped without listing them.
+cmd_doctor() {
+  local v="" major="" found
+  if command -v node >/dev/null 2>&1; then
+    v="$(node -p 'process.versions.node' 2>/dev/null)"
+  fi
+  major="${v%%.*}"
+  case "$major" in ''|*[!0-9]*) major=0 ;; esac
+  if [ "$major" -lt 18 ]; then
+    if [ -z "$v" ]; then found="node not found on PATH"; else found="found $v"; fi
+    printf 'FAIL Node >= 18: install Node.js >= 18 and put node on PATH (%s)\n' "$found"
+    printf 'skipped: the other checks need Node\n'
+    exit 1
+  fi
+  cmd_node doctor "$@"
+}
+
+# sample-app [--port N] — the bundled fixture app, in the foreground (tests/fixtures/app-server.mjs
+# sample: default port 4173, no watchdog, Ctrl-C stops it).
+cmd_sample_app() {
+  command -v node >/dev/null 2>&1 || die "sample-app needs Node.js >= 18 on PATH (node not found)"
+  exec node "$BIN_DIR/../tests/fixtures/app-server.mjs" sample "$@"
 }
 
 cmd_version() {
@@ -135,6 +168,8 @@ case "${1:-}" in
   run) shift; cmd_node run "$@" ;;
   verdict) shift; cmd_node verdict "$@" ;;
   comment) shift; cmd_node comment "$@" ;;
+  doctor) shift; cmd_doctor "$@" ;;
+  sample-app) shift; cmd_sample_app "$@" ;;
   help|-h|--help) usage ;;
   *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
 esac

@@ -337,14 +337,18 @@
 #       sibling setup-memory.sh (`allowlist`); a missing/unparseable `.repo` is a hit;
 #   (b) prose, portable POSIX ERE only (no GNU-only escapes — on BSD grep those would silently match
 #       nothing and this fail-CLOSED gate would fail OPEN):
-#         email          e-mail addresses (any letter case). ONE exemption, exact: the `git` SSH user
-#                        at a forge_slug host in the scp-style remote form — `git@github.com:`,
-#                        `git@gitlab.com:`, `git@bitbucket.org:`, all lowercase, trailing `:` required
-#                        (git@github.com:owner/repo is a remote, not a mailbox). The whole match must
-#                        be that string, so `someone@github.com`, `xgit@github.com:`, `git@example.com`,
+#         email          e-mail addresses (any letter case). TWO exemptions, each a whole-match test:
+#                        (1) exact: the `git` SSH user at a forge_slug host in the scp-style remote
+#                        form — `git@github.com:`, `git@gitlab.com:`, `git@bitbucket.org:`, all
+#                        lowercase, trailing `:` required (git@github.com:owner/repo is a remote, not a
+#                        mailbox), so `someone@github.com`, `xgit@github.com:`, `git@gitea.acme.io:`,
 #                        `git@github.company.com:`, a colon-less `git@github.com` and any other case
-#                        still hit, and a real address on the same line still hits. The slug after
-#                        the `:` is still checked by forge_slug.
+#                        still hit; the slug after the `:` is still checked by forge_slug.
+#                        (2) a host reserved so it can never receive mail (RFC 2606 / 6761, any case):
+#                        example.com / .org / .net and their subdomains, and any name under the .test,
+#                        .example, .invalid or .localhost TLD — fixture addresses, never a person's
+#                        (`jane.doe@example.test`). `x@example.com.evil.io` and `x@test.com` still hit.
+#                        A real address on the same line as an exempt one still hits.
 #         home_path      absolute home paths: /Users/<name>/ and /home/<name>/ (any letter case —
 #                        macOS paths are case-insensitive), where <name> is any run of letters, digits,
 #                        `.`, `_` or `-`. ANCHORED: the `/` must start the line or follow a character

@@ -1,6 +1,7 @@
 // app-server.mjs — a small web app for selvedge's snapshot, plan and run tests (test-snapshot.sh,
-// test-plan.sh, test-run.sh, test-replay.sh, test-auth-run.sh). Not named test-*, so
-// selvedge/tests/run.sh never runs it directly.
+// test-plan.sh, test-run.sh, test-replay.sh, test-auth-run.sh), and the quick start's sample app
+// (`selvedge sample-app`, test-sample-app.sh). Not named test-*, so selvedge/tests/run.sh never
+// runs it directly.
 //
 // Pages (every page is a complete HTML document; scripts are inline, nothing loads from elsewhere):
 //   /             a plain page: heading "Plain page", no controls
@@ -49,16 +50,28 @@
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
-// Library:  startAppServer() → Promise<{ port, origin, events, close() }> (binds 127.0.0.1, random
-//           port; origin is http://localhost:<port>).
+// Library:  startAppServer({ port }?) → Promise<{ port, origin, events, close() }> (binds 127.0.0.1;
+//           with no argument, or port 0, a random port; origin is http://localhost:<port>). A port
+//           already in use rejects with the listen error (code EADDRINUSE).
 // Command:  node app-server.mjs serve <info.json> [<log dir>]
 //           starts the app (and, with a log dir, a servers.mjs recording server named U whose JSON
 //           log is <log dir>/U.json), writes {app: {port, origin}, U?: {port, origin, logFile}} to
 //           <info.json> (atomically: written to a temp name, then renamed), and runs until SIGTERM
 //           or SIGINT closes every server. A watchdog exits it after 15 minutes so a test that dies
 //           without killing it never leaves it running.
+// Command:  node app-server.mjs sample [--port <N>]   (what `selvedge sample-app [--port N]` runs)
+//           the quick start's sample app: serves on port N (default 4173, DEFAULT_SAMPLE_PORT) in
+//           the foreground until Ctrl-C (SIGINT) or SIGTERM, and prints its origin and the
+//           `selvedge env init --port N` line to use. No watchdog in this mode: a user runs it as
+//           long as they like. Before it listens it connects to 127.0.0.1:N and [::1]:N
+//           (`localhost` can resolve to either): a connection that is accepted on either means
+//           something already serves there (a listener on 127.0.0.1, on ::1, or on the wildcard
+//           `::` / 0.0.0.0, which a bind on 127.0.0.1 alone would sit beside unnoticed), so it
+//           exits 1 with one line naming the port; then it binds 127.0.0.1, and that listen's own
+//           EADDRINUSE exits 1 the same way. A bad --port exits 2.
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
+import net from 'node:net';
 import { renameSync, writeFileSync } from 'node:fs';
 import { startServer } from './servers.mjs';
 
@@ -200,8 +213,8 @@ fetch('/api/whoami', { headers: { Authorization: 'Bearer ${BEARER_TOKEN}' } })
 </script>`,
 );
 
-// startAppServer() → Promise<{ port, origin, events, close() }>
-export async function startAppServer() {
+// startAppServer({ port = 0 }?) → Promise<{ port, origin, events, close() }>
+export async function startAppServer({ port: listenPort = 0 } = {}) {
   const events = [];
   let cartLabel = null; // /control/cart-label; null: the button's name is its text
   const sessions = new Map(); // session id → { user, pass } (/login, /account)
@@ -311,7 +324,7 @@ export async function startAppServer() {
   server.on('clientError', (_err, socket) => socket.destroy());
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(listenPort, '127.0.0.1', resolve);
   });
   const { port } = server.address();
   return {
@@ -351,7 +364,113 @@ async function serve(infoFile, logDir) {
   renameSync(`${infoFile}.tmp`, infoFile);
 }
 
-if (process.argv[2] === 'serve') {
+export const DEFAULT_SAMPLE_PORT = 4173;
+const SAMPLE_USAGE = 'usage: selvedge sample-app [--port <N>]   (default port 4173)';
+
+// The `sample` command's port: `--port <N>` / `--port=<N>`, else DEFAULT_SAMPLE_PORT; null when bad.
+function samplePort(args) {
+  let value = String(DEFAULT_SAMPLE_PORT);
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '--port') {
+      i += 1;
+      if (i >= args.length) return null;
+      value = args[i];
+    } else if (a.startsWith('--port=')) {
+      value = a.slice('--port='.length);
+    } else {
+      return null;
+    }
+  }
+  if (!/^[0-9]+$/.test(value)) return null;
+  const port = Number(value);
+  return port >= 1 && port <= 65535 ? port : null;
+}
+
+// Connect errors that mean "nothing is listening at this address" (refused), or "this machine has
+// no such address" (no IPv6 loopback): either way nothing there can take localhost's traffic.
+const PORT_FREE_CODES = new Set(['ECONNREFUSED', 'EADDRNOTAVAIL', 'ENETUNREACH', 'EHOSTUNREACH', 'EAFNOSUPPORT']);
+const PROBE_TIMEOUT_MS = 1000;
+
+// probeInUse(host, port) → Promise<null | 'in-use' | Error>: connects to host:port once. null when
+// the connection is refused (or the address does not exist here); 'in-use' when it is accepted
+// (something already serves there); an Error otherwise, including no answer within
+// PROBE_TIMEOUT_MS (a loopback port that neither accepts nor refuses is not one to serve on).
+// The probe socket is destroyed before this resolves, on every path.
+function probeInUse(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      finish(new Error(`no answer from ${host === '::1' ? '[::1]' : host}:${port} within ${PROBE_TIMEOUT_MS} ms`));
+    }, PROBE_TIMEOUT_MS);
+    socket.once('connect', () => finish('in-use'));
+    socket.once('error', (e) => finish(e && PORT_FREE_CODES.has(e.code) ? null : e));
+  });
+}
+
+async function sample(args) {
+  if (args[0] === 'help' || args[0] === '-h' || args[0] === '--help') {
+    process.stdout.write(`${SAMPLE_USAGE}\n`);
+    return;
+  }
+  const port = samplePort(args);
+  if (port === null) {
+    process.stderr.write(`selvedge sample-app: --port needs a port number from 1 to 65535\n${SAMPLE_USAGE}\n`);
+    process.exit(2);
+  }
+  const inUse = () => {
+    process.stderr.write(`selvedge sample-app: port ${port} is already in use; stop what is using it, or pick another with --port <N>\n`);
+    process.exit(1);
+  };
+  // The app binds 127.0.0.1 only, but `localhost` can resolve to ::1 first (Node's fetch, Chromium),
+  // and a listener on [::1]:N or on the wildcard `::` (Node's default listen(N), vite preview) does
+  // not stop a bind on 127.0.0.1:N, yet takes the quick start's traffic. So connect first: before
+  // this process listens, an accepted connection can only be another server's. (Something that
+  // starts listening between the probe and the listen below is not caught; the listen's own
+  // EADDRINUSE still catches a holder of 127.0.0.1:N.)
+  for (const host of ['127.0.0.1', '::1']) {
+    const probe = await probeInUse(host, port);
+    if (probe === 'in-use') inUse();
+    if (probe) {
+      process.stderr.write(`selvedge sample-app: cannot check port ${port}: ${probe.message || probe}\n`);
+      process.exit(1);
+    }
+  }
+  let app;
+  try {
+    app = await startAppServer({ port });
+  } catch (e) {
+    if (e && e.code === 'EADDRINUSE') inUse();
+    process.stderr.write(`selvedge sample-app: cannot listen on port ${port}: ${e && e.message ? e.message : e}\n`);
+    process.exit(1);
+  }
+  let closing = false;
+  const stop = async () => {
+    if (closing) return;
+    closing = true;
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  process.stdout.write(
+    `selvedge sample app: serving on ${app.origin} (Ctrl-C to stop)\n`
+    + `pages: ${app.origin}/cart, ${app.origin}/echo, ${app.origin}/slow\n`
+    + `in your demo repo: selvedge env init --port ${port}\n`,
+  );
+}
+
+if (process.argv[2] === 'sample') {
+  await sample(process.argv.slice(3));
+} else if (process.argv[2] === 'serve') {
   if (!process.argv[3]) {
     process.stderr.write('usage: node app-server.mjs serve <info.json> [<log dir>]\n');
     process.exit(2);
