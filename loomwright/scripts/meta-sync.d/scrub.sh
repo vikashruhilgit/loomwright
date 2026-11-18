@@ -71,7 +71,7 @@ first_match_line() {
 scan_file() {
   local f="$1" p="$2" wl="${3:-0}" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc icase ln
   # rule<TAB>case(i = any letter case, s = exact, e = email: any letter case minus the exact forge
-  # SSH-remote exemption, decided by email_matches)<TAB>ERE
+  # SSH-remote exemption and the reserved-host exemption, decided by email_matches)<TAB>ERE
   while IFS="$TAB" read -r rule icase re; do
     case "$icase" in
       e) email_matches "$re" "$f" >/dev/null; rc=$? ;;
