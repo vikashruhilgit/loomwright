@@ -16,9 +16,9 @@ scrub_report() {
 }
 
 # EMAIL_FORGE_EXEMPT — one of the TWO email-rule match shapes that are not a hit: the `git` SSH
-# user at a forge host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o` match must equal
-# it exactly — lowercase, the trailing `:` included — so any other user, host, case or shape still
-# hits. See the SCRUB header, rule email.
+# user at a forge host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o`
+# match must equal it exactly — lowercase, the trailing `:` included — so any other user, host,
+# case or shape still hits. See the SCRUB header, rule email.
 EMAIL_FORGE_EXEMPT='git@(github\.com|gitlab\.com|bitbucket\.org):'
 
 # EMAIL_RESERVED_EXEMPT — the other: an address whose WHOLE host is a name reserved so it can never
@@ -34,9 +34,9 @@ EMAIL_RESERVED_EXEMPT='[a-z0-9._%+-]+@([a-z0-9-]+\.)*(example\.(com|org|net)|exa
 # 0 = at least one real hit, 1 = none, >1 = a scan error (the caller reports scan_error(email): fail
 # closed). The two filters go through a file, never a pipe: a pipe would hand the second grep an
 # empty input when the first failed, turning a scan error into "none" (fail open). The -o pass
-# appends an optional `:` so the exemption can see the remote's colon; `:` is in neither the local-part nor the
-# host class, so this never changes which addresses match. A match starts at the leftmost
-# local-part character, so `xgit@github.com:` is one match `xgit@…` and is NOT exempt.
+# appends an optional `:` so the exemption can see the remote's colon; `:` is in neither the
+# local-part nor the host class, so this never changes which addresses match. A match starts at
+# the leftmost local-part character, so `xgit@github.com:` is one match `xgit@…` and is NOT exempt.
 email_matches() {
   local all="$WORK/email.all" rc
   env LC_ALL=C grep -a -i -n -o -E -e "$1:?" "$2" > "$all" 2>/dev/null; rc=$?
