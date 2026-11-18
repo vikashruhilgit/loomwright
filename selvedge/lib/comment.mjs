@@ -3,7 +3,9 @@
 //   selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]
 //
 // Posts a run folder's verdicts to a PR as ONE comment, created once and updated in place: the
-// comment is the first on the PR whose body holds COMMENT_MARKER (comment-render.mjs). The body is
+// comment is the first on the PR whose body holds COMMENT_MARKER (comment-render.mjs) AND whose author
+// (`user.login`) is the account `gh` is signed in as (`gh api user`). The marker is public text, so a
+// marked comment by anyone else is never updated; an unresolvable login fails closed (exit 1). The body is
 // built by renderComment from the run folder's verdict.json, plan.json and criteria.json, plus each
 // earlier plan revision's own verdict per criterion (read here: runs.jsonl and the earlier run folders).
 //
@@ -40,7 +42,7 @@ export const VISIBILITY_PRIVATE = 'PRIVATE';
 const USAGE = `Usage: selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]
 
 Post the run folder's verdicts to PR <n> as ONE comment (found again by the hidden marker
-${COMMENT_MARKER}, updated in place). Text only: criterion, interpretation, assumptions, steps
+${COMMENT_MARKER} on a comment by the account gh is signed in as, updated in place). Text only: criterion, interpretation, assumptions, steps
 (type + locator; a goto shows its path), expected value, matched, verdict and its revisions, evidence
 class, reason and hint. No URL origin or query string, no fill value, no screenshot or trace, and no
 value the run read unless the base branch's selvedge.json sets "comment": {"read_values": true}.
@@ -190,8 +192,18 @@ function repoVisibility() {
   }
 }
 
-// The id of the first comment on the PR whose body holds the marker, or null.
+// The login `gh` is signed in as. Throws GhError when it cannot be read: matching marker comments
+// from any author instead would let anyone's pre-seeded marker comment be taken over.
+function ghLogin() {
+  const login = gh(['api', 'user', '--jq', '.login'], 'api user').trim();
+  if (login === '' || /\s/.test(login)) throw new GhError(`gh api user returned no usable login (${JSON.stringify(login)})`);
+  return login;
+}
+
+// The id of the first comment on the PR whose body holds the marker and whose author is the
+// signed-in account, or null.
 function findCommentId(pr) {
+  const login = ghLogin();
   const out = gh(['api', '--paginate', '--slurp', `repos/{owner}/{repo}/issues/${pr}/comments`], `api issues/${pr}/comments`);
   let pages;
   try {
@@ -201,7 +213,8 @@ function findCommentId(pr) {
   }
   const comments = Array.isArray(pages) ? pages.flat() : [];
   for (const c of comments) {
-    if (isPlainObject(c) && typeof c.body === 'string' && c.body.includes(COMMENT_MARKER)) return String(c.id);
+    if (!isPlainObject(c) || typeof c.body !== 'string' || !c.body.includes(COMMENT_MARKER)) continue;
+    if (isPlainObject(c.user) && c.user.login === login) return String(c.id);
   }
   return null;
 }

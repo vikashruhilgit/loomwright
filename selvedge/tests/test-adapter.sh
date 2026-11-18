@@ -86,9 +86,9 @@ esac
 [ "$(fm model "$AGENT")" = "inherit" ] && ok "model: inherit" || ko "model is '$(fm model "$AGENT")', not inherit"
 
 echo "-- AC8 the verifier's prohibitions"
-grep -E '[Nn]ever' "$AGENT" | grep -F 'plan.json' | grep -qF 'plan --freeze' \
+grep -qF 'plan --freeze' < <(grep -E '[Nn]ever' "$AGENT" | grep -F 'plan.json') \
   && ok "the body forbids editing plan.json after plan --freeze" || ko "no line forbids editing plan.json after plan --freeze"
-grep -E '[Nn]ever' "$AGENT" | grep -qF '~/.local/state/selvedge/' \
+grep -qF '~/.local/state/selvedge/' < <(grep -E '[Nn]ever' "$AGENT") \
   && ok "the body forbids reading ~/.local/state/selvedge/" || ko "no line forbids reading ~/.local/state/selvedge/"
 
 echo "-- AC8 the same command order in the verifier and the skill"
@@ -101,7 +101,7 @@ got_skill="$(workflow_cmds "$SKILL" | paste -sd '|' -)"
   || ko "the verifier ('$got_agent') and the skill ('$got_skill') differ"
 for f in "$AGENT" "$SKILL"; do
   line="$(awk '/^## /{w=($0=="## Workflow");next} w && /^[0-9]+\. `selvedge snapshot /{print; exit}' "$f")"
-  printf '%s' "$line" | grep -qF -- '--run-dir <run-dir>' \
+  grep -qF -- '--run-dir <run-dir>' <<<"$line" \
     && ok "$(basename "$f"): the snapshot step names the run folder (--run-dir <run-dir>)" || ko "$(basename "$f"): the snapshot step has no --run-dir <run-dir>: '$line'"
 done
 
@@ -109,9 +109,9 @@ echo "-- AC8 /selvedge:verify resolves the criteria source"
 row_pr="$(grep -E '^\|.*PR number' "$CMD" | head -n 1)"
 row_md="$(grep -E '^\|.*[Ff]ile' "$CMD" | head -n 1)"
 row_tx="$(grep -E '^\|.*pasted text' "$CMD" | head -n 1)"
-printf '%s' "$row_pr" | grep -qF '`selvedge criteria from-pr <n>`' && ok "a PR number resolves to selvedge criteria from-pr" || ko "PR number row: '$row_pr'"
-printf '%s' "$row_md" | grep -qF '`selvedge criteria from-md <file>`' && ok "a file resolves to selvedge criteria from-md" || ko "file row: '$row_md'"
-printf '%s' "$row_tx" | grep -qF '`selvedge criteria from-text`' && ok "pasted text resolves to selvedge criteria from-text" || ko "pasted text row: '$row_tx'"
+grep -qF '`selvedge criteria from-pr <n>`' <<<"$row_pr" && ok "a PR number resolves to selvedge criteria from-pr" || ko "PR number row: '$row_pr'"
+grep -qF '`selvedge criteria from-md <file>`' <<<"$row_md" && ok "a file resolves to selvedge criteria from-md" || ko "file row: '$row_md'"
+grep -qF '`selvedge criteria from-text`' <<<"$row_tx" && ok "pasted text resolves to selvedge criteria from-text" || ko "pasted text row: '$row_tx'"
 
 echo "-- AC8 /selvedge:verify spawns the verifier by the recorded subagent_type"
 recorded="$(sed -n 's/^- subagent_type the session used: `\([^`]*\)`.*$/\1/p' "$EVID" | head -n 1)"

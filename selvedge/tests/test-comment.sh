@@ -2,7 +2,9 @@
 # test-comment.sh — pins `selvedge comment <run-dir> --pr <n>` (selvedge/lib/comment.mjs,
 # selvedge/lib/comment-render.mjs) and the `comment` key of selvedge.json (selvedge/lib/env-config.mjs,
 # schemas/selvedge-config.schema.json): the key's validation and defaults; ONE comment found by its
-# marker and updated in place (an unmarked comment by the same account untouched); a text-only body
+# marker on a comment by the signed-in login and updated in place (an unmarked comment by the same
+# account untouched, a marked comment by another login never PATCHed, an unreadable login fails
+# closed); a text-only body
 # with no URL origin or query, header name, fill value, {{NAME}} value or evidence file name; read
 # values unpublished by default, opted in only from the base ref, refused on a repo that is not
 # private, and redacted when shown; the per-criterion revision cell; the confirmation, the run-folder
@@ -57,6 +59,7 @@ git -C "$R" rm -q --cached selvedge.json 2>/dev/null; git -C "$R" commit -q -m '
 # State: $GH_COMMENTS (a JSON array of {id, body, user}); every argv is appended as one JSON line to
 # $GH_ARGV_LOG; each body received from a file is also kept as $GH_BODIES/<n>. Serves `pr view <n>
 # --json baseRefName` ($GH_BASE), `repo view --json visibility` ($GH_VISIBILITY; FAIL → exit 1),
+# `api user --jq .login` ($GH_LOGIN, default "me"; FAIL → exit 1),
 # `api --paginate --slurp …/issues/<n>/comments` (PR 99: exit 1), `api -X PATCH …/issues/comments/<id>
 # -F body=@<file>` and `pr comment <n> --body-file <file>`. A body is read ONLY from a file argument.
 STUB="$TMP/stub-bin"; mkdir -p "$STUB" "$TMP/bodies"
@@ -81,6 +84,11 @@ if (/^pr view [0-9]+ --json baseRefName$/.test(a)) {
 if (a === 'repo view --json visibility') {
   if (process.env.GH_VISIBILITY === 'FAIL') die('cannot read the repo');
   process.stdout.write(JSON.stringify({ visibility: process.env.GH_VISIBILITY || 'PUBLIC' }));
+  process.exit(0);
+}
+if (a === 'api user --jq .login') {
+  if (process.env.GH_LOGIN === 'FAIL') die('HTTP 401');
+  process.stdout.write(`${process.env.GH_LOGIN || 'me'}\n`);
   process.exit(0);
 }
 let m = a.match(/^api --paginate --slurp repos\/\{owner\}\/\{repo\}\/issues\/([0-9]+)\/comments$/);
@@ -108,7 +116,7 @@ if (argv[0] === 'pr' && argv[1] === 'comment') {
   const body = fs.readFileSync(argv[i + 1], 'utf8');
   const all = load();
   const id = all.reduce((n, x) => Math.max(n, x.id), 100) + 1;
-  all.push({ id, body, user: { login: 'me' } }); save(all); keep(body);
+  all.push({ id, body, user: { login: process.env.GH_LOGIN || 'me' } }); save(all); keep(body);
   process.stdout.write(`https://github.example/o/r/pull/${argv[2]}#issuecomment-${id}\n`);
   process.exit(0);
 }
@@ -126,7 +134,7 @@ reset_gh() {
   : > "$GH_ARGV_LOG"
   rm -f "$GH_BODIES"/*
   node -e 'require("fs").writeFileSync(process.env.GH_COMMENTS, JSON.stringify([{ id: 101, body: process.argv[1], user: { login: "me" } }], null, 2))' "$UNMARKED_BODY"
-  unset GH_VISIBILITY; export GH_BASE=plain
+  unset GH_VISIBILITY GH_LOGIN; export GH_BASE=plain
 }
 
 # run [stdin-file] -- <cli args…> — sets $rc, $out, $err; runs in the repo.
@@ -278,6 +286,7 @@ last_kept="$(ls "$GH_BODIES" | sort -n | tail -n 1)"
 out="$(node -e 'const c = JSON.parse(require("fs").readFileSync(process.env.GH_COMMENTS, "utf8")); const a = c.find((x) => x.id === 101); const b = c.find((x) => x.id === 900); process.stdout.write(a && b && a.body === process.argv[1] && b.body === "a later note by the same account" ? "yes" : "no")' "$UNMARKED_BODY")"
 [ "$out" = yes ] && ok "AC2 the unmarked comments by the same account are unchanged byte for byte" || ko "AC2 unmarked comments changed: $(cat "$GH_COMMENTS")"
 grep -qF 'selvedge:verdict' "$GH_ARGV_LOG" && ko "AC2 the body travelled in argv" || ok "AC2 no argv carries the body (it travels as a file)"
+grep -qF '["api","user","--jq",".login"]' "$GH_ARGV_LOG" && ok "AC2 the author is checked against the signed-in login (gh api user --jq .login)" || ko "AC2 no login lookup: $(cat "$GH_ARGV_LOG")"
 # Round trip: the stub's body equals renderComment's output for the same folder, byte for byte (the
 # criterion text holds a single quote and a backslash; the body has newlines).
 node --input-type=module -e '
@@ -288,6 +297,21 @@ const run = C.readRunFolder(process.argv[1]);
 process.stdout.write(R.renderComment({ ...run, history: C.criterionHistory(null, run), readValues: false, redact: [] }));' "$MAIN" > "$TMP/want-body" 2>&1
 { cmp -s "$TMP/want-body" "$GH_BODIES/$last_kept" && grep -qF "it's a\\b path" "$GH_BODIES/$last_kept"; } \
   && ok "round trip: the body gh received is renderComment's, byte for byte (single quote, backslash, newlines)" || ko "round trip differs: want='$(cat "$TMP/want-body")' got='$(cat "$GH_BODIES/$last_kept")'"
+
+# A marker comment by ANOTHER account (the marker is public text) is never taken over: the run
+# creates its own comment and leaves the other one byte for byte.
+reset_gh
+node -e 'const f = process.env.GH_COMMENTS; const c = JSON.parse(require("fs").readFileSync(f, "utf8")); c.push({ id: 500, body: "<!-- selvedge:verdict --> planted by someone else", user: { login: "mallory" } }); require("fs").writeFileSync(f, JSON.stringify(c, null, 2))'
+run -- comment "$MAIN" --pr 42 --yes
+out="$(node -e 'const c = JSON.parse(require("fs").readFileSync(process.env.GH_COMMENTS, "utf8")); const p = c.find((x) => x.id === 500); const mine = c.filter((x) => x.id !== 500 && x.user.login === "me" && x.body.includes("<!-- selvedge:verdict -->")); process.stdout.write(p && p.body === "<!-- selvedge:verdict --> planted by someone else" && mine.length === 1 ? "yes" : "no")')"
+{ [ "$rc" -eq 0 ] && [ "$out" = yes ] && grep -qE '"pr","comment","42","--body-file"' "$GH_ARGV_LOG" && ! grep -qF '"PATCH"' "$GH_ARGV_LOG"; } \
+  && ok "AC2 a marker comment by another login is not PATCHed: a new comment is created, the other left byte for byte" || ko "AC2 foreign marker: rc=$rc err='$err' argv=$(cat "$GH_ARGV_LOG") comments=$(cat "$GH_COMMENTS")"
+# The signed-in login cannot be read: fail closed (exit 1), nothing posted.
+reset_gh; export GH_LOGIN=FAIL
+run -- comment "$MAIN" --pr 42 --yes
+{ [ "$rc" -eq 1 ] && grep -qF 'gh api user failed' <<<"$err" && [ "$(posted)" = 0 ] && [ "$(marked_count)" = 0 ]; } \
+  && ok "AC2 an unreadable gh login exits 1 and posts nothing (fails closed, never matches any author)" || ko "AC2 login failure: rc=$rc err='$err' argv=$(cat "$GH_ARGV_LOG")"
+unset GH_LOGIN
 
 echo "-- text only: no URL origin, header name, fill value, secret or evidence file (AC3)"
 B="$first_body"

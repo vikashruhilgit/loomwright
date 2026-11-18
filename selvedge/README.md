@@ -501,8 +501,10 @@ selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-value
 
 Posts a run folder's verdicts to PR `<n>` as **one** comment. The comment carries a hidden marker,
 `<!-- selvedge:verdict -->`; `comment` lists the PR's comments (`gh api --paginate`), takes the first
-whose body holds the marker and updates it in place (`PATCH`), and creates one
-(`gh pr comment --body-file`) only when none does. A comment without the marker is never touched
+whose body holds the marker **and** whose author is the account `gh` is signed in as (`gh api user`),
+updates it in place (`PATCH`), and creates one (`gh pr comment --body-file`) only when none does. The
+marker is public text, so a marked comment by anyone else is never updated, and when the signed-in
+login cannot be read `comment` exits 1 without posting. A comment without the marker is never touched
 (it does not use `gh pr comment --edit-last`, which edits your last comment whatever it is). The body always
 reaches `gh` as a file, never as command-line text. stdout is the comment URL, never the body.
 

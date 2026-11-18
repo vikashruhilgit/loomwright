@@ -11,9 +11,10 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
 ## 0.6.0 — 2026-11-18
 
 - `selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]` posts a run
-  folder's verdicts to the PR as ONE comment, found by its `<!-- selvedge:verdict -->` marker and
-  updated in place (`PATCH`); it creates one only when no comment carries the marker, and never
-  touches a comment without it. The body reaches `gh` as a file, never as command-line text. It is
+  folder's verdicts to the PR as ONE comment, found by its `<!-- selvedge:verdict -->` marker on a
+  comment authored by the account `gh` is signed in as, and updated in place (`PATCH`); it creates
+  one only when no such comment exists, never touches a comment without the marker or one by another
+  author, and exits 1 without posting when the signed-in login cannot be read. The body reaches `gh` as a file, never as command-line text. It is
   text only: a summary line, the short plan sha256 and revision, and per criterion the text, verdict,
   interpretation, assumptions, steps as type and locator, the expected value, matched, the evidence
   class and, for BLOCKED / NOT_VERIFIABLE, the reason with an unblock hint. Every URL is cut to its
