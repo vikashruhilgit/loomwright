@@ -3,13 +3,15 @@
 # app-server.mjs sample): on a given free port it serves /cart (heading "Shop"), /echo ("Hello, ")
 # and /api/price ("42") — the literals the README quick start's example criteria rely on — prints
 # its origin and the `selvedge env init --port N` line, stops on SIGTERM with no process left; a
-# port already in use on 127.0.0.1, or on [::1] only (skipped, with a note, where ::1 cannot be
-# bound), exits 1 naming the port; another listen error (EACCES on port 1, where this user may not
+# port already in use on 127.0.0.1, on [::1] only (skipped, with a note, where ::1 cannot be
+# bound), or by a listener with no host (Node's default listen(N): the wildcard, which a bind on
+# 127.0.0.1 alone sits beside) exits 1 naming the port; another listen error (EACCES on port 1, where this user may not
 # bind it; skipped elsewhere) exits 1 naming the port; `--port=N` and `--help` work.
 #
 # The server's stdout/stderr go to a temp file, never this test's stdout (sample mode has no
 # watchdog, so a server holding the suite's stdout would hang a piped run.sh). An EXIT trap stops
-# any server still running (TERM, then KILL). Not pinned here: the 4173 default and the absence of
+# any server still running (TERM, then KILL); a PID variable it reads is only ever reassigned after
+# the process it held is stopped, so no server is orphaned. Not pinned here: the 4173 default and the absence of
 # the watchdog (a test would have to bind 4173 or wait 15 minutes); both are documented in the
 # README and app-server.mjs's header.
 set -uo pipefail
@@ -103,7 +105,9 @@ if [ -n "$SRV_PID" ] && alive "$SRV_PID"; then
   i=0
   while alive "$SRV_PID" && [ "$i" -lt 50 ]; do i=$((i + 1)); sleep 0.1; done
   if alive "$SRV_PID"; then
-    ko "the server process $SRV_PID is still running 5 s after SIGTERM (the EXIT trap kills it)"
+    ko "the server process $SRV_PID is still running 5 s after SIGTERM (killed now)"
+    stop_pid "$SRV_PID"
+    SRV_PID=""
   else
     wait "$SRV_PID" 2>/dev/null
     ok "the server process is gone after the stop (SIGTERM)"
@@ -131,9 +135,12 @@ expect_exit1() {
 }
 
 # hold <host> <port> — hold host:port in the background (HOLD_PID); prints "held" or the error code.
+# An empty <host> listens with no host at all (Node's default: the wildcard, `::` dual-stack where
+# IPv6 exists). Any earlier holder is stopped first, so HOLD_PID never loses a live process.
 hold() {
+  stop_pid "$HOLD_PID"; HOLD_PID=""
   : >"$TMP/hold.log"
-  node -e 'const s = require("net").createServer(); s.on("error", (e) => { process.stdout.write(`${e.code}\n`); process.exit(1); }); s.listen(Number(process.argv[2]), process.argv[1], () => process.stdout.write("held\n"));' "$1" "$2" >"$TMP/hold.log" 2>&1 &
+  node -e 'const s = require("net").createServer(); s.on("error", (e) => { process.stdout.write(`${e.code}\n`); process.exit(1); }); const ok = () => process.stdout.write("held\n"); if (process.argv[1]) s.listen(Number(process.argv[2]), process.argv[1], ok); else s.listen(Number(process.argv[2]), ok);' "$1" "$2" >"$TMP/hold.log" 2>&1 &
   HOLD_PID=$!
   local j=0
   while ! grep -q . "$TMP/hold.log" 2>/dev/null && alive "$HOLD_PID" && [ "$j" -lt 50 ]; do j=$((j + 1)); sleep 0.1; done
@@ -159,6 +166,17 @@ else
 fi
 stop_pid "$HOLD_PID"; HOLD_PID=""
 
+# --- ... and by a listener with no host (the wildcard: a bind on 127.0.0.1 alone would succeed
+# beside it, and localhost traffic would reach that listener instead) ------------------------------
+busy="$(free_port)"
+hold "" "$busy"
+if grep -qF held "$TMP/hold.log"; then
+  expect_exit1 "$busy" "a port held by a listener with no host (wildcard)" "port $busy is already in use"
+else
+  ko "setup: could not hold the wildcard port $busy: $(cat "$TMP/hold.log")"
+fi
+stop_pid "$HOLD_PID"; HOLD_PID=""
+
 # --- a listen error other than in-use exits 1 naming the port (port 1: EACCES where unprivileged) --
 if node -e 'const s = require("net").createServer(); s.on("error", (e) => process.exit(e.code === "EACCES" ? 0 : 1)); s.listen(1, "127.0.0.1", () => s.close(() => process.exit(1)));' 2>/dev/null; then
   expect_exit1 1 "a port this user may not bind (EACCES)" "cannot listen on port 1"
@@ -168,6 +186,7 @@ fi
 
 # --- the --port=N form works too, and --help prints the usage -------------------------------------
 port="$(free_port)"
+stop_pid "$SRV_PID"; SRV_PID=""
 bash "$CLI" sample-app "--port=$port" >"$TMP/eq.log" 2>&1 &
 SRV_PID=$!
 i=0

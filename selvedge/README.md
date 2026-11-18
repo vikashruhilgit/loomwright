@@ -145,8 +145,13 @@ in your demo repo: selvedge env init --port 4173
 
 `sample-app` serves the app Selvedge's own tests use (`tests/fixtures/app-server.mjs`; its header
 lists every page) on port 4173 unless you pass `--port N`, with no time limit (the tests' own
-`serve` mode has a 15-minute watchdog; `sample-app` has none). A port already in use, on 127.0.0.1
-or ::1 (`localhost` can resolve to either), exits 1 and names the port: pick another with `--port`, and use the same number in step 5.
+`serve` mode has a 15-minute watchdog; `sample-app` has none). Before it listens it connects to the
+port on 127.0.0.1 and on ::1 (`localhost` can resolve to either), so a port another server already
+answers on, whether bound to 127.0.0.1, to ::1 or to every address, exits 1 and names the port.
+Pick another with `--port <N>`; step 5 has already written `selvedge.json` (and `env init` will not
+overwrite it), so change the origin in its `origins` list to `http://localhost:<N>`, or move the
+file aside and re-run `selvedge env init --port <N>`; and use `<N>` in place of 4173 in every URL in
+steps 8 and 9 and the terminal check below (an origin `selvedge.json` does not list is BLOCKED).
 
 **8. Verify three criteria.** Back in the demo folder, start Claude Code (`claude`) and send this
 one message (the three criteria are plain text, one per line):

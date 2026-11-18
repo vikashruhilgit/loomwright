@@ -63,9 +63,12 @@
 //           the quick start's sample app: serves on port N (default 4173, DEFAULT_SAMPLE_PORT) in
 //           the foreground until Ctrl-C (SIGINT) or SIGTERM, and prints its origin and the
 //           `selvedge env init --port N` line to use. No watchdog in this mode: a user runs it as
-//           long as they like. It binds 127.0.0.1 and then checks that [::1]:N is free too
-//           (`localhost` can resolve to either), so a port already in use on 127.0.0.1 or ::1 exits
-//           1 with one line naming the port; a bad --port exits 2.
+//           long as they like. Before it listens it connects to 127.0.0.1:N and [::1]:N
+//           (`localhost` can resolve to either): a connection that is accepted on either means
+//           something already serves there (a listener on 127.0.0.1, on ::1, or on the wildcard
+//           `::` / 0.0.0.0, which a bind on 127.0.0.1 alone would sit beside unnoticed), so it
+//           exits 1 with one line naming the port; then it binds 127.0.0.1, and that listen's own
+//           EADDRINUSE exits 1 the same way. A bad --port exits 2.
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import net from 'node:net';
@@ -384,16 +387,32 @@ function samplePort(args) {
   return port >= 1 && port <= 65535 ? port : null;
 }
 
-// probeIpv6Loopback(port) → null when [::1]:port is free (the probe listener is closed again before
-// this resolves) or this machine has no IPv6 loopback (EADDRNOTAVAIL / EAFNOSUPPORT); else the
-// listen error (EADDRINUSE when something already serves there).
-function probeIpv6Loopback(port) {
+// Connect errors that mean "nothing is listening at this address" (refused), or "this machine has
+// no such address" (no IPv6 loopback): either way nothing there can take localhost's traffic.
+const PORT_FREE_CODES = new Set(['ECONNREFUSED', 'EADDRNOTAVAIL', 'ENETUNREACH', 'EHOSTUNREACH', 'EAFNOSUPPORT']);
+const PROBE_TIMEOUT_MS = 1000;
+
+// probeInUse(host, port) → Promise<null | 'in-use' | Error>: connects to host:port once. null when
+// the connection is refused (or the address does not exist here); 'in-use' when it is accepted
+// (something already serves there); an Error otherwise, including no answer within
+// PROBE_TIMEOUT_MS (a loopback port that neither accepts nor refuses is not one to serve on).
+// The probe socket is destroyed before this resolves, on every path.
+function probeInUse(host, port) {
   return new Promise((resolve) => {
-    const probe = net.createServer();
-    probe.once('error', (e) => {
-      resolve(e && (e.code === 'EADDRNOTAVAIL' || e.code === 'EAFNOSUPPORT') ? null : e);
-    });
-    probe.listen(port, '::1', () => probe.close(() => resolve(null)));
+    const socket = net.connect({ host, port });
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      finish(new Error(`no answer from ${host === '::1' ? '[::1]' : host}:${port} within ${PROBE_TIMEOUT_MS} ms`));
+    }, PROBE_TIMEOUT_MS);
+    socket.once('connect', () => finish('in-use'));
+    socket.once('error', (e) => finish(e && PORT_FREE_CODES.has(e.code) ? null : e));
   });
 }
 
@@ -407,27 +426,30 @@ async function sample(args) {
     process.stderr.write(`selvedge sample-app: --port needs a port number from 1 to 65535\n${SAMPLE_USAGE}\n`);
     process.exit(2);
   }
+  const inUse = () => {
+    process.stderr.write(`selvedge sample-app: port ${port} is already in use; stop what is using it, or pick another with --port <N>\n`);
+    process.exit(1);
+  };
+  // The app binds 127.0.0.1 only, but `localhost` can resolve to ::1 first (Node's fetch, Chromium),
+  // and a listener on [::1]:N or on the wildcard `::` (Node's default listen(N), vite preview) does
+  // not stop a bind on 127.0.0.1:N, yet takes the quick start's traffic. So connect first: before
+  // this process listens, an accepted connection can only be another server's. (Something that
+  // starts listening between the probe and the listen below is not caught; the listen's own
+  // EADDRINUSE still catches a holder of 127.0.0.1:N.)
+  for (const host of ['127.0.0.1', '::1']) {
+    const probe = await probeInUse(host, port);
+    if (probe === 'in-use') inUse();
+    if (probe) {
+      process.stderr.write(`selvedge sample-app: cannot check port ${port}: ${probe.message || probe}\n`);
+      process.exit(1);
+    }
+  }
   let app;
   try {
     app = await startAppServer({ port });
   } catch (e) {
-    if (e && e.code === 'EADDRINUSE') {
-      process.stderr.write(`selvedge sample-app: port ${port} is already in use; stop what is using it, or pick another with --port <N>\n`);
-    } else {
-      process.stderr.write(`selvedge sample-app: cannot listen on port ${port}: ${e && e.message ? e.message : e}\n`);
-    }
-    process.exit(1);
-  }
-  // The app binds 127.0.0.1 only, but `localhost` can resolve to ::1 first (Node's fetch, Chromium),
-  // so a server already on [::1]:N would take the quick start's traffic. Probe ::1 and refuse.
-  const probeError = await probeIpv6Loopback(port);
-  if (probeError) {
-    await app.close();
-    if (probeError.code === 'EADDRINUSE') {
-      process.stderr.write(`selvedge sample-app: port ${port} is already in use; stop what is using it, or pick another with --port <N>\n`);
-    } else {
-      process.stderr.write(`selvedge sample-app: cannot listen on port ${port}: ${probeError.message || probeError}\n`);
-    }
+    if (e && e.code === 'EADDRINUSE') inUse();
+    process.stderr.write(`selvedge sample-app: cannot listen on port ${port}: ${e && e.message ? e.message : e}\n`);
     process.exit(1);
   }
   let closing = false;
