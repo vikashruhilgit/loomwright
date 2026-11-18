@@ -228,12 +228,25 @@ fu_is "FU3 usage: no draft, or no --into, exits 1 with nothing on stdout" \
 
 # ---- FU3c two concurrent --confirm bundles of the SAME draft: one bundler at a time (proposed/'s mkdir
 # lock), so exactly one target is written and the other run is refused; no lock is left behind.
+# The overlap is forced, never left to the scheduler (a loaded runner serialized two unlocked racers in
+# all 3 trials, so the lock-removed mutant read `1 1 1` and survived). A rendezvous on the racers' own
+# commands: the `mktemp` of the `.followup-bundle.XXXXXX` temp file beside the target is the last call
+# before the write, after every check AND after the render re-reads the drafts (a rendezvous at the
+# earlier `mktemp -d` let the first racer remove the draft before the second rendered it), so a racer
+# that reaches it parks until the other racer is either there too (no lock ⇒ both past every read of
+# the draft, both write) or is `sleep`ing in the lock-wait loop (lock held ⇒ it will see the first
+# racer's result). `sleep` is called only by that loop, so the locked legs pay ~0.1 s, never the 10 s
+# cap; the 10 s park ceiling is reached only if the other racer never shows up at all.
+mkdir -p "$FU/race-bin"
+printf '#!/bin/sh\ncase "$1" in */.followup-bundle.*) [ -z "$FU_BARRIER" ] || {\n  : > "$FU_BARRIER/at.$$"; i=0\n  while [ "$i" -lt 100 ]; do\n    for m in "$FU_BARRIER"/*; do case "$m" in "$FU_BARRIER/at.$$"|"$FU_BARRIER/*") ;; *) break 2 ;; esac; done\n    i=$((i + 1)); "%s" 0.1\n  done; } ;;\nesac\nexec "%s" "$@"\n' "$(command -v sleep)" "$(command -v mktemp)" > "$FU/race-bin/mktemp"
+printf '#!/bin/sh\n[ -z "$FU_BARRIER" ] || : > "$FU_BARRIER/lock-wait.$PPID"\nexec "%s" "$@"\n' "$(command -v sleep)" > "$FU/race-bin/sleep"
+chmod +x "$FU/race-bin/mktemp" "$FU/race-bin/sleep"
 fu_race() { # <helper> — the number of targets written per trial, 3 trials
   local i p
   for i in 1 2 3; do
-    rm -rf "$FU/t3c"; fu_repo t3c "[$FU_L1]"; p="$(fu_summ)"
-    bash "$1" followup-bundle "$p" --into .supervisor/requirements/q/a.md --root "$R" --confirm >/dev/null 2>&1 &
-    bash "$1" followup-bundle "$p" --into .supervisor/requirements/q/b.md --root "$R" --confirm >/dev/null 2>&1 &
+    rm -rf "$FU/t3c" "$FU/barrier"; fu_repo t3c "[$FU_L1]"; p="$(fu_summ)"; mkdir "$FU/barrier"
+    FU_BARRIER="$FU/barrier" PATH="$FU/race-bin:$PATH" bash "$1" followup-bundle "$p" --into .supervisor/requirements/q/a.md --root "$R" --confirm >/dev/null 2>&1 &
+    FU_BARRIER="$FU/barrier" PATH="$FU/race-bin:$PATH" bash "$1" followup-bundle "$p" --into .supervisor/requirements/q/b.md --root "$R" --confirm >/dev/null 2>&1 &
     wait
     printf '%s%s ' "$(find "$R/.supervisor/requirements/q" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')" "$([ -e "$PROP/.followup-bundle.lock" ] && echo +lock)"
   done
