@@ -238,7 +238,7 @@ fu_is "FU3 usage: no draft, or no --into, exits 1 with nothing on stdout" \
 # racer's result). `sleep` is called only by that loop, so the locked legs pay ~0.1 s, never the 10 s
 # cap; the 10 s park ceiling is reached only if the other racer never shows up at all.
 mkdir -p "$FU/race-bin"
-printf '#!/bin/sh\ncase "$1" in */.followup-bundle.*) [ -z "$FU_BARRIER" ] || {\n  : > "$FU_BARRIER/at.$$"; i=0\n  while [ "$i" -lt 100 ]; do\n    for m in "$FU_BARRIER"/*; do case "$m" in "$FU_BARRIER/at.$$"|"$FU_BARRIER/*") ;; *) break 2 ;; esac; done\n    i=$((i + 1)); "%s" 0.1\n  done; } ;;\nesac\nexec "%s" "$@"\n' "$(command -v sleep)" "$(command -v mktemp)" > "$FU/race-bin/mktemp"
+printf '#!/bin/sh\ncase "$1" in */.followup-bundle.*) [ -z "$FU_BARRIER" ] || {\n  : > "$FU_BARRIER/at.$$"; i=0\n  while [ "$i" -lt 100 ]; do\n    for m in "$FU_BARRIER"/*; do case "$m" in "$FU_BARRIER/at.$$") ;; *) break 2 ;; esac; done\n    i=$((i + 1)); "%s" 0.1\n  done; } ;;\nesac\nexec "%s" "$@"\n' "$(command -v sleep)" "$(command -v mktemp)" > "$FU/race-bin/mktemp"
 printf '#!/bin/sh\n[ -z "$FU_BARRIER" ] || : > "$FU_BARRIER/lock-wait.$PPID"\nexec "%s" "$@"\n' "$(command -v sleep)" > "$FU/race-bin/sleep"
 chmod +x "$FU/race-bin/mktemp" "$FU/race-bin/sleep"
 fu_race() { # <helper> — the number of targets written per trial, 3 trials
