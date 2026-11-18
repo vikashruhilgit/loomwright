@@ -61,14 +61,15 @@ selvedge plan --init | --validate | --freeze …   # the same steps one at a tim
 selvedge run [--trace] [--non-interactive] <run-dir>   # execute a frozen plan, no model: evidence and verdict
 selvedge run --replay <run-dir> [--trace] [--non-interactive]   # the same frozen plan again, in a new run folder
 selvedge verdict <run-dir>             # per-criterion verdicts from evidence.jsonl + plan.json
+selvedge comment <run-dir> --pr <n> [--yes]   # the verdicts on the PR as ONE text-only comment, updated in place
 ```
 
 `--version` and `install-cli` need only bash and standard userland tools (no `jq`, no Node); the
 CLI resolves its own real path through symlinks, so it works when run through the `install-cli`
-link. **The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands need Node.js
->= 18 on `PATH`**; without it they exit 1 and say so. `snapshot`, `run` and `auth setup --headed`
-also need Playwright (see [How Playwright is found](#how-playwright-is-found)), and the default
-planner needs the `claude` CLI.
+link. **The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run`, `verdict` and `comment` commands
+need Node.js >= 18 on `PATH`**; without it they exit 1 and say so. `snapshot`, `run` and
+`auth setup --headed` also need Playwright (see [How Playwright is found](#how-playwright-is-found)),
+the default planner needs the `claude` CLI, and `comment` (like `criteria from-pr`) needs `gh`.
 
 Exit codes: `0` ok, `1` an operation failed, `2` a usage error or **BLOCKED**, `3`
 **NOT_VERIFIABLE**. A BLOCKED outcome prints its own stdout line `BLOCKED <reason>`, a
@@ -114,6 +115,11 @@ shell hooks that set up the app under test:
   plan-step locator form (`role`, `label`, `text` or `testid`; never CSS or XPath) that matches
   only when signed in. `selvedge auth setup` keeps the session outside the repo
   ([`auth` and the sign-in check](#auth-and-the-sign-in-check)).
+- `comment` — optional; only `read_values` (default `false`) and `redact` (default `[]`, a list of
+  JavaScript regular expressions). With `"read_values": true` a PR comment shows the value each
+  criterion read, after redaction; `redact` adds patterns to the default ones. `selvedge comment`
+  reads this key from the PR's base branch only, never the working tree
+  ([`comment`](#comment-the-verdict-on-the-pr)).
 
 No other key is accepted. The JSON Schema is
 [`schemas/selvedge-config.schema.json`](schemas/selvedge-config.schema.json).
@@ -483,6 +489,58 @@ checksum, a binary entry holding a secret) is dropped, never kept: stderr says
 cannot be redacted). Honest limit: a value the page shows transformed (cut, re-cased, reversed) is
 not caught. Without `--trace` nothing is traced.
 
+## `comment`: the verdict on the PR
+
+```
+selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]
+```
+
+Posts a run folder's verdicts to PR `<n>` as **one** comment. The comment carries a hidden marker,
+`<!-- selvedge:verdict -->`; `comment` lists the PR's comments (`gh api --paginate`), takes the first
+whose body holds the marker and updates it in place (`PATCH`), and creates one
+(`gh pr comment --body-file`) only when none does. A comment without the marker is never touched
+(it does not use `gh pr comment --edit-last`, which edits your last comment whatever it is). The body always
+reaches `gh` as a file, never as command-line text. stdout is the comment URL, never the body.
+
+**What the body shows.** A summary line (`3 PASS · 1 PASS after revision · 1 FAIL`, zero counts left
+out), the short plan sha256 and revision, then one collapsed block per criterion: the criterion text,
+the verdict, the planner's interpretation, its unverified assumptions (material ones marked), the
+plan's steps as type and locator, the expected value (op and value from the plan), whether it
+matched, the evidence class, and for BLOCKED / NOT_VERIFIABLE the reason with a hint to unblock it.
+
+**What it never shows.** No link: a `goto` shows its URL's path only, and every URL in the criterion
+text, interpretation, assumptions or expected value is cut to its path (no origin, no query string).
+No `fill` or `select` value (those steps show type and locator only), no `{{NAME}}` value, no header
+name (`Cookie`, `Set-Cookie`, `Authorization` read `[redacted]` wherever they appear), and nothing
+from `evidence.jsonl`, screenshots or traces.
+
+**Read values** (what each criterion's check read from the page) are not published unless the
+**base branch's** `selvedge.json` sets `"comment": {"read_values": true}`. The base is `--base <ref>`
+or, by default, `origin/<the PR's base branch>` (`gh pr view <n> --json baseRefName`); the working
+tree's `selvedge.json` is never read here, so a PR cannot opt itself in. A base ref without a
+readable `selvedge.json` leaves the defaults (values unpublished). With the opt-in on, `gh repo view
+--json visibility` must say `PRIVATE`: a public or internal repo, or one whose visibility cannot be
+read, is refused `read_values_public_repo` and nothing is posted, unless you pass
+`--allow-public-values`. A published value is redacted first: an email address, a run of 6 or more
+digits, a URL query string and a base64 or hex token of 32 or more characters become `[redacted]`,
+then every `comment.redact` pattern is applied on top. Honest limit: patterns cannot catch every
+personal detail (a name, an address), so publish values only where every reader may see them.
+
+**Revisions.** When the plan is a later revision of the same criteria, each criterion's verdict cell
+lists its own verdict on every earlier plan, read from that revision's own run (the `runs.jsonl` run
+line, never a replay) and its run folder's `verdict.json`: `FAIL on plan 1 → PASS on plan 2`. A
+revision that never ran reads `not run on plan <r>`. When that run folder (it lives under the
+gitignored `.selvedge/runs/`, so a fresh clone or a CI runner lacks it), its `verdict.json` or the
+criterion's entry is gone, the cell shows the whole run's verdict labelled as such,
+`FAIL on plan 1 (whole run) → PASS on plan 2`. The summary counts a criterion as `PASS after
+revision` when it passes now and its own verdict on an earlier plan was not PASS; a whole-run
+fallback never counts as one.
+
+**Confirmation.** Without `--yes`, `comment` asks once on the terminal (`y` posts; anything else
+posts nothing and exits 0); with stdin not a terminal it exits 2 `comment_requires_yes`. A run folder
+with no `verdict.json` is refused `verdict_missing`, and one whose `plan.json` sha256 is not
+`verdict.json`'s `plan_sha256` is refused `plan_modified`; nothing is posted. A failing `gh` exits 1.
+
 ## `auth` and the sign-in check
 
 ```
@@ -674,9 +732,12 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `remote_origin_without_allow_remote` | config | a non-local origin is listed without `"allow_remote": true` |
 | `config_absent` | config | no `selvedge.json` at the repo root; run `selvedge env init` |
 | `config_invalid_json` | config | `selvedge.json` is not valid JSON |
-| `config_schema_violation` | config | an unknown key (an `auth` or `signed_in_check` key included), an unknown hook name, a value of the wrong type, an `auth.signed_in_check.url` on an origin `origins` does not list, or a sign-in locator that is not one plan-step locator form (CSS or XPath) |
+| `config_schema_violation` | config | an unknown key (an `auth`, `signed_in_check` or `comment` key included), an unknown hook name, a value of the wrong type (a `comment.redact` entry that is not a valid regular expression included), an `auth.signed_in_check.url` on an origin `origins` does not list, or a sign-in locator that is not one plan-step locator form (CSS or XPath) |
 | `base_config_unreadable` | config | `--base <ref>` given, but `<ref>:selvedge.json` cannot be read |
 | `approve_requires_tty` | usage | `env approve` was run without an interactive terminal |
+| `read_values_public_repo` | usage | `comment`: the base branch's `selvedge.json` sets `comment.read_values`, but the repo is not `PRIVATE` (or its visibility cannot be read) and `--allow-public-values` was not given; nothing is posted |
+| `comment_requires_yes` | usage | `comment` was run without `--yes` and stdin is not a terminal; nothing is posted |
+| `verdict_missing` | usage | `comment` found no usable `verdict.json` in the run folder; run `selvedge verdict <run-dir>` first |
 | `port_required` | usage | `env init` found no port (`--port`, `package.json` scripts, or a TTY prompt) |
 | `already_frozen` | usage | `plan --freeze` on a run folder that already holds a frozen plan; a new plan goes in a new folder |
 | `plan_invalid` | usage | `plan --validate`, a freeze (`plan`, `plan --freeze`) or a snapshot prefix found problems; each is listed on its own line, and nothing is hashed |
