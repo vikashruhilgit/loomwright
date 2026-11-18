@@ -23,6 +23,181 @@ What ships today:
   separate verifier subagent that has only Bash and Read, and `skills/verify/SKILL.md` gives any
   other agent host the same workflow.
 
+## Quick start
+
+From nothing to a first verdict on the bundled sample app, in about 15 minutes (most of it is the
+Chromium download). You need Node.js >= 18, git, and Claude Code signed in with your Claude login;
+no other account or key. Each block is one step: copy it, run it, and compare the line after it.
+The measured runs are in [`docs/quick-start-timing.md`](docs/quick-start-timing.md).
+
+**1. Install the plugin.** In a Claude Code session (these are session commands, not shell
+commands; skip the first one if you already added the `atelier` marketplace):
+
+```
+/plugin marketplace add vikashruhilgit/loomwright
+```
+
+```
+/plugin install selvedge@atelier
+```
+
+Expected: Claude Code says `selvedge` is installed. Restart the session if it asks you to.
+
+**2. Put the CLI on your `PATH`.** This is required (why: [Install](#install)). In a terminal, run
+the installed copy's own `install-cli` once (a fresh install has exactly one version folder):
+
+```
+~/.claude/plugins/cache/atelier/selvedge/*/bin/selvedge install-cli
+```
+
+Expected: `selvedge: linked /Users/<you>/.local/bin/selvedge -> …/bin/selvedge`. If it also prints
+`… is not on your PATH`, add it for this shell (and to your shell profile) and check:
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+```
+selvedge --version
+```
+
+Expected: `selvedge <version>`.
+
+**3. Make a demo folder** with its own Playwright (Selvedge ships none; it uses the project's):
+
+```
+mkdir selvedge-demo && cd selvedge-demo
+```
+
+```
+git init
+```
+
+```
+npm init -y
+```
+
+```
+npm i -D playwright
+```
+
+Expected: `Initialized empty Git repository in …/selvedge-demo/.git/`, then a `package.json`, then
+`added 2 packages` (the count can differ).
+
+**4. Download Chromium for that Playwright** (about 150 MB; the slowest step):
+
+```
+npx playwright install chromium
+```
+
+Expected: download progress bars ending without an error.
+
+**5. Write `selvedge.json`** for the sample app's port:
+
+```
+selvedge env init --port 4173
+```
+
+Expected: `selvedge env: wrote …/selvedge-demo/selvedge.json (origin http://localhost:4173, port
+from --port)`. It also adds `.selvedge/` to `.gitignore`.
+
+**6. Check everything with `selvedge doctor`:**
+
+```
+selvedge doctor
+```
+
+Expected: six `ok` lines, exit 0:
+
+```
+ok Node >= 18 (<version>)
+ok Playwright library (<version>, from this repo)
+ok Chromium browser (<path>)
+ok selvedge.json (http://localhost:4173)
+ok hook approvals (no hooks)
+ok planner (claude at <path>)
+```
+
+Any `FAIL <check>: <fix>` line names its own fix: run that, then `selvedge doctor` again. With no
+Node at all it prints the Node `FAIL` line and `skipped: the other checks need Node`.
+
+**7. Start the sample app in a second terminal** (it runs until you press Ctrl-C):
+
+```
+selvedge sample-app --port 4173
+```
+
+Expected:
+
+```
+selvedge sample app: serving on http://localhost:4173 (Ctrl-C to stop)
+pages: http://localhost:4173/cart, http://localhost:4173/echo, http://localhost:4173/slow
+in your demo repo: selvedge env init --port 4173
+```
+
+`sample-app` serves the app Selvedge's own tests use (`tests/fixtures/app-server.mjs`; its header
+lists every page) on port 4173 unless you pass `--port N`, with no time limit. A port already in use
+exits 1 and names the port: pick another with `--port`, and use the same number in step 5.
+
+**8. Verify three criteria.** Back in the demo folder, start Claude Code (`claude`) and send this
+one message (the three criteria are plain text, one per line):
+
+```
+/selvedge:verify
+- On http://localhost:4173/cart, after clicking "Open cart", the Total reads 6
+- On http://localhost:4173/echo, after typing Ada in the User field, the page shows "Hello, Ada"
+- On http://localhost:4173/slow, after clicking "Load price", the price reads 42
+```
+
+A verifier subagent plans the checks, freezes the plan and runs it in the guarded browser; this
+takes a few minutes, mostly the planner.
+
+**9. Read the verdict table.** The command shows one row per criterion, then the overall verdict,
+the plan sha256 and the run folder (`.selvedge/runs/<run-id>/`), for example:
+
+```
+| Verdict | Reason | Criterion |
+|---|---|---|
+| PASS | | On http://localhost:4173/cart, after clicking "Open cart", the Total reads 6 |
+| PASS | | On http://localhost:4173/echo, after typing Ada in the User field, the page shows "Hello, Ada" |
+| PASS | | On http://localhost:4173/slow, after clicking "Load price", the price reads 42 |
+Overall: PASS
+```
+
+The table's layout is Claude's; the verdicts are `verdict.json`'s, which no model wrote. To try a
+FAIL, change `6` to `7` in the first criterion and run step 8 again.
+
+**Without Claude Code's slash command**, the same check from the terminal (the planner still uses
+the `claude` CLI, or `SELVEDGE_PLANNER`):
+
+```
+printf '%s\n' '- On http://localhost:4173/cart, after clicking "Open cart", the Total reads 6' '- On http://localhost:4173/echo, after typing Ada in the User field, the page shows "Hello, Ada"' '- On http://localhost:4173/slow, after clicking "Load price", the price reads 42' | selvedge criteria from-text > criteria.json
+```
+
+```
+run_dir="$(selvedge plan criteria.json)" && selvedge run "$run_dir"
+```
+
+Expected: one `PASS <criterion id>` line per criterion, then `verdict PASS <run dir>/verdict.json`.
+
+Stop the sample app with Ctrl-C in its terminal when you are done.
+
+## Honest limits
+
+- **Web apps only.** Selvedge checks what a browser can see on the origins you list. Native,
+  mobile and desktop targets come later.
+- **BLOCKED** means the check could not run: something stopped it before it could decide (an
+  unlisted origin, no Playwright, a step whose element was not there, no sign-in). It always names
+  its reason.
+- **NOT_VERIFIABLE** means the check ran but could not decide the criterion: the criterion is too
+  vague to test, or nothing observable was read. It always names its reason too. Every BLOCKED and
+  NOT_VERIFIABLE reason, with what it means, is in [BLOCKED and config reasons](#blocked-and-config-reasons).
+- **Secrets.** An agent with shell access can read any file you can; Selvedge keeps secrets out of
+  plans, evidence and comments but does not claim they are out of reach. The full statement is the
+  [**Honest limit** under `auth` and the sign-in check](#auth-and-the-sign-in-check).
+- **No accuracy numbers yet.** How often a verdict is right is not published until the Phase 2
+  measurement exists; until then, read the evidence in the run folder, not a score.
+
 ## Install
 
 ```
@@ -66,12 +241,15 @@ selvedge run [--trace] [--non-interactive] <run-dir>   # execute a frozen plan, 
 selvedge run --replay <run-dir> [--trace] [--non-interactive]   # the same frozen plan again, in a new run folder
 selvedge verdict <run-dir>             # per-criterion verdicts from evidence.jsonl + plan.json
 selvedge comment <run-dir> --pr <n> [--yes]   # the verdicts on the PR as ONE text-only comment, updated in place
+selvedge doctor          # check Node, Playwright and Chromium, selvedge.json, approvals, the planner: one fix per FAIL
+selvedge sample-app [--port N]         # serve the bundled sample app on localhost:N (default 4173) until Ctrl-C
 ```
 
 `--version` and `install-cli` need only bash and standard userland tools (no `jq`, no Node); the
 CLI resolves its own real path through symlinks, so it works when run through the `install-cli`
-link. **The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run`, `verdict` and `comment` commands
-need Node.js >= 18 on `PATH`**; without it they exit 1 and say so. `snapshot`, `run` and
+link. **The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run`, `verdict`, `comment`, `doctor`
+and `sample-app` commands need Node.js >= 18 on `PATH`**; without it they exit 1 and say so
+(`doctor` as its own Node `FAIL` line). `snapshot`, `run` and
 `auth setup --headed` also need Playwright (see [How Playwright is found](#how-playwright-is-found)),
 the default planner needs the `claude` CLI, and `comment` (like `criteria from-pr`) needs `gh`.
 

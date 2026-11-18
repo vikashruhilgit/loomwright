@@ -8,6 +8,27 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.7.0 — 2026-11-18
+
+- `selvedge doctor` checks, one line each, Node >= 18, the Playwright library (found exactly as `run`
+  finds it: `SELVEDGE_PLAYWRIGHT_MODULE`, else the repo's own `node_modules`), that Playwright's
+  Chromium on disk, `selvedge.json` (present and valid), hook approvals ("no hooks" when there are
+  none) and the planner (`SELVEDGE_PLANNER` set, or `claude` on `PATH`). Each line is `ok <check>`
+  or `FAIL <check>: <the one fix>`; exit 0 when all pass, 1 when any fails. The checks live in
+  `lib/doctor.mjs` and call the helpers `run`, `snapshot` and `plan` use; the Node check also runs
+  in bash first, so a missing or older Node prints its `FAIL` line and
+  `skipped: the other checks need Node` instead of crashing.
+- `selvedge sample-app [--port N]` serves the bundled fixture app (`tests/fixtures/app-server.mjs`)
+  on `http://localhost:N` (default 4173) in the foreground until Ctrl-C, with no watchdog, and prints
+  its origin and the `selvedge env init --port N` line; a port already in use exits 1 naming it.
+  `startAppServer()` takes an optional port; with none it still binds a random one.
+- The README opens with a **Quick start** (install → `install-cli` → a demo folder with Playwright
+  → `env init` → `doctor` → `sample-app` → `/selvedge:verify` with three example criteria → the
+  verdict table, each command with its expected output) and **Honest limits** (web only, what
+  BLOCKED and NOT_VERIFIABLE mean, the secret limit, no accuracy numbers before the Phase 2
+  measurement). `docs/quick-start-timing.md` records the timed rehearsal and holds the owner's
+  fresh-account run.
+
 ## 0.6.0 — 2026-11-18
 
 - `selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]` posts a run
