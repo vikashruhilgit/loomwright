@@ -29,8 +29,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   → `env init` → `doctor` → `sample-app` → `/selvedge:verify` with three example criteria → the
   verdict table, each command with its expected output) and **Honest limits** (web only, what
   BLOCKED and NOT_VERIFIABLE mean, the secret limit, no accuracy numbers before the Phase 2
-  measurement). `docs/quick-start-timing.md` records the timed rehearsal and holds the owner's
-  fresh-account run.
+  measurement). `docs/quick-start-timing.md` records the timed rehearsal on the sample app and a
+  timed run on a real project (Sportify, 3/3 PASS), both command time with a fresh `HOME`.
 
 ## 0.6.0 — 2026-11-18
 

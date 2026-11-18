@@ -4,10 +4,13 @@ How long [the README's Quick start](../README.md#quick-start) takes, from nothin
 on the bundled sample app. The target is **15 minutes or less** from a fresh account, with no vendor
 sign-up beyond the user's existing Claude login.
 
-Two runs are recorded. The first is a **rehearsal** by the implementing agent on the maintainer's
-Mac, with a fresh `HOME`: it times the commands and found what the README got wrong. It is not a
-fresh account and does not count as the 15-minute result. The second is the **owner's run** on a
-fresh macOS user account; only that run decides whether the target is met.
+Two runs are recorded, both by an agent on the maintainer's Mac with a fresh `HOME`. The first is a
+**rehearsal** on the bundled sample app: it times the commands and found what the README got wrong.
+The second is a **real-app run**: the same steps against a real project (Sportify, a Next.js app,
+with its own Playwright), checking three criteria on its running dev server. The owner chose that
+run in place of a run on a fresh macOS user account (2026-11-18). Neither run is a fresh account,
+and neither includes a person reading the README and typing; both are command time only. So they
+show that the commands are fast (under 2 minutes), not that a new person finishes in 15 minutes.
 
 Neither run used any vendor account or key other than the existing Claude login: no Playwright, npm
 or browser sign-up, no API key.
@@ -97,32 +100,59 @@ with no human in the loop, so it is **not** evidence for the 15-minute target; t
   owner's run covers `/selvedge:verify` itself, including its verdict table.
 - **The network** was this office connection (about 11 MiB/s for the browser download).
 
-## Owner run (fresh macOS account)
+## Real-app run (agent, Sportify, fresh HOME)
 
-Status: pending owner run — the owner fills this section in on a fresh macOS account before merging
+The quick start on a real project instead of the sample app: Sportify (`sports-management`, a
+Next.js app on Supabase), whose repo already has Playwright (from `@playwright/test`). The owner
+chose this run in place of a fresh macOS account run.
 
-- **Date:**
-- **Machine:** `uname -sm`; macOS version; Node.js version
-- **Fresh:** a new macOS user account; what was installed before step 1 (Node.js, git, Claude Code
-  and its login)
+- **Date:** 2026-11-18 (started 07:26:58 UTC)
+- **Machine:** `uname -sm`: `Darwin arm64`; macOS 26.6.2; Node.js 24.11.1; Claude Code 2.1.325
+- **Selvedge:** `selvedge --version` printed `selvedge 0.7.0` (observed on that date)
+- **Fresh:** a new empty `HOME` (a temp folder), set up as in the rehearsal: an empty npm cache, an
+  empty Playwright browser cache, no `~/.local/bin/selvedge`, no approvals file, no installed plugin
+  and no `atelier` marketplace. Every command ran under `env -i` with only that `HOME`, `PATH`,
+  `USER`, `TERM`, `LANG` and `TMPDIR`, in the Sportify repo's own folder.
+- **The app:** Sportify's dev server (`npm run dev -- --port 3000`), ready in 3 s and serving its
+  first page 4 s after start, with its local Supabase already running. Not counted below: this is
+  the user's own app, which the quick start's step 7 (the sample app) stands in for.
+- **How it was timed:** as in the rehearsal, `date +%s` before and after each command, by a script.
 
 | # | README step | Command | Seconds | Result |
 |---|---|---|---|---|
-| 1 | Install the plugin | `/plugin marketplace add vikashruhilgit/loomwright` | | |
-| 1 | Install the plugin | `/plugin install selvedge@atelier` | | |
-| 2 | CLI on `PATH` | `~/.claude/plugins/cache/atelier/selvedge/*/bin/selvedge install-cli` | | |
-| 2 | CLI on `PATH` | `export PATH="$HOME/.local/bin:$PATH"` (if asked), `selvedge --version` | | |
-| 3 | Demo folder | `mkdir selvedge-demo && cd selvedge-demo`, `git init`, `npm init -y` | | |
-| 3 | Demo folder | `npm i -D playwright` | | |
-| 4 | Chromium | `npx playwright install chromium` | | |
-| 5 | `selvedge.json` | `selvedge env init --port 4173` | | |
-| 6 | Doctor | `selvedge doctor` | | |
-| 7 | Sample app | `selvedge sample-app --port 4173` (second terminal) | | |
-| 8 | Verify | `/selvedge:verify` with the three criteria | | |
-| 9 | Verdict | read the verdict table | | |
+| 1 | Install the plugin | `claude plugin marketplace add <this checkout>` | 0 | ok |
+| 1 | Install the plugin | `claude plugin install selvedge@atelier` | 1 | ok |
+| 2 | CLI on `PATH` | `~/.claude/plugins/cache/atelier/selvedge/*/bin/selvedge install-cli` | 0 | ok, and the re-run note |
+| 2 | CLI on `PATH` | `selvedge --version` | 0 | `selvedge 0.7.0` |
+| 3 | Playwright | none: the repo has it (`require('playwright/package.json').version` printed `1.56.1`) | 0 | ok |
+| 4 | Chromium | `npx playwright install chromium` | 16 | ok: Chromium 141, its headless shell and FFmpeg (479 MB on disk) |
+| 5 | `selvedge.json` | `selvedge env init --port 3000` | 0 | both expected lines (`.gitignore`, then `selvedge.json`) |
+| 6 | Doctor | `selvedge doctor` | 1 | six `ok` lines, exit 0, `Playwright library (1.56.1, from this repo)` |
+| 8 | Verify | `… \| selvedge criteria from-text > criteria.json` | 0 | 3 criteria |
+| 8 | Verify | `run_dir="$(selvedge plan criteria.json)" && selvedge run "$run_dir"` | 89 | exit 0; planner 293993 tokens in / 3655 out; 4, 7 and 4 steps |
+| 9 | Verdict | read from `run`'s output and `verdict.json` | 0 | `PASS` ×3, `verdict PASS` |
 
-**Total (wall clock, reading and typing included):**
+**Total, as measured:** 107 seconds of command time. The planner dominated (most of the 89 s, on a
+bigger page than the sample app's: twice the planner tokens), then the browser download (16 s).
 
-**Where the README was wrong or unclear, and the fix made:**
+**The three criteria** (each one checked by hand in a browser first):
 
-**Not fresh:**
+```
+- On http://localhost:3000/faq, after clicking "What does it cost to get started?", the page shows "platform fees are waived"
+- On http://localhost:3000/login, after typing nobody@example.com in the Email field and not-the-password in the Password field and clicking "Sign In", the page shows "Invalid credentials"
+- On http://localhost:3000/pricing, after clicking "Yearly", the page shows "$290/yr"
+```
+
+**Where the README was wrong or unclear on a real project:** nothing new failed. Two notes for a
+real-project reader, which the README already covers: step 3 is skipped when the project already has
+Playwright (`doctor` says `from this repo`), and step 5 takes the app's own port (`--port 3000` here)
+in place of the sample app's 4173. `env init` adds `.selvedge/` to the project's `.gitignore` and
+writes `selvedge.json` at the repo root; both were removed after the run, since Sportify is not this
+repo.
+
+**Not fresh in this run:** the same list as the rehearsal's (the Claude login and Claude Code, Node
+and git already installed, the marketplace added from this checkout by path, `claude plugin …` shell
+commands instead of `/plugin …`, `$HOME/.local/bin` already on `PATH`, the planner's `claude` process
+run with the real `HOME` for its login, and steps 8 and 9 through the CLI chain, not
+`/selvedge:verify`). Also: Sportify's `node_modules` were already installed, as they are for anyone
+adding Selvedge to a project they already work on.
