@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-agent-memory-permission.sh — the agent-memory write-permission contract is STATED, in the
 # shared agent contract and in every `memory: project` agent prompt, and says the same three things
-# in all seven places.
+# in all five places.
 #
 # WHY THIS EXISTS
 #   Decision (c) of the write-time-validation item: a `memory: project` agent may NOT write its own
@@ -12,7 +12,7 @@
 #   (see below), so inference was actively misleading.
 #
 # WHY IT ASSERTS CONTENT AND NOT A HEADING
-#   A `grep -q '^### Agent memory write permission'` gate is satisfiable by adding seven EMPTY
+#   A `grep -q '^### Agent memory write permission'` gate is satisfiable by adding five EMPTY
 #   headings. That is the vacuous-guard class this repo keeps catching: a check that cannot
 #   distinguish the stated contract from a section title. So each surface is reduced to the text
 #   UNDER its heading (heading to the next heading of any level) and four substrings are required
@@ -28,7 +28,7 @@
 #   `disallowedTools` blocks Write/Edit for some of these agents, so a reader checking the tool
 #   list concludes the store is already unreachable. It is not: the code-reviewer prompt records
 #   that Bash is NOT restricted by the harness, which makes a shell-redirection store write
-#   reachable for all six agents whatever the allowlist says. The prohibition is therefore a
+#   reachable for all four agents whatever the allowlist says. The prohibition is therefore a
 #   prompt-level contract, and a prompt that omits the caveat leaves the reader with a false sense
 #   that the tool surface enforces it. Required text, checked like the rest.
 #
@@ -64,15 +64,13 @@ LIT_WRITER='write-agent-memory.sh'
 LIT_SURPRISE='The proposal trigger is SURPRISE-ONLY'
 LIT_BASH='Bash is not restricted by the harness'
 
-# The seven surfaces: the shared contract at the REPO ROOT (there is no loomwright/ copy, and
-# creating one would fork the contract into a file no gate scans), plus the six `memory: project`
+# The five surfaces: the shared contract at the REPO ROOT (there is no loomwright/ copy, and
+# creating one would fork the contract into a file no gate scans), plus the four `memory: project`
 # prompts.
 SURFACES="$REPO_ROOT/AGENT_GUIDELINES.md
 $PLUGIN_ROOT/agents/code-reviewer.md
 $PLUGIN_ROOT/agents/launch-pad.md
 $PLUGIN_ROOT/agents/product-owner.md
-$PLUGIN_ROOT/agents/qa-executor.md
-$PLUGIN_ROOT/agents/qa-strategist.md
 $PLUGIN_ROOT/agents/red-team-reviewer.md"
 
 # ---------------------------------------------------------------------------------------------
@@ -135,10 +133,10 @@ n_ok="$(printf '%s\n' "$RESULTS" | grep -c '^OK	')"
 
 # Anti-vacuity: the surface list itself must not have collapsed. A glob or path change that
 # emptied it would make every check below pass over nothing.
-if [ "$n_surfaces" -eq 7 ]; then
-  ok "surface list is intact: 7 files (the root shared contract + six \`memory: project\` prompts)"
+if [ "$n_surfaces" -eq 5 ]; then
+  ok "surface list is intact: 5 files (the root shared contract + four \`memory: project\` prompts)"
 else
-  no "surface list has $n_surfaces entries, expected 7 — the list has drifted from the six memory: project agents"
+  no "surface list has $n_surfaces entries, expected 5 — the list has drifted from the four memory: project agents"
 fi
 
 if [ "$n_ok" -eq "$n_surfaces" ]; then
@@ -158,7 +156,7 @@ else
   no "$((n_surfaces - n_ok)) of $n_surfaces surfaces are missing part of the write-permission contract"
 fi
 
-# The heading form is identical in all seven, so a later edit cannot split the contract into two
+# The heading form is identical in all five, so a later edit cannot split the contract into two
 # spellings that each look present on their own surface.
 h_count=0
 while IFS= read -r f; do
@@ -169,10 +167,10 @@ while IFS= read -r f; do
 done <<EOF
 $SURFACES
 EOF
-if [ "$h_count" -eq 7 ]; then
-  ok "the heading form '$HEADING' appears exactly once in each of the seven files"
+if [ "$h_count" -eq 5 ]; then
+  ok "the heading form '$HEADING' appears exactly once in each of the five files"
 else
-  no "$h_count of 7 files carry exactly one '$HEADING' heading — the form has drifted"
+  no "$h_count of 5 files carry exactly one '$HEADING' heading — the form has drifted"
 fi
 
 # There must be no forked copy of the shared contract under the plugin dir. Decision (c) written
@@ -193,8 +191,8 @@ if [ -z "$FIX" ] || [ ! -d "$FIX" ]; then
 else
   trap 'rm -rf "$FIX"' EXIT
 
-  VICTIM="$PLUGIN_ROOT/agents/qa-strategist.md"
-  MUTANT="$FIX/qa-strategist.md"
+  VICTIM="$PLUGIN_ROOT/agents/product-owner.md"
+  MUTANT="$FIX/product-owner.md"
 
   # (M0) Control for the control: an unmutated COPY must scan clean, so a red verdict below can
   # only have come from the mutation and not from copying the file.
@@ -236,7 +234,7 @@ else
       ok "(M3) the mutation is NARROW: only the refusal rule is reported, the rest of the section still passes" ;;
   esac
 
-  # (M4) The failure NAMES ONLY the mutated file. The real (unmutated) six must stay green in the
+  # (M4) The failure NAMES ONLY the mutated file. The real (unmutated) four must stay green in the
   # very same scan — a gate that goes red everywhere on one bad file cannot be acted on.
   M_MIX="$(scan_permission "$MUTANT" $SURFACES)"
   others_bad=0
@@ -250,13 +248,13 @@ else
 $M_MIX
 EOF
   if [ "$others_bad" -eq 0 ]; then
-    ok "(M4) the mutation control names ONLY the mutated file — the other six stay green in the same scan"
+    ok "(M4) the mutation control names ONLY the mutated file — the other four stay green in the same scan"
   else
     no "(M4) $others_bad unmutated file(s) were reported alongside the mutant — the gate does not localise"
   fi
 
   # (M5) An EMPTY section is rejected. This is the heading-grep vacuity this suite exists to close,
-  # stated as an executable control rather than as a comment: seven empty headings must NOT pass.
+  # stated as an executable control rather than as a comment: five empty headings must NOT pass.
   printf '%s\n\n## Something Else\n' "$HEADING" > "$FIX/empty-section.md"
   M_EMPTY="$(scan_permission "$FIX/empty-section.md")"
   case "$M_EMPTY" in

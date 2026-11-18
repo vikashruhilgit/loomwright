@@ -139,19 +139,14 @@ if [ "$(q '.agents[] | select(.name == "loomwright:context-keeper") | .model')" 
 else no "(A) model not verbatim"; fi
 for pin in worker:WORKER_RESULT code-reviewer:CODE_REVIEW_RESULT plan-reviewer:PLAN_REVIEW_RESULT \
            launch-pad-runner:LAUNCH_PAD_RESULT supervisor-runner:SUPERVISOR_RESULT \
-           execute-manager:EXECUTE_RESULT qa-executor:QA_RESULT; do
+           execute-manager:EXECUTE_RESULT; do
   a="loomwright:${pin%%:*}"; want="${pin#*:}"
   got="$(q '.agents[] | select(.name == $a) | .result_block' --arg a "$a")"
   if [ "$got" = "$want" ]; then ok "(A) $a result_block = $want"; else no "(A) $a result_block = $got, want $want"; fi
 done
-if [ "$(q '.agents[] | select(.name == "loomwright:qa-executor") | .result_blocks | join(",")')" = "MISSING_FUNCTIONALITY_REPORT,QA_RESULT,VERIFY_RESULT" ] \
-   && [ "$(q '.agents[] | select(.name == "loomwright:execute-manager") | .result_blocks | join(",")')" = "EXECUTE_CHECKPOINT,EXECUTE_RESULT" ]; then
-  ok "(A) multi-block agents list every emitted block in result_blocks[] (incl. qa-executor's 'ALWAYS emit MISSING_FUNCTIONALITY_REPORT')"
-else no "(A) result_blocks for qa-executor / execute-manager wrong"; fi
-# Emission-verb rule: qa-strategist's "Step 4: EMIT GATE_VERDICT" is its only indexed block.
-if [ "$(q '.agents[] | select(.name == "loomwright:qa-strategist") | [.result_block, (.result_blocks | join(","))] | join("|")')" = "GATE_VERDICT|GATE_VERDICT" ]; then
-  ok "(A) qa-strategist result_block = result_blocks = GATE_VERDICT (an EMIT instruction, not only a template line)"
-else no "(A) qa-strategist = $(q '.agents[] | select(.name == "loomwright:qa-strategist") | [.result_block, .result_blocks]' -c)"; fi
+if [ "$(q '.agents[] | select(.name == "loomwright:execute-manager") | .result_blocks | join(",")')" = "EXECUTE_CHECKPOINT,EXECUTE_RESULT" ]; then
+  ok "(A) a multi-block agent lists every emitted block in result_blocks[] (execute-manager: EXECUTE_CHECKPOINT + EXECUTE_RESULT)"
+else no "(A) execute-manager result_blocks = $(q '.agents[] | select(.name == "loomwright:execute-manager") | .result_blocks' -c), want [EXECUTE_CHECKPOINT,EXECUTE_RESULT]"; fi
 # Consumption is not emission: launch-pad's child spawn prompt says "Output a PLAN_REVIEW_RESULT block",
 # supervisor's completion tail "emit[s] a session_end event" into the log — neither is listed.
 if [ "$(q '.agents[] | select(.name == "loomwright:launch-pad-runner") | .result_blocks | join(",")')" = LAUNCH_PAD_RESULT ] \
@@ -403,6 +398,18 @@ fcase "an emitted *_RESULT block the index does not know exits 1 instead of bein
 cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
 printf '\nStep 9: EMIT `NEVER_INDEXED_RESULT` with the outcome.\n' >> "$tmp/ff/agents/worker.md"
 fcase "an EMIT instruction naming an unindexed *_RESULT exits 1 instead of being dropped" "NEVER_INDEXED_RESULT"
+cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
+# Emission-verb rule on an INDEXED block: an upper-case EMIT instruction with no `NAME:` template line
+# in the file still lists the block (the fixture has no RED_TEAM_RESULT template line, so only the
+# verb rule can put it in result_blocks[]).
+printf '\nStep 4: EMIT RED_TEAM_RESULT\n' >> "$tmp/ff/agents/worker.md"
+if grep -q 'RED_TEAM_RESULT:' "$tmp/ff/agents/worker.md"; then no "(F) mutant invalid: the worker.md fixture has a RED_TEAM_RESULT: template line, so the verb rule is not isolated"
+else
+  bash "$SUT" --root "$tmp/ff" --out "$tmp/ff.json" 2>"$tmp/ff.err"
+  if jq -e '.agents[] | select(.name == "loomwright:worker") | .result_blocks | index("RED_TEAM_RESULT")' "$tmp/ff.json" >/dev/null 2>&1; then
+    ok "(F) an 'EMIT <BLOCK>' instruction with no template line lists the block in result_blocks[]"
+  else no "(F) EMIT-verb fixture: worker result_blocks = $(jq -c '.agents[] | select(.name == "loomwright:worker") | .result_blocks' "$tmp/ff.json" 2>/dev/null) err=$(cat "$tmp/ff.err")"; fi
+fi
 cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
 # A NOT_EMITTED audit exception whose prompt line is gone must fail — it would mask a real emission.
 grep -v 'Output a PLAN_REVIEW_RESULT block' "$PLUGIN/agents/launch-pad.md" > "$tmp/ff/agents/launch-pad.md"

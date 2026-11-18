@@ -25,8 +25,8 @@
 #       reference `needs_owner`.
 #   (g) every other gate in docs/ARCHITECTURE_CONTRACTS.md §"Question-gate inventory" reachable in a
 #       non-interactive / subagent / headless context names its can't-ask status (Launch Pad + its
-#       agent<->command rule mirror, Supervisor, supervisor-config, autonomous-loop, automate-loop,
-#       qa-executor); the inventory sits right before ## Failure Escalation Summary and no row's NEW
+#       agent<->command rule mirror, Supervisor, supervisor-config, autonomous-loop, automate-loop);
+#       the inventory sits right before ## Failure Escalation Summary and no row's NEW
 #       behaviour cell (the LAST cell) contains "undefined" (case-insensitive substring).
 #       Launch Pad's per-gate statuses and Supervisor's adjudication status are matched INSIDE their
 #       gate's own section (heading → next heading of the same or higher level), not file-wide, so
@@ -237,9 +237,8 @@ AL_SKILL="$PLUGIN_ROOT/skills/autonomous-loop/SKILL.md"
 # The multi-iteration-only protocol (EVALUATE gates, rubric auto-authoring + freeze) moved here; Step 0
 # loads it unless --single-iteration (automate-speed/13).
 AL_MULTI="$PLUGIN_ROOT/skills/autonomous-loop/multi-iteration.md"
-QA_AGENT="$PLUGIN_ROOT/agents/qa-executor.md"
 ARCH="$PLUGIN_ROOT/docs/ARCHITECTURE_CONTRACTS.md"
-for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$AL_MULTI" "$QA_AGENT" "$ARCH"; do
+for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$AL_MULTI" "$ARCH"; do
   [ -f "$f" ] || no "MISSING surface: $f"
 done
 LP_P2='### Phase 2: DISCOVER'; LP_P25='### Phase 2.5: FEASIBILITY'
@@ -294,7 +293,6 @@ if [ -z "$auto_continue_hits" ]; then
 else
   no "(g) the withdrawn auto-continue status resume_continued_non_interactive is still named: $auto_continue_hits"
 fi
-gate_has_status "(g) agents/qa-executor.md URL fallback" "$QA_AGENT" 'base_url_unresolved'
 # The Launch Pad can't-ask rule keys on a flag (inline on the main thread it is not a subagent), so
 # the /autonomous PLAN step must actually DELIVER that flag — and only under --non-interactive-fallback.
 # Captured, not piped into grep -q (pipefail-safe).

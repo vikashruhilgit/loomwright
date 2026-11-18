@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-verify-walkthrough.sh — self-tests for the `/verify <ticket>` walkthrough seam: the mechanized
 # main-thread steps in verify-run.sh (`acs` / `preflight` / `verdict` / `finish`), the browser arms
-# (`walk`, appended by Subtask 2 below the marked anchor) and the prompt-surface arms (command / skill /
-# agent, appended by Subtask 3 below the second anchor). Schema authority: docs/RESULT_SCHEMAS.md
+# (`walk`, appended by Subtask 2 below the marked anchor) and a prompt-surface pin on verify-run.sh
+# itself (below the second anchor; the command / skill / agent prompt files were removed in qa-split
+# 11b1). Schema authority: docs/RESULT_SCHEMAS.md
 # §VERIFY_EVIDENCE (every line recorded) and §VERIFY_RESULT (the block the agent emits).
 #
 # WRITE CONTAINMENT AND CALL CONTAINMENT ARE THE POINT OF THIS FILE'S SHAPE. Every fixture lives under
@@ -1190,128 +1191,14 @@ fi
 # --- prompt-surface arms (Subtask 3 appends below this line) ---
 
 # ============================================================================
-# Prompt-surface arms (Subtask 3): the command / skill / agent files that CONSUME verify-run.sh.
-# These are grep pins on committed prose — the "claim no check backs" class: every rule the brief
-# states about the prompt surfaces has a literal assertion here, so deleting the carve-out sentence,
-# re-wording the Level-1 rule, or adding a harness-specific browser tool fails this suite.
+# Prompt-surface arm on the script itself. The command / skill / agent prompt files that consumed
+# verify-run.sh (agents/qa-executor.md, commands/verify.md, commands/qa-executor.md,
+# skills/verify-walkthrough/SKILL.md) were removed in qa-split 11b1, and their grep pins with them;
+# the pin on verify-run.sh, which stays, is kept.
 # ============================================================================
-echo "== (AC7a) Level-1 rule byte-identical + exactly one carve-out sentence =="
-PLUGIN_DIR="$(cd "$HERE/.." && pwd)"
-AGENT="$PLUGIN_DIR/agents/qa-executor.md"
-VERIFY_CMD="$PLUGIN_DIR/commands/verify.md"
-QA_CMD="$PLUGIN_DIR/commands/qa-executor.md"
-SKILL="$PLUGIN_DIR/skills/verify-walkthrough/SKILL.md"
-for f in "$AGENT" "$VERIFY_CMD" "$QA_CMD" "$SKILL"; do
-  [ -f "$f" ] && ok "(AC7) prompt surface present: ${f#"$PLUGIN_DIR"/}" || no "(AC7) prompt surface missing: $f"
-done
-L1_RULE='- **No destructive actions:** Never submit forms during discovery, never click delete/logout/payment buttons'
-n="$(grep -cF -- "$L1_RULE" "$AGENT")"
-[ "$n" -eq 1 ] && ok "(AC7a) the Level-1 rule line is present exactly once, byte-identical" || no "(AC7a) Level-1 rule literal count: $n (expected 1)"
-CARVE="mode's mutation carve-out is defined in \`skills/verify-walkthrough/SKILL.md\` and applies there only"
-n="$(grep -cF -- "$CARVE" "$AGENT")"
-[ "$n" -eq 1 ] && ok "(AC7a) exactly one carve-out sentence points at the skill" || no "(AC7a) carve-out sentence count: $n (expected 1)"
-# The sentence must FOLLOW the rule: the line after the rule carries it (continuation line).
-after="$(grep -nF -- "$L1_RULE" "$AGENT" | cut -d: -f1)"
-[ -n "$after" ] && grep -qF -- "$CARVE" < <(sed -n "$((after+1))p" "$AGENT") \
-  && ok "(AC7a) the carve-out sentence is the line immediately following the rule" || no "(AC7a) carve-out sentence does not immediately follow the rule"
-
-echo "== (AC7b) --verify branch: keeps Phase 2, skips every other phase with the fixed reason =="
-grep -qF -- '### VERIFY MODE (`--verify <run_dir>`)' "$AGENT" && ok "(AC7b) the provides symbol \`### VERIFY MODE (--verify <run_dir>)\` header exists (H3)" || no "(AC7b) VERIFY MODE H3 header missing"
-for ph in 1 3 3.6 4 5 6 7 8 9 10 11 12; do
-  grep -qF -- "⊘ Phase $ph SKIPPED. Reason: --verify mode" "$AGENT" && ok "(AC7b) Phase $ph skipped with the --verify reason" || no "(AC7b) Phase $ph skip line missing"
-done
-grep -qF -- "⊘ Phase 13 audit SKIPPED. Reason: --verify mode" "$AGENT" && ok "(AC7b) Phase 13's audit half skipped; EMIT half kept" || no "(AC7b) Phase 13 audit skip line missing"
-n="$(grep -cF -- '⊘ Phase 2 SKIPPED. Reason: --verify mode' "$AGENT")"
-[ "$n" -eq 0 ] && ok "(AC7b) Phase 2 is NOT skipped in --verify mode" || no "(AC7b) Phase 2 carries a --verify skip line"
-grep -qF -- 'verify-run.sh walk <run_dir>' "$AGENT" && ok "(AC7b) the branch shells out to verify-run.sh walk" || no "(AC7b) no verify-run.sh walk shell-out in the agent"
-grep -qF -- 'verify-run.sh finish <run_dir>' "$AGENT" && ok "(AC7b) the branch shells out to verify-run.sh finish" || no "(AC7b) no verify-run.sh finish shell-out in the agent"
-grep -qF -- 'VERIFY_RESULT:' "$AGENT" && grep -qF -- 'counts: {pass:' "$AGENT" \
-  && ok "(AC7b) VERIFY_RESULT emission template present with a counts object" || no "(AC7b) VERIFY_RESULT template missing"
-grep -qF -- 'skills/verify-walkthrough/SKILL.md' "$AGENT" && ok "(AC7b) the agent Reads the skill at mode entry" || no "(AC7b) agent never names the skill"
-# Read on demand, NOT preloaded: the frontmatter skills: list must not carry it (token budget, AC7d).
-fm="$(awk 'NR==1 && /^---$/ {c=1; next} c==1 && /^---$/ {exit} c==1 {print}' "$AGENT")"
-grep -q -- '- verify-walkthrough' < <(printf '%s\n' "$fm") \
-  && no "(AC7d) verify-walkthrough is PRELOADED in the agent frontmatter (budget breach risk)" || ok "(AC7d) verify-walkthrough is NOT in the frontmatter skills: list (Read on demand)"
-
-echo "== (AC7c) no harness-specific browser tool on any of the four verify surfaces =="
-for f in "$AGENT" "$VERIFY_CMD" "$SKILL" "$RUNNER"; do
-  n="$(grep -cE 'Claude_Browser|computer-use|mcp__' "$f")"
-  [ "$n" -eq 0 ] && ok "(AC7c) ${f#"$PLUGIN_DIR"/}: 0 harness-browser-tool mentions" || no "(AC7c) ${f#"$PLUGIN_DIR"/}: $n harness-browser-tool mentions"
-done
-
-echo "== (AC5-skill) derivation fixtures + the four verdicts =="
-grep -qF -- '### Derivation fixtures' "$SKILL" && ok "(AC5) the skill carries a \`### Derivation fixtures\` table" || no "(AC5) no \`### Derivation fixtures\` header in the skill"
-grep -qF -- 'NOT_VERIFIABLE' < <(grep -F -- 'under 200 concurrent users' "$SKILL") \
-  && ok "(AC5) the concurrency row (\`under 200 concurrent users\`) maps to NOT_VERIFIABLE on the same line" || no "(AC5) concurrency row missing or not NOT_VERIFIABLE"
-n="$(grep -cE '^\| Given .*\| (`?\[AC[0-9n]+\]`?|none) ' "$SKILL")"
-[ "$n" -ge 5 ] && ok "(AC5) ≥5 derivation-fixture rows ($n)" || no "(AC5) only $n derivation-fixture rows (need ≥5)"
-grep -qF -- 'pass_requires_observation' "$SKILL" && ok "(AC5) the skill states PASS comes only from walk's ingest" || no "(AC5) skill does not name pass_requires_observation"
-grep -qF -- 'test.afterEach' "$SKILL" && grep -qF -- "attach('page-body'" "$SKILL" \
-  && ok "(AC5) the spec template carries the afterEach page-body attach" || no "(AC5) spec template lacks the afterEach page-body attach"
-grep -qF -- 'Payment, logout and account-deletion actions stay forbidden everywhere' "$SKILL" \
-  && ok "(AC5) V7 carve-out keeps payment/logout/account-delete forbidden" || no "(AC5) carve-out's forbidden set missing"
-grep -qF -- 'version: "1.4.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.4.0 (token-economy 07 spec-replay bump)" || no "(AC5) skill frontmatter version not 1.4.0"
-
-echo "== (AC10-command) /verify surface + commands/qa-executor.md sync =="
-grep -qF -- '/loomwright:verify' "$VERIFY_CMD" && ok "(cmd) commands/verify.md names the namespaced /loomwright:verify form" || no "(cmd) /loomwright:verify missing from commands/verify.md"
-grep -qF -- 'verify-run.sh" preflight' "$VERIFY_CMD" || grep -qF -- 'verify-run.sh preflight' "$VERIFY_CMD" \
-  && ok "(cmd) commands/verify.md shells out to verify-run.sh preflight" || no "(cmd) commands/verify.md does not shell to verify-run.sh preflight"
-grep -qF -- 'subagent_type: "loomwright:qa-executor"' "$VERIFY_CMD" && ok "(cmd) commands/verify.md spawns loomwright:qa-executor via Task" || no "(cmd) Task spawn of loomwright:qa-executor missing"
-grep -qF -- '--verify <run_dir>' "$VERIFY_CMD" && ok "(cmd) commands/verify.md passes --verify <run_dir> to the executor" || no "(cmd) --verify <run_dir> missing from commands/verify.md"
-grep -qF -- '--verify' "$QA_CMD" && ok "(cmd) commands/qa-executor.md mentions --verify" || no "(cmd) commands/qa-executor.md does not mention --verify"
-
-# ============================================================================
-# Item 04 Subtask 2 arms: auth pause/resume on the prompt surfaces (AC4, AC8, AC10).
-# ============================================================================
-echo "== (AC10-resume) commands/verify.md --resume flow =="
-grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC10) --resume <run_id> is documented in Usage" || no "(AC10) --resume <run_id> missing from Usage"
-grep -qF -- '--resume <run_id>' "$VERIFY_CMD" && ok "(AC10) --resume <run_id> appears in the Parameters table" || no "(AC10) --resume <run_id> missing from Parameters"
-grep -qF -- 'auth-check' "$VERIFY_CMD" && ok "(AC10) commands/verify.md shells out to verify-run.sh auth-check" || no "(AC10) auth-check missing from commands/verify.md"
-grep -qF -- 'event: resume, reason: "human_signed_in"' "$VERIFY_CMD" || grep -qF -- 'event: "resume", reason: "human_signed_in"' "$VERIFY_CMD" \
-  && ok "(AC10) commands/verify.md appends the resume/human_signed_in evidence line" || no "(AC10) resume/human_signed_in jq object missing from commands/verify.md"
-grep -qF -- 'never silently start' "$VERIFY_CMD" || grep -qF -- 'never silently starting a fresh run' "$VERIFY_CMD" \
-  && ok "(AC10) --resume errors rather than silently starting a fresh run under the same id" || no "(AC10) missing dir / no-silent-start guard not documented"
-grep -qF -- 'git -C <dir> check-ignore -q' "$VERIFY_CMD" && ok "(AC10) the one-shot storage-state gitignore warning shells to git check-ignore" || no "(AC10) git check-ignore warning missing from commands/verify.md"
-grep -qF -- 'run_end") | .status' "$VERIFY_CMD" && ok "(I4-FIX1) --resume guards against a run dir that already finished (reads the run_end status before proceeding)" || no "(I4-FIX1) the already-finished-run guard is missing from commands/verify.md's resume flow"
-grep -qF -- 'nothing paused to resume' "$VERIFY_CMD" && ok "(I4-FIX1) the guard names the reason: nothing paused to resume" || no "(I4-FIX1) 'nothing paused to resume' missing from commands/verify.md"
-
-echo "== (AC4-pause) commands/verify.md pause instruction =="
-grep -qF -- 'npx playwright codegen --save-storage=' "$VERIFY_CMD" && ok "(AC4) the pause instruction names the codegen --save-storage= form" || no "(AC4) codegen instruction missing from commands/verify.md"
-grep -qF -- 'sign in, close the window' "$VERIFY_CMD" && ok "(AC4) the pause instruction includes 'sign in, close the window'" || no "(AC4) sign-in line missing from commands/verify.md"
-grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC4) the pause instruction names /verify --resume <run_id>" || no "(AC4) resume line missing from the pause instruction"
-n="$(grep -cF -- 'pause_reason' "$VERIFY_CMD")"
-[ "$n" -ge 1 ] && ok "(AC4) commands/verify.md reads VERIFY_RESULT.pause_reason ($n mentions)" || no "(AC4) commands/verify.md never mentions pause_reason"
-
-echo "== (AC-propose) commands/verify.md step 5 auto-dispatch trigger fires on issue-only runs too =="
-# propose-from-verify.sh drafts every `issue` line unconditionally, regardless of any AC's
-# verdict, so a run with 0 FAILs and >=1 issue line WOULD still produce a draft - the step 5
-# trigger must not be FAIL-only, or it would silently never invoke the script for that run.
-grep -qF -- '.event == "issue"' "$VERIFY_CMD" \
-  && ok "(AC-propose) the auto-dispatch jq trigger also matches issue-only lines" \
-  || no "(AC-propose) the auto-dispatch jq trigger checks only FAIL ac lines - an issue-only run never auto-dispatches propose-from-verify.sh"
-grep -qF -- '.event == "ac" and .verdict == "FAIL"' "$VERIFY_CMD" \
-  && ok "(AC-propose) the trigger still matches FAIL ac lines (the issue-only fix did not drop the original arm)" \
-  || no "(AC-propose) the FAIL ac arm of the auto-dispatch trigger is missing from commands/verify.md"
-grep -qF -- 'propose-from-verify.sh" "$run_dir"' "$VERIFY_CMD" \
-  && ok "(AC-propose) the trigger still dispatches propose-from-verify.sh against \$run_dir" \
-  || no "(AC-propose) the propose-from-verify.sh dispatch line is missing from commands/verify.md"
-
-echo "== (AC8) agents/qa-executor.md auth-check/resume/pause wiring =="
-grep -qF -- 'verify-run.sh auth-check <run_dir> --repo <dir>' "$AGENT" && ok "(AC8) VERIFY MODE step shells out to verify-run.sh auth-check" || no "(AC8) auth-check shell-out missing from agents/qa-executor.md"
-n="$(grep -cF -- 'auth-probe: anonymous' "$AGENT")"
-[ "$n" -eq 0 ] && ok "(AC8) the old auth-probe: anonymous per-AC fallback is fully removed" || no "(AC8) auth-probe: anonymous still present ($n mentions) — should be unreachable"
-grep -qF -- 'RESUME DETECTION' "$AGENT" && ok "(AC8) the agent documents resume-detection before start/seed" || no "(AC8) RESUME DETECTION guard missing"
-grep -qF -- 'first-unverdicted' "$AGENT" && ok "(AC8) the agent scopes resumed spec-authoring to first-unverdicted's remaining set" || no "(AC8) first-unverdicted not referenced in agents/qa-executor.md"
-grep -qF -- 'Exit 5' "$AGENT" && ok "(AC8) the agent branches on walk's exit 5 (session_expired)" || no "(AC8) walk exit-5 branch missing from agents/qa-executor.md"
-grep -qF -- 'pause_reason: needs_auth' "$AGENT" && grep -qF -- 'pause_reason: session_expired' "$AGENT" \
-  && ok "(AC8) both pause_reason values (needs_auth, session_expired) appear in the VERIFY_RESULT wiring" || no "(AC8) one or both pause_reason values missing from agents/qa-executor.md"
-grep -qF -- 'status: paused' "$AGENT" && ok "(AC8) the agent's VERIFY_RESULT template documents status: paused" || no "(AC8) status: paused missing from the VERIFY_RESULT template"
-
-echo "== (skill) verify-walkthrough documents pause/resume, forward-reference resolved =="
-n="$(grep -cF -- 'item 04 adds the pause-for-auth' "$SKILL")"
-[ "$n" -eq 0 ] && ok "(skill) the item-04 forward-reference is resolved (0 remaining mentions)" || no "(skill) forward-reference still present ($n mentions)"
-grep -qF -- '## 8. Auth pause and resume' "$SKILL" && ok "(skill) a dedicated pause/resume section exists" || no "(skill) no pause/resume section in the skill"
-grep -qF -- 'response-40' "$SKILL" && ok "(skill) the skill documents the response-40[13] expiry signal" || no "(skill) expiry signal not documented in the skill"
+echo "== (AC7c) no harness-specific browser tool in verify-run.sh =="
+n="$(grep -cE 'Claude_Browser|computer-use|mcp__' "$RUNNER")"
+[ "$n" -eq 0 ] && ok "(AC7c) verify-run.sh: 0 harness-browser-tool mentions" || no "(AC7c) verify-run.sh: $n harness-browser-tool mentions"
 
 
 # ============================================================================
@@ -1863,26 +1750,6 @@ run_bin "$TSE" spec-replay "$RD_SE2" --repo .
 [ "$(tail -1 "$LAST_OUT")" = "replayed=0 total=3" ] \
   && ok "(SR-empty-ticket) both ticket_paths empty ⇒ replayed=0 (no empty==empty false match)" \
   || no "(SR-empty-ticket) stdout=$(cat "$LAST_OUT")"
-
-# ============================================================================
-echo "== (I06-docs) skill §9 + qa-executor Impact Pass step + verify.md flags are present =="
-grep -qF -- '## 9. Impact pass' "$SKILL" && ok "(I06-docs) skill has a ## 9. Impact pass section" || no "(I06-docs) skill missing ## 9. Impact pass"
-grep -qF -- "ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it" "$SKILL" \
-  && ok "(I06-docs) the checklist asserts the ticket-score-isolation invariant" || no "(I06-docs) checklist bullet missing"
-grep -qF -- '**Impact Pass**' "$AGENT" && ok "(I06-docs) qa-executor.md names the Impact Pass step" || no "(I06-docs) Impact Pass step missing from qa-executor.md"
-grep -qF -- '--impact-limit' "$VERIFY_CMD" && grep -qF -- '--no-impact' "$VERIFY_CMD" \
-  && ok "(I06-docs) commands/verify.md documents --impact-limit and --no-impact" || no "(I06-docs) impact flags missing from commands/verify.md"
-
-echo "== (NV-docs) skill §9 item 6 + qa-executor step d2 document not_verified as a source (harness-port/04) =="
-grep -qF -- 'source: "not_verified"' "$SKILL" && ok "(NV-docs) skill §9 names source: \"not_verified\"" || no "(NV-docs) skill §9 missing source: \"not_verified\""
-item6="$(awk '/^6\. \*\*`not_verified`/{flag=1} flag{print; if (/^\*\*Execution\.\*\*/) exit}' "$SKILL")"
-[ -n "$item6" ] && ok "(NV-docs) skill §9 item 6 (not_verified) section exists" || no "(NV-docs) skill §9 item 6 (not_verified) section MISSING"
-case "$item6" in
-  *'NEVER inflates or deflates the ticket score'*) ok "(NV-docs) item 6 carries the ticket-score-isolation invariant" ;;
-  *) no "(NV-docs) item 6 does not carry the ticket-score-isolation invariant" ;;
-esac
-grep -qE '^ *d2\.' "$AGENT" && grep -qF -- 'not_verified' "$AGENT" \
-  && ok "(NV-docs) qa-executor.md names step d2 and not_verified" || no "(NV-docs) qa-executor.md missing step d2 / not_verified wiring"
 
 # ============================================================================
 echo

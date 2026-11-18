@@ -158,7 +158,7 @@ for bad in worker supervisor Review REVIEW nosuchrole "../review" "review;x" "tw
   rc=0; ( . "$ROLES"; lens_role_lookup "$bad" ) || rc=$?
   assert_eq "R unregistered/malformed role [$bad] is not registered" "1" "$rc"
 done
-rc=0; ( . "$ROLES"; LENS_ROLES_ROUTING="$TMP/no-such-resolver.sh"; lens_role_lookup qa_strategist ) || rc=$?
+rc=0; ( . "$ROLES"; LENS_ROLES_ROUTING="$TMP/no-such-resolver.sh"; lens_role_lookup product_owner ) || rc=$?
 assert_eq "R a missing resolve-routing.sh fails closed (no seat role registered)" "1" "$rc"
 assert_eq "R ...but review stays registered without it" "0" "$( . "$ROLES"; LENS_ROLES_ROUTING="$TMP/no-such-resolver.sh"; lens_role_lookup review; echo $? )"
 
@@ -167,9 +167,9 @@ echo "==== C: contract text ===="
 LEGACY_REVIEW_CONTRACT='Respond with ONLY a single JSON object, no prose outside it, matching exactly:
 {"issues": [{"severity": "BLOCKING|HIGH|MEDIUM|LOW", "category": "new|pre_existing|nit", "file": "<path>", "line": <integer or null>, "description": "<string>", "suggestion": "<string or null>"}]}'
 assert_eq "C review contract is byte-identical to the one lens-run.sh always sent" "$LEGACY_REVIEW_CONTRACT" "$( . "$ROLES"; lens_role_contract review )"
-C_TEXT="$( . "$ROLES"; lens_role_contract qa_strategist )"
+C_TEXT="$( . "$ROLES"; lens_role_contract product_owner )"
 assert_true "C a text contract asks for plain text" "$(has 'Respond in plain text only' "$C_TEXT")"
-assert_true "C a text contract carries the MUST-contain marker sentence" "$(has 'Your answer MUST contain this exact token, verbatim: Classification' "$C_TEXT")"
+assert_true "C a text contract carries the MUST-contain marker sentence" "$(has 'Your answer MUST contain this exact token, verbatim: HANDOFF' "$C_TEXT")"
 assert_true "C a text contract does not ask for the issues[] JSON" "$( [ "$(has '"issues"' "$C_TEXT")" = "0" ] && echo 1 || echo 0 )"
 
 echo ""
@@ -201,10 +201,10 @@ assert_eq "U lens-roles.sh missing: provider CLI never started" "0" "$(ran u)"
 echo ""
 echo "==== T: a text role -> result_text, marker rule, byte bound ===="
 # Text with newlines, quotes, a backslash and non-ASCII, ending in the marker line.
-printf 'Strategy line 1\n"quoted" and back\\slash and caf\xc3\xa9\nClassification: HIGH risk\nlast line' > "$TMP/text-t1"
+printf 'Strategy line 1\n"quoted" and back\\slash and caf\xc3\xa9\nHANDOFF: stories ready\nlast line' > "$TMP/text-t1"
 make_stub t1 "$TMP/text-t1"
 OUT_T1="$TMP/out-t1.json"
-RC_T1=0; run_role qa_strategist t1 "$OUT_T1" || RC_T1=$?
+RC_T1=0; run_role product_owner t1 "$OUT_T1" || RC_T1=$?
 assert_eq "T ok rc=0" "0" "$RC_T1"
 assert_eq "T ok lens_status=ok" "ok" "$(jq -r '.lens_status' "$OUT_T1" 2>/dev/null)"
 assert_true "T ok result_text is the provider's text, byte for byte" "$( jq -j '.result_text' "$OUT_T1" 2>/dev/null | cmp -s - "$TMP/text-t1" && echo 1 || echo 0 )"
@@ -237,16 +237,17 @@ BOUND="$( . "$ROLES"; printf '%s' "$LENS_RESULT_TEXT_MAX" )"
 is_posint() { case "$1" in ""|*[!0-9]*|0) echo 0 ;; *) echo 1 ;; esac; }
 assert_true "T the bound is a positive integer" "$(is_posint "$BOUND")"
 # gen_text <total-bytes> <file>: the marker, then filler up to exactly total-bytes bytes.
+TEXT_MARKER='HANDOFF'
 gen_text() {
-  printf 'Classification' > "$2"
-  head -c "$(( $1 - 14 ))" /dev/zero | tr '\0' 'a' >> "$2"
+  printf '%s' "$TEXT_MARKER" > "$2"
+  head -c "$(( $1 - ${#TEXT_MARKER} ))" /dev/zero | tr '\0' 'a' >> "$2"
 }
 gen_text "$BOUND" "$TMP/text-t5"; make_stub t5 "$TMP/text-t5"
-run_role qa_strategist t5 "$TMP/out-t5.json" || true
+run_role product_owner t5 "$TMP/out-t5.json" || true
 assert_eq "T exactly at the bound ($BOUND bytes) -> ok (result_text is not argv-limited)" "ok" "$(jq -r '.lens_status' "$TMP/out-t5.json" 2>/dev/null)"
 assert_true "T exactly at the bound -> result_text is intact" "$( jq -j '.result_text' "$TMP/out-t5.json" 2>/dev/null | cmp -s - "$TMP/text-t5" && echo 1 || echo 0 )"
 gen_text "$(( BOUND + 1 ))" "$TMP/text-t6"; make_stub t6 "$TMP/text-t6"
-run_role qa_strategist t6 "$TMP/out-t6.json" || true
+run_role product_owner t6 "$TMP/out-t6.json" || true
 assert_eq "T one byte over the bound -> lens_unparseable (never a truncated ok)" "lens_unparseable" "$(jq -r '.lens_status' "$TMP/out-t6.json" 2>/dev/null)"
 assert_eq "T over the bound -> no result_text key" "false" "$(jq 'has("result_text")' "$TMP/out-t6.json" 2>/dev/null)"
 assert_true "T over the bound -> notes name the bound" "$(has 'bound' "$(jq -r '.notes // empty' "$TMP/out-t6.json" 2>/dev/null)")"
@@ -254,10 +255,10 @@ assert_true "T over the bound -> notes name the bound" "$(has 'bound' "$(jq -r '
 echo ""
 echo "==== P: the composed prompt carries the role's contract ===="
 PROMPT_T1="$(cat "$TMP/prompt-t1" 2>/dev/null)"
-assert_true "P text role: prompt names the role" "$(has 'Role: qa_strategist' "$PROMPT_T1")"
+assert_true "P text role: prompt names the role" "$(has 'Role: product_owner' "$PROMPT_T1")"
 assert_true "P text role: prompt has the OUTPUT CONTRACT section" "$(has '--- OUTPUT CONTRACT ---' "$PROMPT_T1")"
-assert_true "P text role: prompt carries the MUST-contain marker sentence" "$(has 'Your answer MUST contain this exact token, verbatim: Classification' "$PROMPT_T1")"
-assert_true "P text role: prompt carries the role's own shape sentence" "$(has 'risk-based test strategy' "$PROMPT_T1")"
+assert_true "P text role: prompt carries the MUST-contain marker sentence" "$(has 'Your answer MUST contain this exact token, verbatim: HANDOFF' "$PROMPT_T1")"
+assert_true "P text role: prompt carries the role's own shape sentence" "$(has 'requirements and stories' "$PROMPT_T1")"
 assert_true "P text role: prompt does NOT ask for the issues[] JSON" "$( [ "$(has '{"issues": [' "$PROMPT_T1")" = "0" ] && echo 1 || echo 0 )"
 assert_true "P text role: the caller's prompt and the diff are still folded in" "$( [ "$(has 'Do the job described here.' "$PROMPT_T1")" = "1" ] && [ "$(has '+bug here' "$PROMPT_T1")" = "1" ] && echo 1 || echo 0 )"
 
@@ -283,8 +284,8 @@ assert_true "I the issues roles' prompt has no marker sentence" "$( [ "$(has 'MU
 echo ""
 echo "==== G: the grant gate applies to a text role ===="
 write_grants
-printf 'Classification\n' > "$TMP/text-g"; make_stub g "$TMP/text-g"
-RC_G=0; run_role qa_strategist g "$TMP/out-g.json" || RC_G=$?
+printf 'HANDOFF\n' > "$TMP/text-g"; make_stub g "$TMP/text-g"
+RC_G=0; run_role product_owner g "$TMP/out-g.json" || RC_G=$?
 assert_eq "G rc=0" "0" "$RC_G"
 assert_eq "G no grant -> provider_not_granted" "provider_not_granted" "$(jq -r '.lens_status' "$TMP/out-g.json" 2>/dev/null)"
 assert_eq "G no grant -> no result_text key" "false" "$(jq 'has("result_text")' "$TMP/out-g.json" 2>/dev/null)"
@@ -292,17 +293,17 @@ assert_eq "G no grant -> no sandbox created" "0" "$(sandboxed g)"
 assert_eq "G no grant -> provider CLI never started" "0" "$(ran g)"
 # An unreadable user-scope file is no grant; a repo's own config can only REQUEST, never grant.
 printf '{not json' > "$EGRESS_FILE"
-run_role qa_strategist g "$TMP/out-g3.json" || true
+run_role product_owner g "$TMP/out-g3.json" || true
 assert_eq "G malformed egress.json -> provider_not_granted" "provider_not_granted" "$(jq -r '.lens_status' "$TMP/out-g3.json" 2>/dev/null)"
 write_grants
 mkdir -p "$REPO_ROOT/.supervisor"
-printf '{"routing":{"seats":{"qa_strategist":"cursor"}},"providers":["cursor"]}\n' > "$REPO_ROOT/.supervisor/config.json"
-run_role qa_strategist g "$TMP/out-g4.json" || true
+printf '{"routing":{"seats":{"product_owner":"cursor"}},"providers":["cursor"]}\n' > "$REPO_ROOT/.supervisor/config.json"
+run_role product_owner g "$TMP/out-g4.json" || true
 rm -rf "$REPO_ROOT/.supervisor"
 assert_eq "G a repo-config request for the provider does not grant" "provider_not_granted" "$(jq -r '.lens_status' "$TMP/out-g4.json" 2>/dev/null)"
 assert_eq "G ...and the CLI still never started" "0" "$(ran g)"
 write_grants cursor
-RC_G2=0; run_role qa_strategist g "$TMP/out-g2.json" || RC_G2=$?
+RC_G2=0; run_role product_owner g "$TMP/out-g2.json" || RC_G2=$?
 assert_eq "G control: granted -> the same run is ok" "ok" "$(jq -r '.lens_status' "$TMP/out-g2.json" 2>/dev/null)"
 assert_eq "G control: granted -> the CLI did run" "1" "$(ran g)"
 
