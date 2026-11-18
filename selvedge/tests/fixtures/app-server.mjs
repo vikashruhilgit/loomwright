@@ -63,10 +63,12 @@
 //           the quick start's sample app: serves on port N (default 4173, DEFAULT_SAMPLE_PORT) in
 //           the foreground until Ctrl-C (SIGINT) or SIGTERM, and prints its origin and the
 //           `selvedge env init --port N` line to use. No watchdog in this mode: a user runs it as
-//           long as they like. A port already in use exits 1 with one line naming the port; a bad
-//           --port exits 2.
+//           long as they like. It binds 127.0.0.1 and then checks that [::1]:N is free too
+//           (`localhost` can resolve to either), so a port already in use on 127.0.0.1 or ::1 exits
+//           1 with one line naming the port; a bad --port exits 2.
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
+import net from 'node:net';
 import { renameSync, writeFileSync } from 'node:fs';
 import { startServer } from './servers.mjs';
 
@@ -382,6 +384,19 @@ function samplePort(args) {
   return port >= 1 && port <= 65535 ? port : null;
 }
 
+// probeIpv6Loopback(port) → null when [::1]:port is free (the probe listener is closed again before
+// this resolves) or this machine has no IPv6 loopback (EADDRNOTAVAIL / EAFNOSUPPORT); else the
+// listen error (EADDRINUSE when something already serves there).
+function probeIpv6Loopback(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', (e) => {
+      resolve(e && (e.code === 'EADDRNOTAVAIL' || e.code === 'EAFNOSUPPORT') ? null : e);
+    });
+    probe.listen(port, '::1', () => probe.close(() => resolve(null)));
+  });
+}
+
 async function sample(args) {
   if (args[0] === 'help' || args[0] === '-h' || args[0] === '--help') {
     process.stdout.write(`${SAMPLE_USAGE}\n`);
@@ -400,6 +415,18 @@ async function sample(args) {
       process.stderr.write(`selvedge sample-app: port ${port} is already in use; stop what is using it, or pick another with --port <N>\n`);
     } else {
       process.stderr.write(`selvedge sample-app: cannot listen on port ${port}: ${e && e.message ? e.message : e}\n`);
+    }
+    process.exit(1);
+  }
+  // The app binds 127.0.0.1 only, but `localhost` can resolve to ::1 first (Node's fetch, Chromium),
+  // so a server already on [::1]:N would take the quick start's traffic. Probe ::1 and refuse.
+  const probeError = await probeIpv6Loopback(port);
+  if (probeError) {
+    await app.close();
+    if (probeError.code === 'EADDRINUSE') {
+      process.stderr.write(`selvedge sample-app: port ${port} is already in use; stop what is using it, or pick another with --port <N>\n`);
+    } else {
+      process.stderr.write(`selvedge sample-app: cannot listen on port ${port}: ${probeError.message || probeError}\n`);
     }
     process.exit(1);
   }

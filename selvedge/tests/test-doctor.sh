@@ -4,13 +4,15 @@
 # time prints that check's `FAIL <check>: <fix>` line with its fix literal and exits 1:
 #   Node absent or older than 18   install Node.js >= 18  (+ `skipped: the other checks need Node`)
 #   Playwright library missing     npm i -D playwright
-#   Chromium browser missing       npx playwright install chromium
+#   Chromium browser missing       npx playwright install chromium (also when executablePath() is
+#                                  empty or throws)
 #   selvedge.json absent / invalid selvedge env init --port
 #   hooks not approved             selvedge env approve
 #   no planner                     or set SELVEDGE_PLANNER
 #
 # Hermetic: a temp HOME, a temp git repo, a stub Playwright (SELVEDGE_PLAYWRIGHT_MODULE, or a stub
-# `playwright` package in the repo's node_modules) whose chromium.executablePath() is $STUB_EXE, and
+# `playwright` package in the repo's node_modules) whose chromium.executablePath() is $STUB_EXE (or
+# throws $STUB_THROW when set), and
 # every doctor run under `env -i` with a PATH built here (only the tools it needs; no `claude` unless
 # a case adds a stub one, no `node` in the Node-absent cases). Nothing outside $TMP is read or written.
 set -uo pipefail
@@ -53,7 +55,10 @@ mkdir -p "$TMP/stub-pw"
 cat > "$STUB_PW" <<'EOF'
 export const chromium = {
   launch: async () => { throw new Error('stub playwright: no browser here'); },
-  executablePath: () => process.env.STUB_EXE || '',
+  executablePath: () => {
+    if (process.env.STUB_THROW) throw new Error(process.env.STUB_THROW);
+    return process.env.STUB_EXE || '';
+  },
 };
 EOF
 STUB_EXE="$TMP/fake-chromium"
@@ -130,6 +135,10 @@ l="$(line_of "Chromium browser")"
 doctor STUB_EXE=
 { [ "$RC" -eq 1 ] && grep -qE '^FAIL Chromium browser: npx playwright install chromium \(this Playwright reports no browser path' <<<"$OUT"; } \
   && ok "a Playwright that reports no browser path: FAIL Chromium browser, exit 1" || ko "no browser path: rc=$RC out='$OUT'"
+
+doctor STUB_THROW="stub: no browser for this platform"
+{ [ "$RC" -eq 1 ] && grep -qE '^FAIL Chromium browser: npx playwright install chromium \(this Playwright reports no browser path: stub: no browser for this platform\)$' <<<"$OUT"; } \
+  && ok "a Playwright whose executablePath() throws: FAIL Chromium browser naming the error, exit 1" || ko "executablePath throws: rc=$RC out='$OUT'"
 
 # --- selvedge.json ------------------------------------------------------------------------------
 rm "$REPO/selvedge.json"

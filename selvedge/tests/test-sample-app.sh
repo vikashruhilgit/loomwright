@@ -2,8 +2,10 @@
 # test-sample-app.sh — pins `selvedge sample-app [--port N]` (bin/selvedge → tests/fixtures/
 # app-server.mjs sample): on a given free port it serves /cart (heading "Shop"), /echo ("Hello, ")
 # and /api/price ("42") — the literals the README quick start's example criteria rely on — prints
-# its origin and the `selvedge env init --port N` line, stops on SIGTERM with no process left, and a
-# port already in use exits 1 naming the port.
+# its origin and the `selvedge env init --port N` line, stops on SIGTERM with no process left; a
+# port already in use on 127.0.0.1, or on [::1] only (skipped, with a note, where ::1 cannot be
+# bound), exits 1 naming the port; another listen error (EACCES on port 1, where this user may not
+# bind it; skipped elsewhere) exits 1 naming the port; `--port=N` and `--help` work.
 #
 # The server's stdout/stderr go to a temp file, never this test's stdout (sample mode has no
 # watchdog, so a server holding the suite's stdout would hang a piped run.sh). An EXIT trap stops
@@ -111,27 +113,72 @@ else
   ko "the server process was not running before the stop: $(cat "$TMP/sample.log")"
 fi
 
-# --- a port already in use exits 1 naming the port -----------------------------------------------
+# expect_exit1 <port> <label> <literal> — `sample-app --port <port>` exits 1 with one line holding
+# <literal> (run in the background with a deadline: a regression that serves anyway must not hang).
+expect_exit1() {
+  local p="$1" label="$2" want="$3" pid rc j=0
+  bash "$CLI" sample-app --port "$p" >"$TMP/exit1.log" 2>&1 &
+  pid=$!
+  while alive "$pid" && [ "$j" -lt 100 ]; do j=$((j + 1)); sleep 0.1; done
+  if alive "$pid"; then
+    stop_pid "$pid"
+    ko "$label: sample-app on port $p kept running: $(cat "$TMP/exit1.log")"
+    return
+  fi
+  wait "$pid"; rc=$?
+  { [ "$rc" -eq 1 ] && grep -qF "$want" "$TMP/exit1.log" && [ "$(wc -l <"$TMP/exit1.log" | tr -d ' ')" = "1" ]; } \
+    && ok "$label: exits 1 with one line naming the port ($p)" || ko "$label: rc=$rc out='$(cat "$TMP/exit1.log")'"
+}
+
+# hold <host> <port> — hold host:port in the background (HOLD_PID); prints "held" or the error code.
+hold() {
+  : >"$TMP/hold.log"
+  node -e 'const s = require("net").createServer(); s.on("error", (e) => { process.stdout.write(`${e.code}\n`); process.exit(1); }); s.listen(Number(process.argv[2]), process.argv[1], () => process.stdout.write("held\n"));' "$1" "$2" >"$TMP/hold.log" 2>&1 &
+  HOLD_PID=$!
+  local j=0
+  while ! grep -q . "$TMP/hold.log" 2>/dev/null && alive "$HOLD_PID" && [ "$j" -lt 50 ]; do j=$((j + 1)); sleep 0.1; done
+}
+
+# --- a port already in use exits 1 naming the port: on 127.0.0.1 ---------------------------------
 busy="$(free_port)"
-node -e 'const s = require("net").createServer(); s.listen(Number(process.argv[1]), "127.0.0.1", () => process.stdout.write("held\n"));' "$busy" >"$TMP/hold.log" 2>&1 &
-HOLD_PID=$!
-i=0
-while ! grep -qF held "$TMP/hold.log" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i + 1)); sleep 0.1; done
-grep -qF held "$TMP/hold.log" || ko "setup: could not hold port $busy: $(cat "$TMP/hold.log")"
-# In the background with a deadline: a regression that serves anyway must not hang this test.
-bash "$CLI" sample-app --port "$busy" >"$TMP/busy.log" 2>&1 &
-BUSY_PID=$!
-i=0
-while alive "$BUSY_PID" && [ "$i" -lt 100 ]; do i=$((i + 1)); sleep 0.1; done
-if alive "$BUSY_PID"; then
-  stop_pid "$BUSY_PID"
-  ko "sample-app on the busy port $busy kept running: $(cat "$TMP/busy.log")"
+hold 127.0.0.1 "$busy"
+if grep -qF held "$TMP/hold.log"; then
+  expect_exit1 "$busy" "a port already in use on 127.0.0.1" "port $busy is already in use"
 else
-  wait "$BUSY_PID"; rc=$?
-  { [ "$rc" -eq 1 ] && grep -qF "port $busy" "$TMP/busy.log" && [ "$(wc -l <"$TMP/busy.log" | tr -d ' ')" = "1" ]; } \
-    && ok "a port already in use exits 1 with one line naming the port ($busy)" || ko "busy port: rc=$rc out='$(cat "$TMP/busy.log")'"
+  ko "setup: could not hold 127.0.0.1:$busy: $(cat "$TMP/hold.log")"
 fi
 stop_pid "$HOLD_PID"; HOLD_PID=""
+
+# --- ... and on [::1] (localhost can resolve there first, so that server would get the traffic) ---
+busy="$(free_port)"
+hold ::1 "$busy"
+if grep -qF held "$TMP/hold.log"; then
+  expect_exit1 "$busy" "a port already in use on [::1] only" "port $busy is already in use"
+else
+  echo "  note: [::1]:$busy cannot be bound here ($(cat "$TMP/hold.log")); the IPv6 in-use case is skipped"
+fi
+stop_pid "$HOLD_PID"; HOLD_PID=""
+
+# --- a listen error other than in-use exits 1 naming the port (port 1: EACCES where unprivileged) --
+if node -e 'const s = require("net").createServer(); s.on("error", (e) => process.exit(e.code === "EACCES" ? 0 : 1)); s.listen(1, "127.0.0.1", () => s.close(() => process.exit(1)));' 2>/dev/null; then
+  expect_exit1 1 "a port this user may not bind (EACCES)" "cannot listen on port 1"
+else
+  echo "  note: port 1 is bindable here (or not EACCES); the other-listen-error case is skipped"
+fi
+
+# --- the --port=N form works too, and --help prints the usage -------------------------------------
+port="$(free_port)"
+bash "$CLI" sample-app "--port=$port" >"$TMP/eq.log" 2>&1 &
+SRV_PID=$!
+i=0
+while ! grep -qF "serving on" "$TMP/eq.log" 2>/dev/null && alive "$SRV_PID" && [ "$i" -lt 100 ]; do i=$((i + 1)); sleep 0.1; done
+grep -qF "serving on http://localhost:$port" "$TMP/eq.log" \
+  && ok "sample-app --port=$port serves on that port" || ko "--port=N: $(cat "$TMP/eq.log")"
+stop_pid "$SRV_PID" && ok "the --port=N server stops on SIGTERM" || ko "the --port=N server needed SIGKILL"
+SRV_PID=""
+out="$(bash "$CLI" sample-app --help 2>&1)"; rc=$?
+{ [ "$rc" -eq 0 ] && grep -qF "usage: selvedge sample-app [--port <N>]" <<<"$out"; } \
+  && ok "sample-app --help prints the usage, exit 0" || ko "sample-app --help: rc=$rc out='$out'"
 
 # --- a bad --port is a usage error ---------------------------------------------------------------
 out="$(bash "$CLI" sample-app --port nope 2>&1)"; rc=$?

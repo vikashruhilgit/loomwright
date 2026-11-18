@@ -145,8 +145,8 @@ in your demo repo: selvedge env init --port 4173
 
 `sample-app` serves the app Selvedge's own tests use (`tests/fixtures/app-server.mjs`; its header
 lists every page) on port 4173 unless you pass `--port N`, with no time limit (the tests' own
-`serve` mode has a 15-minute watchdog; `sample-app` has none). A port already in use exits 1 and
-names the port: pick another with `--port`, and use the same number in step 5.
+`serve` mode has a 15-minute watchdog; `sample-app` has none). A port already in use, on 127.0.0.1
+or ::1 (`localhost` can resolve to either), exits 1 and names the port: pick another with `--port`, and use the same number in step 5.
 
 **8. Verify three criteria.** Back in the demo folder, start Claude Code (`claude`) and send this
 one message (the three criteria are plain text, one per line):

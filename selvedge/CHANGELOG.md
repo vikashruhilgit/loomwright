@@ -20,7 +20,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   `skipped: the other checks need Node` instead of crashing.
 - `selvedge sample-app [--port N]` serves the bundled fixture app (`tests/fixtures/app-server.mjs`)
   on `http://localhost:N` (default 4173) in the foreground until Ctrl-C, with no watchdog, and prints
-  its origin and the `selvedge env init --port N` line; a port already in use exits 1 naming it.
+  its origin and the `selvedge env init --port N` line; a port already in use on 127.0.0.1 or ::1
+  (`localhost` can resolve to either) exits 1 naming it.
   `startAppServer()` takes an optional port; with none it still binds a random one.
 - The README opens with a **Quick start** (install → `install-cli` → a demo folder with Playwright
   → `env init` → `doctor` → `sample-app` → `/selvedge:verify` with three example criteria → the
