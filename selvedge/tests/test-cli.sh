@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # test-cli.sh — pins selvedge/bin/selvedge: --version is the manifest's version read at run time
 # (directly, from a fixture copy with a different version, and through the install-cli symlink),
-# the no-argument help lists install-cli, and install-cli links, re-runs cleanly, and refuses to
-# replace a regular file.
+# the no-argument help lists install-cli, doctor and sample-app, and install-cli links, re-runs
+# cleanly, and refuses to replace a regular file.
 #
 # Hermetic: every install-cli run gets a fresh temp HOME; the user's ~/.local/bin is never touched.
 set -uo pipefail
@@ -29,6 +29,8 @@ out="$(bash "$CLI" --version 2>&1)"; rc=$?
 out="$(bash "$CLI" 2>&1)"; rc=$?
 { [ "$rc" -eq 0 ] && grep -qxF "$want" <<<"$out" && grep -qE '^ +install-cli ' <<<"$out"; } \
   && ok "no arguments prints the version and a subcommand list with install-cli" || ko "no-arg help: rc=$rc out='$out'"
+grep -qE '^ +doctor ' <<<"$out" && ok "the no-argument help lists doctor" || ko "no-arg help lacks doctor: '$out'"
+grep -qE '^ +sample-app ' <<<"$out" && ok "the no-argument help lists sample-app" || ko "no-arg help lacks sample-app: '$out'"
 
 out="$(bash "$CLI" no-such-command 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && ok "unknown command exits 2" || ko "unknown command: rc=$rc"
