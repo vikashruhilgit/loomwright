@@ -333,7 +333,7 @@ echo "== 57. scrub --paths-from: one scrub-hit line per hit (path:line: rule), s
 synced_pair
 mkdir -p "$W/B/.agent"; printf '%s\n' '# project deny terms' 'ACME-SECRET-[0-9]+' > "$W/B/.agent/meta-sync-deny.txt"
 git -C "$W/B" add .agent/meta-sync-deny.txt && git -C "$W/B" commit -qm 'deny patterns'
-put B "$RQ/p-email.md" "$(printf '%s\n' 'clean first line' 'clean second' 'contact someone@example.org')"
+put B "$RQ/p-email.md" "$(printf '%s\n' 'clean first line' 'clean second' 'contact someone@acme-mail.io')"
 put B "$RQ/p-home.md" "$(printf '%s\n' 'x' '/Users/alice/notes')"
 put B "$RQ/p-tok.md" "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
 put B "$RQ/p-slug.md" "$(printf '%s\n' 'a' 'b' 'https://github.com/evilcorp/secret-repo/pull/3')"
@@ -621,8 +621,8 @@ fx_refused() {
 }
 fx_refused fr-forge-user.md "mail someone@github.com about it" "meta_sync: scrub-hit $RQ/fr-forge-user.md:1: email"
 check $? "a real address at a forge host (someone@github.com) still exits 2: email (got: $FX_GOT)"
-fx_refused fr-nonforge.md "remote git@example.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-nonforge.md:1: email"
-check $? "a non-forge git@ host (git@example.com:) still exits 2: email (got: $FX_GOT)"
+fx_refused fr-nonforge.md "remote git@gitea.acme.io:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-nonforge.md:1: email"
+check $? "a non-forge git@ host (git@gitea.acme.io:) still exits 2: email (got: $FX_GOT)"
 fx_refused fr-lookalike.md "remote git@github.company.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-lookalike.md:1: email"
 check $? "a look-alike forge host (git@github.company.com:) still exits 2: email (got: $FX_GOT)"
 fx_refused fr-xgit.md "remote xgit@github.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-xgit.md:1: email"
@@ -631,7 +631,7 @@ fx_refused fr-nocolon.md "write to git@github.com today" "meta_sync: scrub-hit $
 check $? "a colon-less git@github.com (mailbox shape, not a remote) still exits 2: email (got: $FX_GOT)"
 fx_refused fr-upper.md "remote GIT@GITHUB.COM:owner/repo" "meta_sync: scrub-hit $RQ/fr-upper.md:1: email"
 check $? "an upper-case GIT@GITHUB.COM: is not the exact exemption and still exits 2: email (got: $FX_GOT)"
-fx_refused fr-mixed.md "$(printf '%s\n' 'git@github.com:owner/repo.git' 'remote git@github.com:owner/repo.git, ask someone@example.org')" \
+fx_refused fr-mixed.md "$(printf '%s\n' 'git@github.com:owner/repo.git' 'remote git@github.com:owner/repo.git, ask someone@acme-mail.io')" \
   "meta_sync: scrub-hit $RQ/fr-mixed.md:2: email"
 check $? "a line holding a forge remote AND a real address still exits 2: email at line 2, past the exempt-only line 1 (got: $FX_GOT)"
 fx_refused fr-slug.md "git clone git@github.com:evilcorp/secret-repo.git" "meta_sync: scrub-hit $RQ/fr-slug.md:-: forge_slug"
@@ -642,6 +642,55 @@ ms B push
   && grep -qxF "meta_sync: scrub $RQ/fr-xgit.md: email" < <(printf '%s\n' "$OUT") \
   && grep -qxF "meta_sync: scrub $RQ/fr-mixed.md: email" < <(printf '%s\n' "$OUT"); }
 check $? "push over the refusals exits 2 naming them, branch tip and meta-base unchanged (rc=$RC)"
+
+echo "== 65b. email exemption: an address at a host reserved so it can never receive mail passes; look-alikes still hit =="
+# fx_clean <file> <content> — scrub of that one file exits 0, clean, nothing on stderr
+fx_clean() {
+  put B "$RQ/$1" "$2"
+  printf '%s\n' "$RQ/$1" > "$W/fx.list"
+  SOUT="$(bash "$SCRIPT" scrub --paths-from "$W/fx.list" --root "$W/B" 2>"$W/fx.err")"; RC=$?
+  [ "$RC" -eq 0 ] && [ "$SOUT" = "meta_sync: clean (1 file(s) scanned)" ] && [ ! -s "$W/fx.err" ]
+}
+fx_clean rs-test.md "fixture: jane.doe@example.test"
+check $? "a .test fixture address (jane.doe@example.test) passes the email rule (rc=$RC: $SOUT $(tr '\n' '|' < "$W/fx.err"))"
+fx_clean rs-many.md "$(printf '%s\n' 'a@example.com b@EXAMPLE.ORG' 'c@mail.example.net, d@x.example' 'e@app.localhost f@nobody.invalid')"
+check $? "example.com/.org/.net (any case, subdomains) and the .example/.localhost/.invalid TLDs all pass (rc=$RC: $SOUT $(tr '\n' '|' < "$W/fx.err"))"
+fx_refused rs-suffix.md "x@example.com.evil.io" "meta_sync: scrub-hit $RQ/rs-suffix.md:1: email"
+check $? "a reserved name followed by a real domain (x@example.com.evil.io) still hits (got: $FX_GOT)"
+fx_refused rs-tld.md "x@test.com" "meta_sync: scrub-hit $RQ/rs-tld.md:1: email"
+check $? "'test' as a label under a real TLD (x@test.com) still hits (got: $FX_GOT)"
+fx_refused rs-prefix.md "x@notexample.com" "meta_sync: scrub-hit $RQ/rs-prefix.md:1: email"
+check $? "a look-alike label (x@notexample.com) still hits (got: $FX_GOT)"
+fx_refused rs-mixed.md "fixture jane@example.test, or ask someone@acme-mail.io" "meta_sync: scrub-hit $RQ/rs-mixed.md:1: email"
+check $? "a real address on the same line as a reserved one still hits (got: $FX_GOT)"
+rm -f "$W/B/$RQ"/rs-*.md
+
+echo "== 65c. mutation controls: the reserved-name exemption is load-bearing and anchored =="
+MUT_RSA="$TROOT/mutant-rs-anchor"
+if build_mutant "$MUT_RSA" 's/"^\[0-9\]+:\${EMAIL_RESERVED_EXEMPT}\\\$"/"^[0-9]+:${EMAIL_RESERVED_EXEMPT}"/' 'EMAIL_RESERVED_EXEMPT}" "$all.1"'; then
+  SCRIPT="$MUT_RSA/meta-sync.sh"
+  if fx_refused rs-suffix.md "x@example.com.evil.io" "meta_sync: scrub-hit $RQ/rs-suffix.md:1: email"; then
+    no "mutation control (rs-anchor) REFUTED: an end-unanchored exemption still refused x@example.com.evil.io — leg 65b is not load-bearing"
+  else
+    ok "mutation control (rs-anchor): an end-unanchored exemption lets x@example.com.evil.io through (rc=$RC), so leg 65b turns red"
+  fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (rs-anchor): could not build the unanchored mutant — control inconclusive"
+fi
+MUT_RSD="$TROOT/mutant-rs-dropped"
+if build_mutant "$MUT_RSD" 's/grep -v -i -E -e "^\[0-9\]+:\${EMAIL_RESERVED_EXEMPT}/grep -v -i -E -e "^NOMATCH:${EMAIL_RESERVED_EXEMPT}/' '"^NOMATCH:${EMAIL_RESERVED_EXEMPT}'; then
+  SCRIPT="$MUT_RSD/meta-sync.sh"
+  if fx_clean rs-test.md "fixture: jane.doe@example.test"; then
+    no "mutation control (rs-dropped) REFUTED: with the exemption disabled jane.doe@example.test still passed — leg 65b is not load-bearing"
+  else
+    ok "mutation control (rs-dropped): with the exemption disabled jane.doe@example.test is refused (rc=$RC), so leg 65b turns red"
+  fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (rs-dropped): could not build the disabled-exemption mutant — control inconclusive"
+fi
+rm -f "$W/B/$RQ"/rs-*.md
 
 echo "== 66. mutation control (xvii): a widened exemption must turn a refusal leg of (65) red =="
 MUT_XVII="$TROOT/mutant-xvii"

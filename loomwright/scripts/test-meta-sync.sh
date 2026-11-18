@@ -193,6 +193,12 @@
 #      user (xgit@), a colon-less git@github.com, an upper-case remote, and a line holding a forge
 #      remote AND a real address (line 2, after an exempt-only line 1); an unallowlisted slug after
 #      git@github.com: is still forge_slug (and not email); a push over the refusals exits 2
+#  65b. email exemption, reserved host (RFC 2606 / 6761): example.com/.org/.net + subdomains (any
+#      case) and the .test/.example/.invalid/.localhost TLDs pass; a reserved name followed by a real
+#      domain (x@example.com.evil.io), a real TLD whose label is just "test" (x@test.com), a look-alike
+#      label (x@notexample.com) and a real address beside a reserved one still hit
+#  65c. mutation controls: an end-unanchored reserved-host exemption, and the exemption disabled,
+#      each turn a leg of (65b) red
 #  66. mutation control (xvii): a mutant exemption widened to any user, and one without the trailing
 #      `:`, each turn a refusal leg of (65) green-when-it-must-be-red
 #  --- af36-03: the learning stores (twin contracts + .provenance.jsonl, agent-memory proposals, the
