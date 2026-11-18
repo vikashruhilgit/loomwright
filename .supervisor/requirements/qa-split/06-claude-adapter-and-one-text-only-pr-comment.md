@@ -1,6 +1,7 @@
 # In Claude Code: one command, a separate verifier, and one text-only PR comment
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/938
 
 > Phase 1, item 06 of `qa-split/00-plan.md` (rev 2, approved 2026-11-12).
 > Decisions: D8 (separate verifier context), D13 (one comment, text evidence only; rev 3: no raw page
@@ -62,3 +63,9 @@ leaking it: traces and screenshots carry cookies and PII, and the atelier repo i
 
 - `selvedge/commands/verify.md`, `selvedge/agents/verifier.md`, `selvedge/skills/verify/SKILL.md`
 - `selvedge/lib/comment*`, `selvedge/schemas/selvedge-config.schema.json` (adds `comment.read_values`), `selvedge/tests/**`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-18T04:29:01Z
+- **Brief:** .supervisor/jobs/done/2026-11-17-qa-split-06-claude-adapter-pr-comment.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/938
