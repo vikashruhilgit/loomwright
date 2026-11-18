@@ -25,10 +25,10 @@ What ships today:
 
 ## Quick start
 
-From nothing to a first verdict on the bundled sample app, in about 15 minutes (most of it is the
-Chromium download). You need Node.js >= 18, git, and Claude Code signed in with your Claude login;
-no other account or key. Each block is one step: copy it, run it, and compare the line after it.
-The measured runs are in [`docs/quick-start-timing.md`](docs/quick-start-timing.md).
+From nothing to a first verdict on the bundled sample app; the target is 15 minutes or less, most
+of it reading and the browser download. You need Node.js >= 18, git, and Claude Code signed in with your Claude
+login; no other account or key. Each block is one step: copy it, run it, and compare the line after
+it. The measured runs are in [`docs/quick-start-timing.md`](docs/quick-start-timing.md).
 
 **1. Install the plugin.** In a Claude Code session (these are session commands, not shell
 commands; skip the first one if you already added the `atelier` marketplace):
@@ -43,15 +43,17 @@ commands; skip the first one if you already added the `atelier` marketplace):
 
 Expected: Claude Code says `selvedge` is installed. Restart the session if it asks you to.
 
-**2. Put the CLI on your `PATH`.** This is required (why: [Install](#install)). In a terminal, run
-the installed copy's own `install-cli` once (a fresh install has exactly one version folder):
+**2. Put the CLI on your `PATH`** with `selvedge install-cli`. This is required (why:
+[Install](#install)). Before the CLI is on `PATH`, run the installed copy's own `install-cli` in a
+terminal (a fresh install has exactly one version folder):
 
 ```
 ~/.claude/plugins/cache/atelier/selvedge/*/bin/selvedge install-cli
 ```
 
-Expected: `selvedge: linked /Users/<you>/.local/bin/selvedge -> …/bin/selvedge`. If it also prints
-`… is not on your PATH`, add it for this shell (and to your shell profile) and check:
+Expected: `selvedge: linked /Users/<you>/.local/bin/selvedge -> …/bin/selvedge`, then a note to
+re-run it after each plugin update. If it also prints `… is not on your PATH`, add that folder for
+this shell (and to your shell profile, e.g. `~/.zshrc`), then check:
 
 ```
 export PATH="$HOME/.local/bin:$PATH"
@@ -84,13 +86,15 @@ npm i -D playwright
 Expected: `Initialized empty Git repository in …/selvedge-demo/.git/`, then a `package.json`, then
 `added 2 packages` (the count can differ).
 
-**4. Download Chromium for that Playwright** (about 150 MB; the slowest step):
+**4. Download Chromium for that Playwright** (about 300 MB: Chromium, its headless shell and
+FFmpeg; the slowest command):
 
 ```
 npx playwright install chromium
 ```
 
-Expected: download progress bars ending without an error.
+Expected: three progress bars, each ending in a line such as `Chrome for Testing … downloaded to
+…/ms-playwright/chromium-…`, and no error.
 
 **5. Write `selvedge.json`** for the sample app's port:
 
@@ -98,8 +102,12 @@ Expected: download progress bars ending without an error.
 selvedge env init --port 4173
 ```
 
-Expected: `selvedge env: wrote …/selvedge-demo/selvedge.json (origin http://localhost:4173, port
-from --port)`. It also adds `.selvedge/` to `.gitignore`.
+Expected:
+
+```
+selvedge env: added .selvedge/ to …/selvedge-demo/.gitignore
+selvedge env: wrote …/selvedge-demo/selvedge.json (origin http://localhost:4173, port from --port)
+```
 
 **6. Check everything with `selvedge doctor`:**
 
@@ -136,8 +144,9 @@ in your demo repo: selvedge env init --port 4173
 ```
 
 `sample-app` serves the app Selvedge's own tests use (`tests/fixtures/app-server.mjs`; its header
-lists every page) on port 4173 unless you pass `--port N`, with no time limit. A port already in use
-exits 1 and names the port: pick another with `--port`, and use the same number in step 5.
+lists every page) on port 4173 unless you pass `--port N`, with no time limit (the tests' own
+`serve` mode has a 15-minute watchdog; `sample-app` has none). A port already in use exits 1 and
+names the port: pick another with `--port`, and use the same number in step 5.
 
 **8. Verify three criteria.** Back in the demo folder, start Claude Code (`claude`) and send this
 one message (the three criteria are plain text, one per line):
@@ -150,7 +159,7 @@ one message (the three criteria are plain text, one per line):
 ```
 
 A verifier subagent plans the checks, freezes the plan and runs it in the guarded browser; this
-takes a few minutes, mostly the planner.
+takes a minute or more, mostly the planner. Approve its `selvedge` commands when Claude Code asks.
 
 **9. Read the verdict table.** The command shows one row per criterion, then the overall verdict,
 the plan sha256 and the run folder (`.selvedge/runs/<run-id>/`), for example:
@@ -178,7 +187,8 @@ printf '%s\n' '- On http://localhost:4173/cart, after clicking "Open cart", the 
 run_dir="$(selvedge plan criteria.json)" && selvedge run "$run_dir"
 ```
 
-Expected: one `PASS <criterion id>` line per criterion, then `verdict PASS <run dir>/verdict.json`.
+Expected: progress lines on stderr (`selvedge plan: …`, `selvedge run: …`), then one
+`PASS <criterion id>` line per criterion and `verdict PASS <run dir>/verdict.json`.
 
 Stop the sample app with Ctrl-C in its terminal when you are done.
 
