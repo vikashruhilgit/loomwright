@@ -28,7 +28,9 @@
 #   cells      — `\|` in a reference reads as `|`; a reference starting with `-` is a pattern, not an
 #                option; a directory row is searched recursively.
 #
-# Legs over the committed manifest itself belong after the fixture legs, before the RESULT tail.
+# Legs over the committed manifest itself (after the fixture legs, before the RESULT tail; read only):
+#   real-repo      — no `--expect` over the real tree and the default manifest path ⇒ exit 0, no refusal.
+#   AC6 scope rows — the committed manifest has a row for every path the requirement's Scope names.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -448,6 +450,55 @@ write_manifest "$R/m.md" auto '| `docs/linked` | `qa-executor` | re-point | 12 |
 run "$R" --manifest "$R/m.md" --expect 12
 expect_rc "$L" 1
 expect_line "$L" 'MISMATCH re-point 12 docs/linked :: qa-executor'
+
+# ---- the committed manifest (the real tree, read only) ---------------------------------------------
+# Only exit status and the absence of a refusal are pinned here: row statuses change as 11b1, 11b2 and
+# 12 land, so the `pending` wording is pinned on the base-state fixture (AC1) instead.
+echo "== real-repo"
+REPO="$(cd "$HERE/../.." && pwd)"
+REAL="$REPO/loomwright/docs/qa-removal-manifest.md"
+L='real-repo leg (no `--expect`, exit 0, no refusal)'
+RC=0; bash "$SCRIPT" --root "$REPO" >"$OUT" 2>"$ERR" || RC=$?   # default manifest path, on purpose
+expect_rc "$L" 0
+if contains "$ERR" 'REFUSED'; then no "$L — the committed manifest was refused: $(head -3 "$ERR" | tr '\n' ' ')"; else ok "$L — no refusal"; fi
+if grep -q '^summary: [0-9][0-9]* rows, expect none: 0 MISMATCH' "$OUT"; then ok "$L — summary line"; else no "$L — no summary line in: $(tail -2 "$OUT" | tr '\n' '|')"; fi
+
+echo "== AC6 scope rows"
+L='AC6 scope rows: the real manifest has a row for each Scope-named path'
+# has_row <path> [<reference cell>] — a data row of the committed manifest starts with that path cell
+# (and that reference cell, written exactly as in the table).
+has_row() {
+  local want="| \`$1\` |"
+  if [ "$#" -ge 2 ]; then want="$want $2 |"; fi
+  awk -v w="$want" 'index($0, w) == 1 { f = 1 } END { exit !f }' "$REAL"
+}
+need_row() { if has_row "$@"; then ok "$L — $1${2:+ :: $2}"; else no "$L — no row for $1${2:+ :: $2}"; fi; }
+if [ ! -f "$REAL" ]; then
+  no "$L — the committed manifest is missing: $REAL"
+else
+  need_row 'loomwright/capabilities.json'
+  need_row '.claude-plugin/marketplace.json' '`qa-executor`'                 # keywords
+  need_row '.claude-plugin/marketplace.json' '`red-teaming, QA,`'            # description (counts)
+  need_row 'loomwright/.claude-plugin/plugin.json' '`qa-executor`'           # keywords
+  need_row 'loomwright/.claude-plugin/plugin.json' '`red-teaming, QA,`'      # description (counts)
+  need_row '.github/workflows/ci.yml' '`read-playwright-pin.sh`'             # the Playwright pin step
+  need_row '.github/workflows/ci.yml' '`verify-walkthrough`'                 # the cache step
+  need_row 'loomwright/hooks/hooks.json' '`qa-executor`'                     # the two matchers
+  need_row 'loomwright/hooks/hooks.json' '`qa-strategist`'
+  need_row 'loomwright/hooks/hooks.json' '`validate-qa-result.py`'
+  need_row 'loomwright/docs/prompt-token-budgets.json' '`qa-executor`'
+  need_row 'loomwright/docs/ARCHITECTURE_CONTRACTS.md' '`qa-executor`'       # the budget mirror table
+  need_row 'loomwright/docs/ARCHITECTURE_CONTRACTS.md' '`` `verify` ``'
+  need_row 'CLAUDE.md' '`QA Executor`'                                       # the agent-roles table
+  need_row 'CLAUDE.md' '`QA Strategist`'
+  # The tracked agent-memory dir: exactly its tracked files, each a delete row of 11b1. Matched by the
+  # dir's name, so this test names no harness config dir.
+  MEM='agent-memory/loomwright-loomwright-qa-executor/'
+  n_mem="$(awk -v m="$MEM" 'index($0, "| `") == 1 && index($0, m) { n++ } END { print n + 0 }' "$REAL")"
+  n_mem_del="$(awk -v m="$MEM" 'index($0, "| `") == 1 && index($0, m) && index($0, "` | — | delete | 11b1 | ") { n++ } END { print n + 0 }' "$REAL")"
+  if [ "$n_mem" = 9 ]; then ok "$L — 9 rows under $MEM"; else no "$L — want 9 rows under $MEM, got $n_mem"; fi
+  if [ "$n_mem_del" = 9 ]; then ok "$L — each is a whole-path 11b1 delete row"; else no "$L — want 9 delete/11b1 rows under $MEM, got $n_mem_del"; fi
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"
