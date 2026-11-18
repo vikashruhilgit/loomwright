@@ -153,7 +153,7 @@ check $? "both clones converge on the union after pull"
 
 echo "== 11. scrub positives (exit 2, branch unchanged, every path named) =="
 synced_pair
-put B "$RQ/s-email.md" "contact someone@example.org for access"
+put B "$RQ/s-email.md" "contact someone@acme-mail.io for access"
 put B "$RQ/s-home.md" "see /Users/alice/project/notes"
 put B "$RQ/s-home2.md" "see /home/bob/src"
 put B "$RQ/s-slug.md" "upstream https://github.com/evilcorp/secret-repo/pull/3"
@@ -378,7 +378,7 @@ check $? "a dead holder's lock is reclaimed, the push lands and the lock is rele
 no_leftovers() { [ ! -e "$W/$1/.git/meta-sync.lock" ] && [ ! -e "$W/$1/.git/meta-index" ] && [ ! -e "$W/$1/.git/meta-base-index" ] && [ -z "$(ls "$W/$1/.git" | grep -E '^meta-(base\.tmp|sync\.lock\.stale)')" ]; }
 put B "$RQ/c.md" "c from B (conflict)"; put A "$RQ/c.md" "c from A"; ms A push; ms B push
 { [ "$RC" -eq 1 ] && no_leftovers B; }; check $? "after a conflict exit: no lock and no fixed-name scratch left in the gitdir (rc=$RC)"
-put B "$RQ/c.md" "c v1"; ms B pull; put B "$RQ/s-mail.md" "mail someone@example.org"; ms B push
+put B "$RQ/c.md" "c v1"; ms B pull; put B "$RQ/s-mail.md" "mail someone@acme-mail.io"; ms B push
 { [ "$RC" -eq 2 ] && no_leftovers B; }; check $? "after a scrub exit: no lock and no fixed-name scratch left (rc=$RC)"
 rm -f "$W/B/$RQ/s-mail.md"
 put A "$RQ/w.md" "w same-root parallel"; put B "$RQ/z.md" "z for the same-root pull"; ms B push

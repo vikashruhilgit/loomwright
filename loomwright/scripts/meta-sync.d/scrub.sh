@@ -15,23 +15,35 @@ scrub_report() {
   if [ "$4" = "1" ]; then echo "meta_sync: scrub-hit $1:$3: $2"; else echo "meta_sync: scrub $1: $2"; fi
 }
 
-# EMAIL_FORGE_EXEMPT — the ONE email-rule match that is not a hit: the `git` SSH user at a forge
-# host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o` match must equal
+# EMAIL_FORGE_EXEMPT — one of the TWO email-rule match shapes that are not a hit: the `git` SSH
+# user at a forge host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o` match must equal
 # it exactly — lowercase, the trailing `:` included — so any other user, host, case or shape still
 # hits. See the SCRUB header, rule email.
 EMAIL_FORGE_EXEMPT='git@(github\.com|gitlab\.com|bitbucket\.org):'
 
+# EMAIL_RESERVED_EXEMPT — the other: an address whose WHOLE host is a name reserved so it can never
+# receive mail (RFC 2606 / RFC 6761): example.com, example.org, example.net or any subdomain of
+# them, or any name ending in the .test, .example, .invalid or .localhost TLD. These are fixture and
+# documentation addresses (`jane.doe@example.test`), never a person's. Any letter case (DNS names
+# are). Anchored at both ends of the `grep -o` match, so `x@example.com.evil.io` and `x@test.com`
+# still hit. See the SCRUB header, rule email.
+EMAIL_RESERVED_EXEMPT='[a-z0-9._%+-]+@([a-z0-9-]+\.)*(example\.(com|org|net)|example|test|invalid|localhost):?'
+
 # email_matches <ERE> <file> — every match of the email rule's <ERE> in <file>, one `<line>:<match>`
-# per match, MINUS the exact forge SSH-remote exemption above. Exit 0 = at least one real hit, 1 =
-# none, >1 = a scan error (the caller reports scan_error(email): fail closed). The -o pass appends an
-# optional `:` so the exemption can see the remote's colon; `:` is in neither the local-part nor the
+# per match, MINUS the exact forge SSH-remote exemption and the reserved-name exemption above. Exit
+# 0 = at least one real hit, 1 = none, >1 = a scan error (the caller reports scan_error(email): fail
+# closed). The two filters go through a file, never a pipe: a pipe would hand the second grep an
+# empty input when the first failed, turning a scan error into "none" (fail open). The -o pass
+# appends an optional `:` so the exemption can see the remote's colon; `:` is in neither the local-part nor the
 # host class, so this never changes which addresses match. A match starts at the leftmost
 # local-part character, so `xgit@github.com:` is one match `xgit@…` and is NOT exempt.
 email_matches() {
   local all="$WORK/email.all" rc
   env LC_ALL=C grep -a -i -n -o -E -e "$1:?" "$2" > "$all" 2>/dev/null; rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
-  env LC_ALL=C grep -v -E -e "^[0-9]+:${EMAIL_FORGE_EXEMPT}\$" "$all" 2>/dev/null
+  env LC_ALL=C grep -v -E -e "^[0-9]+:${EMAIL_FORGE_EXEMPT}\$" "$all" > "$all.1" 2>/dev/null; rc=$?
+  [ "$rc" -le 1 ] || return "$rc"
+  env LC_ALL=C grep -v -i -E -e "^[0-9]+:${EMAIL_RESERVED_EXEMPT}\$" "$all.1" 2>/dev/null
 }
 
 # first_match_line <i|s|e> <ERE> <file> — the 1-based number of the first line matching <ERE> (i = any

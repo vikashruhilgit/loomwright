@@ -13,7 +13,33 @@
  # removes the lock only if it still carries that dead pid. A waiter never renames a lock aside, so
  # it can never move a live holder's lock and let a second process in. A live holder is waited for
  # up to META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. A live
-@@ -365,9 +365,12 @@
+@@ -337,14 +337,18 @@
+ #       sibling setup-memory.sh (`allowlist`); a missing/unparseable `.repo` is a hit;
+ #   (b) prose, portable POSIX ERE only (no GNU-only escapes — on BSD grep those would silently match
+ #       nothing and this fail-CLOSED gate would fail OPEN):
+-#         email          e-mail addresses (any letter case). ONE exemption, exact: the `git` SSH user
+-#                        at a forge_slug host in the scp-style remote form — `git@github.com:`,
+-#                        `git@gitlab.com:`, `git@bitbucket.org:`, all lowercase, trailing `:` required
+-#                        (git@github.com:owner/repo is a remote, not a mailbox). The whole match must
+-#                        be that string, so `someone@github.com`, `xgit@github.com:`, `git@example.com`,
++#         email          e-mail addresses (any letter case). TWO exemptions, each a whole-match test:
++#                        (1) exact: the `git` SSH user at a forge_slug host in the scp-style remote
++#                        form — `git@github.com:`, `git@gitlab.com:`, `git@bitbucket.org:`, all
++#                        lowercase, trailing `:` required (git@github.com:owner/repo is a remote, not a
++#                        mailbox), so `someone@github.com`, `xgit@github.com:`, `git@gitea.acme.io:`,
+ #                        `git@github.company.com:`, a colon-less `git@github.com` and any other case
+-#                        still hit, and a real address on the same line still hits. The slug after
+-#                        the `:` is still checked by forge_slug.
++#                        still hit; the slug after the `:` is still checked by forge_slug.
++#                        (2) a host reserved so it can never receive mail (RFC 2606 / 6761, any case):
++#                        example.com / .org / .net and their subdomains, and any name under the .test,
++#                        .example, .invalid or .localhost TLD — fixture addresses, never a person's
++#                        (`jane.doe@example.test`). `x@example.com.evil.io` and `x@test.com` still hit.
++#                        A real address on the same line as an exempt one still hits.
+ #         home_path      absolute home paths: /Users/<name>/ and /home/<name>/ (any letter case —
+ #                        macOS paths are case-insensitive), where <name> is any run of letters, digits,
+ #                        `.`, `_` or `-`. ANCHORED: the `/` must start the line or follow a character
+@@ -365,9 +369,12 @@
  #                        wrapped in double, single or back quotes (repo: a/b, "Repo": "a/b",
  #                        'repo': 'a/b'). A bare `a/b` is deliberately NOT a slug (every relative path would
  #                        match) — that is a stated limit of this scrub, not complete coverage. URL
@@ -29,7 +55,7 @@
  #   Project extension: TRACKED file `.agent/meta-sync-deny.txt` — one extra POSIX ERE per line
  #   (blank and `#` lines ignored). It is DATA handed to `grep -E -e`, never executed or eval'd; an
  #   invalid pattern is itself a hit (fail closed). Rule name: `deny_pattern:<line>`.
-@@ -606,8 +609,8 @@
+@@ -606,8 +613,8 @@
    ps -p "$1" >/dev/null 2>&1
  }
  # lock_is_stale <dir> <token> — 0 when <dir>, carrying <token> (the pid read from <dir>/pid), is
@@ -40,7 +66,7 @@
  lock_is_stale() {
    [ -d "$1" ] || return 1
    if [ -n "$2" ]; then
-@@ -617,8 +620,10 @@
+@@ -617,8 +624,10 @@
    [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
  }
  # reclaim_lock <dir> <token> <depth> — remove <dir> iff it STILL carries <token> and is STILL stale.
@@ -53,7 +79,7 @@
  # only be removed by it (its holder is dead; every other reclaimer re-checks a DIFFERENT token or
  # waits on this marker), so the re-check-then-rm below cannot hit a live lock: a lock re-acquired
  # in between carries another token and is left alone. Nothing is ever renamed aside and put back,
-@@ -628,10 +633,10 @@
+@@ -628,10 +637,10 @@
    local d="$1" t="$2" depth="$3" m w
    m="$1.reclaim.${2:-nopid}"
    [ "$depth" -le 4 ] || return 0
@@ -67,7 +93,7 @@
        rm -rf "$d" && [ "$depth" -eq 0 ] && RECLAIMED=1
      fi
      rm -rf "$m"; RECLAIM_MARK=""
-@@ -642,18 +647,20 @@
+@@ -642,18 +651,20 @@
    return 0
  }
  acquire_lock() {
@@ -91,7 +117,7 @@
      if lock_is_stale "$LOCK_DIR" "$holder"; then
        RECLAIMED=0
        reclaim_lock "$LOCK_DIR" "$holder" 0
-@@ -661,9 +668,11 @@
+@@ -661,9 +672,11 @@
          warn "reclaimed a stale lock left by pid ${holder:-unknown}"
          continue
        fi
@@ -104,7 +130,7 @@
      fi
      sleep 1
    done
-@@ -759,7 +768,7 @@
+@@ -759,7 +772,7 @@
    out="$(g ls-remote --exit-code origin "refs/heads/$BRANCH" 2>/dev/null)"; rc=$?
    REMOTE_SHA=""
    case "$rc" in
@@ -113,7 +139,49 @@
         [ -n "$REMOTE_SHA" ] || REMOTE_STATE="unreachable" ;;
      2) REMOTE_STATE="absent" ;;
      *) REMOTE_STATE="unreachable" ;;
-@@ -1238,7 +1247,7 @@
+@@ -1169,23 +1182,35 @@
+   if [ "$4" = "1" ]; then echo "meta_sync: scrub-hit $1:$3: $2"; else echo "meta_sync: scrub $1: $2"; fi
+ }
+ 
+-# EMAIL_FORGE_EXEMPT — the ONE email-rule match that is not a hit: the `git` SSH user at a forge
+-# host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o` match must equal
++# EMAIL_FORGE_EXEMPT — one of the TWO email-rule match shapes that are not a hit: the `git` SSH
++# user at a forge host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o` match must equal
+ # it exactly — lowercase, the trailing `:` included — so any other user, host, case or shape still
+ # hits. See the SCRUB header, rule email.
+ EMAIL_FORGE_EXEMPT='git@(github\.com|gitlab\.com|bitbucket\.org):'
++
++# EMAIL_RESERVED_EXEMPT — the other: an address whose WHOLE host is a name reserved so it can never
++# receive mail (RFC 2606 / RFC 6761): example.com, example.org, example.net or any subdomain of
++# them, or any name ending in the .test, .example, .invalid or .localhost TLD. These are fixture and
++# documentation addresses (`jane.doe@example.test`), never a person's. Any letter case (DNS names
++# are). Anchored at both ends of the `grep -o` match, so `x@example.com.evil.io` and `x@test.com`
++# still hit. See the SCRUB header, rule email.
++EMAIL_RESERVED_EXEMPT='[a-z0-9._%+-]+@([a-z0-9-]+\.)*(example\.(com|org|net)|example|test|invalid|localhost):?'
+ 
+ # email_matches <ERE> <file> — every match of the email rule's <ERE> in <file>, one `<line>:<match>`
+-# per match, MINUS the exact forge SSH-remote exemption above. Exit 0 = at least one real hit, 1 =
+-# none, >1 = a scan error (the caller reports scan_error(email): fail closed). The -o pass appends an
+-# optional `:` so the exemption can see the remote's colon; `:` is in neither the local-part nor the
++# per match, MINUS the exact forge SSH-remote exemption and the reserved-name exemption above. Exit
++# 0 = at least one real hit, 1 = none, >1 = a scan error (the caller reports scan_error(email): fail
++# closed). The two filters go through a file, never a pipe: a pipe would hand the second grep an
++# empty input when the first failed, turning a scan error into "none" (fail open). The -o pass
++# appends an optional `:` so the exemption can see the remote's colon; `:` is in neither the local-part nor the
+ # host class, so this never changes which addresses match. A match starts at the leftmost
+ # local-part character, so `xgit@github.com:` is one match `xgit@…` and is NOT exempt.
+ email_matches() {
+   local all="$WORK/email.all" rc
+   env LC_ALL=C grep -a -i -n -o -E -e "$1:?" "$2" > "$all" 2>/dev/null; rc=$?
+   [ "$rc" -eq 0 ] || return "$rc"
+-  env LC_ALL=C grep -v -E -e "^[0-9]+:${EMAIL_FORGE_EXEMPT}\$" "$all" 2>/dev/null
++  env LC_ALL=C grep -v -E -e "^[0-9]+:${EMAIL_FORGE_EXEMPT}\$" "$all" > "$all.1" 2>/dev/null; rc=$?
++  [ "$rc" -le 1 ] || return "$rc"
++  env LC_ALL=C grep -v -i -E -e "^[0-9]+:${EMAIL_RESERVED_EXEMPT}\$" "$all.1" 2>/dev/null
+ }
+ 
+ # first_match_line <i|s|e> <ERE> <file> — the 1-based number of the first line matching <ERE> (i = any
+@@ -1238,7 +1263,7 @@
    # extractions are case-INSENSITIVE (a host or key in any case is the same context) and the output
    # is lowercased BEFORE the sed strip, so the strip patterns only ever see lowercase. The repo key
    # and its value may be bare or wrapped in double, single or back quotes.
@@ -122,7 +190,7 @@
    {
      env LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
        | tr 'A-Z' 'a-z' | sed -E 's#^[^/:]+[/:]##; s#^repos/##'
-@@ -1247,12 +1256,22 @@
+@@ -1247,12 +1272,22 @@
    } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | env LC_ALL=C sort -u > "$slugs"
    while IFS= read -r s; do
      [ -n "$s" ] || continue
@@ -150,7 +218,7 @@
    done < "$slugs"
    [ "$bad" -eq 1 ] && { scrub_report "$p" forge_slug - "$wl"; hits=1; }
    # project deny patterns — tracked DATA, handed to grep -E, never executed.
-@@ -1643,7 +1662,10 @@
+@@ -1643,7 +1678,10 @@
      fi
      commit="$(printf '%s\n' "$MESSAGE" | g commit-tree "$newtree" -p "$R")" \
        || die "commit-tree failed (is user.name / user.email configured?)"
