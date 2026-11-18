@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "selvedge.json",
-  "description": "Selvedge target configuration: the exact origins the guarded browser may reach and the env hooks a user may approve, and the sign-in check for walled pages. Validated by selvedge/lib/env-config.mjs, whose accepted key sets selvedge/tests/test-env.sh asserts equal to the property names here.",
+  "description": "Selvedge target configuration: the exact origins the guarded browser may reach and the env hooks a user may approve, the sign-in check for walled pages, and what a PR comment may publish. Validated by selvedge/lib/env-config.mjs, whose accepted key sets selvedge/tests/test-env.sh asserts equal to the property names here.",
   "type": "object",
   "required": ["schema_version"],
   "properties": {
@@ -49,6 +49,24 @@
             "locator": { "type": "object" }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "comment": {
+      "description": "What `selvedge comment` may publish on a PR. Read from the PR's base branch only (git show <base>:selvedge.json), never the working tree, so a PR branch cannot opt itself in.",
+      "type": "object",
+      "properties": {
+        "read_values": {
+          "description": "Show the value each criterion read, after redaction. Default false. Refused on a repo that is not private unless `selvedge comment --allow-public-values` is given.",
+          "type": "boolean",
+          "default": false
+        },
+        "redact": {
+          "description": "Extra JavaScript regular expressions whose matches in a read value become [redacted], applied after the defaults (email, a run of 6+ digits, a URL query string, a 32+ character base64 or hex token). Default [].",
+          "type": "array",
+          "items": { "type": "string", "format": "regex" },
+          "default": []
         }
       },
       "additionalProperties": false

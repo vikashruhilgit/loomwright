@@ -48,6 +48,9 @@ export const REASONS = Object.freeze({
   config_schema_violation: 'config_schema_violation',
   base_config_unreadable: 'base_config_unreadable',
   approve_requires_tty: 'approve_requires_tty',
+  read_values_public_repo: 'read_values_public_repo',
+  comment_requires_yes: 'comment_requires_yes',
+  verdict_missing: 'verdict_missing',
   port_required: 'port_required',
   already_frozen: 'already_frozen',
   plan_invalid: 'plan_invalid',
@@ -65,10 +68,13 @@ export const CONFIG_FILE = 'selvedge.json';
 // The validator's accepted key sets. selvedge/schemas/selvedge-config.schema.json declares the same
 // names; selvedge/tests/test-env.sh asserts the two are equal (the schema is not read at run time, so
 // the check is a real second copy, not a tautology).
-export const CONFIG_KEYS = Object.freeze(['schema_version', 'origins', 'allow_remote', 'allow_remote_mutation', 'hooks', 'auth']);
+export const CONFIG_KEYS = Object.freeze(['schema_version', 'origins', 'allow_remote', 'allow_remote_mutation', 'hooks', 'auth', 'comment']);
 export const HOOK_KEYS = Object.freeze(['seed', 'reset', 'auth_setup']);
 export const AUTH_KEYS = Object.freeze(['env', 'signed_in_check']);
 export const SIGNED_IN_CHECK_KEYS = Object.freeze(['url', 'locator']);
+// `comment` (read by `selvedge comment` from the base branch only): whether a PR comment may show the
+// values a run read, and the extra redaction patterns applied on top of the defaults.
+export const COMMENT_KEYS = Object.freeze(['read_values', 'redact']);
 
 // An `auth.env` entry: the name of an environment variable (the same form as a plan's `{{NAME}}`).
 export const ENV_NAME_PATTERN = '^[A-Z_][A-Z0-9_]*$';
@@ -255,6 +261,19 @@ export function validateSchema(cfg) {
       if (!isPlainObject(check.locator)) fail('"auth.signed_in_check.locator" must be an object (one plan-step locator form: role, label, text or testid)');
     }
   }
+  if ('comment' in cfg) {
+    const comment = cfg.comment;
+    if (!isPlainObject(comment)) fail('"comment" must be an object');
+    for (const key of Object.keys(comment)) {
+      if (!COMMENT_KEYS.includes(key)) fail(`unknown "comment" key "${key}" (allowed: ${COMMENT_KEYS.join(', ')})`);
+    }
+    if ('read_values' in comment && typeof comment.read_values !== 'boolean') fail('"comment.read_values" must be true or false');
+    if ('redact' in comment && !Array.isArray(comment.redact)) fail('"comment.redact" must be an array of regular expressions (strings)');
+    for (const p of Array.isArray(comment.redact) ? comment.redact : []) {
+      if (typeof p !== 'string') fail(`"comment.redact" entry ${JSON.stringify(p)} is not a string`);
+      try { new RegExp(p); } catch (e) { fail(`"comment.redact" entry ${JSON.stringify(p)} is not a valid regular expression (${e.message})`); } // eslint-disable-line no-new
+    }
+  }
 }
 
 // A deep-frozen copy of a JSON value (the auth locator), so the normalized config stays immutable.
@@ -281,6 +300,13 @@ function normalizeAuth(cfg, origins) {
     env: Object.freeze([...(cfg.auth.env || [])]),
     signed_in_check: check === undefined ? null : Object.freeze({ url: check.url, locator: frozenCopy(check.locator) }),
   });
+}
+
+// The normalized `comment` block: always present, `{ read_values: false, redact: [] }` when absent.
+function normalizeComment(cfg) {
+  const given = isPlainObject(cfg.comment) ? cfg.comment : {};
+  const comment = { read_values: false, redact: [], ...given };
+  return Object.freeze({ read_values: comment.read_values === true, redact: Object.freeze([...comment.redact]) });
 }
 
 // Full validation: schema, then the origin rules. Returns a normalized frozen config.
@@ -319,6 +345,7 @@ export function validateConfig(cfg) {
     allow_remote_mutation: cfg.allow_remote_mutation === true,
     hooks: Object.freeze({ ...(cfg.hooks || {}) }),
     auth: normalizeAuth(cfg, origins),
+    comment: normalizeComment(cfg),
   });
 }
 

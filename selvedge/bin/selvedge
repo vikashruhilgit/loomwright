@@ -6,10 +6,10 @@
 # (../.claude-plugin/plugin.json, resolved through any chain of symlinks, so it is right when run
 # through the `install-cli` link in ~/.local/bin).
 #
-# The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run` and `verdict` commands run lib/<command>.mjs
-# (`run`: lib/runner/run.mjs) and are the only ones that need Node (>= 18; `snapshot`, `run` and
-# `auth setup --headed` also need Playwright, found at run time); --version, help and install-cli
-# stay bash-only.
+# The `env`, `auth`, `criteria`, `snapshot`, `plan`, `run`, `verdict` and `comment` commands run
+# lib/<command>.mjs (`run`: lib/runner/run.mjs) and are the only ones that need Node (>= 18;
+# `snapshot`, `run` and `auth setup --headed` also need Playwright, found at run time; `comment`
+# also needs gh); --version, help and install-cli stay bash-only.
 #
 # Exit codes: 0 ok, 1 an operation failed, 2 usage error or BLOCKED (a named reason on its own line),
 # 3 NOT_VERIFIABLE (a named reason on its own line). Precedence when several apply: 1 > 2 > 3 > 0.
@@ -75,6 +75,9 @@ Commands:
   verdict <run-dir>    PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion, derived from the run
                        folder's evidence.jsonl + plan.json into verdict.json (needs Node >= 18;
                        \`selvedge verdict help\`)
+  comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]
+                       post the run folder's verdicts to PR <n> as ONE text-only comment, updated
+                       in place (needs Node >= 18 and gh; \`selvedge comment help\`)
   help, -h, --help     print this help
 EOF
 }
@@ -131,6 +134,7 @@ case "${1:-}" in
   plan) shift; cmd_node plan "$@" ;;
   run) shift; cmd_node run "$@" ;;
   verdict) shift; cmd_node verdict "$@" ;;
+  comment) shift; cmd_node comment "$@" ;;
   help|-h|--help) usage ;;
   *) printf 'selvedge: unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
 esac
