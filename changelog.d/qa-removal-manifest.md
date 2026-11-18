@@ -1,6 +1,6 @@
 <!-- bump: patch -->
 A reviewed QA-removal manifest and a per-row checker for it (qa-split 11a)
-`loomwright/docs/qa-removal-manifest.md` lists every QA path and named QA reference outside `selvedge/` — 433 rows,
+`loomwright/docs/qa-removal-manifest.md` lists every QA path and named QA reference outside `selvedge/` — 434 rows,
 each marked `delete`, `re-point` or `keep` with the item that acts on it (11b1, 11b2 or 12) — plus the rollback
 tag `pre-qa-removal` (created by 11b1, not here) and the exact search that generated the list.
 `loomwright/scripts/check-qa-removal-manifest.sh` turns it into a gate: with no `--expect` it reports and exits 0;

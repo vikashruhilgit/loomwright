@@ -31,7 +31,7 @@ of `loomwright/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
 `scripts/check-doc-currency.sh` verifies. A row a removal PR finds missing, wrong or over-broad is
 changed here in that PR, with the row count below, never worked around.
 
-Row count: 433
+Row count: 434
 
 ## Rows
 
@@ -286,7 +286,7 @@ Row count: 433
 | `loomwright/docs/result-schemas/schema-versioning.md` | `VERIFY_EVIDENCE` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/docs/result-schemas/schema-versioning.md` | `VERIFY_QUEUE` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/docs/result-schemas/schema-versioning.md` | `VERIFY_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
-| `loomwright/docs/result-schemas/schema-versioning.md` | `qa-executor` | re-point | 12 | names a removed QA agent |
+| `loomwright/docs/result-schemas/schema-versioning.md` | `(qa-executor)` | re-point | 12 | names the removed QA agent's validator matcher (the file's other `qa-executor` mentions are the kept kind; see its keep row) |
 | `loomwright/docs/result-schemas/schema-versioning.md` | `validate-qa-result.py` | re-point | 12 | names a QA script 11b2 deletes |
 | `loomwright/docs/result-schemas/schema-versioning.md` | `validate-verify-evidence.py` | re-point | 12 | names a QA script 11b2 deletes |
 | `loomwright/docs/result-schemas/schema-versioning.md` | `verify-helpers.sh` | re-point | 12 | names a QA script 11b2 deletes |
@@ -436,6 +436,7 @@ Row count: 433
 | `loomwright/docs/rationale/launch-pad-autonomous.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/rationale/subagents.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/result-schemas/ground-truth-json.md` | `qa-executor:` | keep | 11b1 | schema of the kept `qa-executor:` kind; kept until Phase 3 item 09 or D18 |
+| `loomwright/docs/result-schemas/schema-versioning.md` | `cmd\|corpus-task\|qa-executor` | keep | 11b1 | the GROUND_TRUTH_JSON entry's kind enum names the kept `qa-executor` kind; kept until Phase 3 item 09 or D18 |
 | `loomwright/docs/result-schemas/supervisor-result.md` | `qa-executor` | keep | 11b1 | its one `qa-executor` mention is the deferred kind; kept until Phase 3 item 09 or D18 |
 | `loomwright/scripts/automate-dismissed.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/automate-helpers.d/plan-waves.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
@@ -490,15 +491,17 @@ To bring the QA system back, restore each `delete` path above from the tag
   `loomwright/docs/prompt-history-refs-baseline.json` and their allowances in
   `loomwright/docs/vendor-coupling-manifest.json`.
 - **CI:** the Playwright pin and cache steps in `.github/workflows/ci.yml` (with
-  `read-playwright-pin.sh`) and the `/verify` suites in `scripts/ci-local.sh`.
+  `read-playwright-pin.sh`). The deleted QA test suites (the `delete` rows for
+  `loomwright/scripts/test-*.sh`) come back at their own paths; `scripts/ci-local.sh` runs that
+  directory's `test-*.sh` by glob, so it needs no entry.
 - **Agent memory:** the tracked dir `.claude/agent-memory/loomwright-loomwright-qa-executor/`.
 - **Counts:** the agent, command and skill counts in both manifest descriptions, the CLAUDE.md
   agent-roles heading and table, and README — run `bash scripts/check-doc-currency.sh` to find each.
 - **Generated and schema files:** regenerate `loomwright/capabilities.json` with
   `loomwright/scripts/build-capabilities.sh`; restore the QA and verify sections of
   `loomwright/docs/RESULT_SCHEMAS.md`.
-- **Re-pointed surfaces:** the `re-point` rows above list every file 12 edited; restore each from the tag
-  where the QA behaviour is wanted back.
+- **Re-pointed surfaces:** the `re-point` rows above list every file 11b1, 11b2 and 12 edited in
+  place; restore each from the tag where the QA behaviour is wanted back.
 
 ## How this list was generated
 
@@ -570,6 +573,8 @@ Every file it lists has at least one row, or sits under a deleted directory row.
 - **Re-point:** one row per QA name the file contains (a fixed-string match, the same test the checker
   runs). The command `/verify` gets a row only where the file does not also name `verify-provides.sh`
   through a `/` (that file is not QA and stays); where it does, the backticked form is the reference.
+  Likewise, where a file also carries the kept `qa-executor` kind, the reference is narrowed to text
+  outside that kind, and the kind gets a keep row.
   Map-shaped files (`vendor-coupling-manifest.json`, `prompt-history-refs-baseline.json`) are referenced
   by the exact path key of each deleted file instead.
 - **Derived names (the name maps):** the notify, webhook, telemetry, provider-routing, token-ledger,
