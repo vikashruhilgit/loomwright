@@ -1,7 +1,0 @@
-<!-- bump: major -->
-QA agents, commands and skills removed — Selvedge replaces them (qa-split 11b1)
-Breaking: the `/qa-executor`, `/qa-strategist` and `/verify` commands and the `qa-executor` and `qa-strategist` agents are removed, together with their six skills (`playwright-e2e`, `qa-gates`, `qa-orchestration`, `qa-strategy`, `qa-test-patterns`, `verify-walkthrough`), their two SubagentStop hook matchers and the tracked `qa-executor` agent memory (owner decision D1: the old QA had no caller in the delivery loop and zero `/verify` runs, yet every release paid for it in counts, budgets and doc gates).
-What replaces each: `/qa-executor` and `/verify` are replaced by Selvedge's `/selvedge:verify` and the `selvedge` CLI, which report one evidenced PASS / FAIL / BLOCKED / NOT_VERIFIABLE verdict per acceptance criterion; `/qa-strategist` has no direct replacement, because Selvedge deliberately does not carry over its risk-strategy role (plan D2).
-To install Selvedge: run `/plugin install selvedge@atelier`, then `selvedge install-cli` to put its CLI on your `PATH` (before that first run, call the installed copy's own `bin/selvedge install-cli`, as the Selvedge README shows).
-`/dreaming`'s QA reflection is gone with the `qa-executor` agent; `/dreaming --agent qa-executor` still appears until a later item re-points it.
-The removal follows `loomwright/docs/qa-removal-manifest.md`; why, and how to restore any removed file from the rollback tag `pre-qa-removal`, is in `loomwright/docs/rationale/qa-split.md`.
