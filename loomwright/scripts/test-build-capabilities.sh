@@ -417,9 +417,9 @@ if cmp -s "$PLUGIN/agents/launch-pad.md" "$tmp/ff/agents/launch-pad.md"; then no
 else fcase "a stale NOT_EMITTED audit exception exits 1" "NOT_EMITTED audit entry 'launch-pad PLAN_REVIEW_RESULT'"; fi
 cp "$PLUGIN/agents/launch-pad.md" "$tmp/ff/agents/launch-pad.md"
 # Positive + negative control on one fixture: an emission verb lists the block, consumption prose does not.
-printf '\nALWAYS emit MISSING_FUNCTIONALITY_REPORT.\nParse the GATE_VERDICT block and read RED_TEAM_RESULT.\n' >> "$tmp/ff/agents/worker.md"
+printf '\nALWAYS emit EVAL_RESULT.\nParse the FIX_RESULT block and read RED_TEAM_RESULT.\n' >> "$tmp/ff/agents/worker.md"
 bash "$SUT" --root "$tmp/ff" --out "$tmp/ff.json" 2>/dev/null
-if [ "$(jq -r '.agents[] | select(.name == "loomwright:worker") | [(.result_block // "null"), (.result_blocks | join(","))] | join("|")' "$tmp/ff.json")" = "null|MISSING_FUNCTIONALITY_REPORT,WORKER_RESULT" ]; then
+if [ "$(jq -r '.agents[] | select(.name == "loomwright:worker") | [(.result_block // "null"), (.result_blocks | join(","))] | join("|")' "$tmp/ff.json")" = "null|EVAL_RESULT,WORKER_RESULT" ]; then
   ok "(F) 'ALWAYS emit X' lists X; 'parse the Y block' / 'read Z' do not; a set with no primary rule => result_block null"
 else no "(F) emission/consumption control: $(jq -c '.agents[] | select(.name == "loomwright:worker") | [.result_block, .result_blocks]' "$tmp/ff.json")"; fi
 cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
