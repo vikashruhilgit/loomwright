@@ -18,6 +18,10 @@ What ships today:
   derives PASS / FAIL / BLOCKED / NOT_VERIFIABLE per criterion from those lines and the plan only.
   `run --replay` re-runs a frozen plan unchanged for regression; `run --trace` keeps a redacted
   Playwright trace.
+- **The verdict where it is read** — `selvedge comment` puts a run's verdicts on the PR as one
+  text-only comment, updated in place; `/selvedge:verify` runs the whole check from Claude Code in a
+  separate verifier subagent that has only Bash and Read, and `skills/verify/SKILL.md` gives any
+  other agent host the same workflow.
 
 ## Install
 
@@ -540,6 +544,45 @@ fallback never counts as one.
 posts nothing and exits 0); with stdin not a terminal it exits 2 `comment_requires_yes`. A run folder
 with no `verdict.json` is refused `verdict_missing`, and one whose `plan.json` sha256 is not
 `verdict.json`'s `plan_sha256` is refused `plan_modified`; nothing is posted. A failing `gh` exits 1.
+
+## `/selvedge:verify`: the Claude Code adapter
+
+```
+/selvedge:verify <PR number | criteria file | pasted criteria>
+```
+
+The check, run from a Claude Code session by an agent that did not write the code: an
+implementing agent checking its own work checks its own reading of the brief.
+
+- **The command** ([`commands/verify.md`](commands/verify.md)) resolves its argument to a criteria
+  command: a PR number to `selvedge criteria from-pr <n>`, an existing file to
+  `selvedge criteria from-md <file>`, anything else to `selvedge criteria from-text` (the text on
+  stdin). It spawns the verifier, then reads the run folder's `verdict.json` and `criteria.json`
+  itself and shows one row per criterion (verdict, reason, text), the overall verdict, the plan
+  sha256 and the run folder. It never writes a plan or a verdict.
+- **The verifier** ([`agents/verifier.md`](agents/verifier.md)) is a subagent whose tools are
+  exactly Bash and Read. It works only through the CLI, in this order: `criteria` (plus
+  `criteria check`), `plan --init`, `snapshot --run-dir <the folder plan --init printed>`,
+  `plan --validate` (it writes `plan.json` into the run folder with a shell heredoc, following
+  [`prompts/planner.md`](prompts/planner.md)), `plan --freeze`, `run`, `verdict`. It never edits
+  `plan.json` after the freeze, never reads `~/.local/state/selvedge/` (the stored sign-in
+  session), never runs `comment`, `env approve`, `env hook` or `auth setup`, and never looks at the
+  app except through `snapshot`. `maxTurns` bounds its run; its `token_budget` frontmatter bounds
+  its prompt, which `tests/test-adapter.sh` measures as the file's bytes / 4.
+- **Posting** happens only for a PR source, only after the command asks once and you answer yes,
+  and only through `selvedge comment <run-dir> --pr <n> --yes`. A file or pasted-text source, any
+  other answer, or a session that cannot ask (`claude -p`) posts nothing.
+- **The skill** ([`skills/verify/SKILL.md`](skills/verify/SKILL.md)) is the same workflow, in the
+  same command order, for any agent host that can run shell commands and read files; it is listed
+  in [`skills/SKILLS_INDEX.md`](skills/SKILLS_INDEX.md).
+
+It needs the CLI on `PATH` (`selvedge install-cli`; the command stops and says so otherwise), the
+app running, and the same tools as `run`. The verdict is the CLI's: a live `/selvedge:verify`
+session and a hand-run `selvedge run --replay` of its frozen plan gave the same per-criterion
+`verdict.json` ([`docs/evidence/verify-adapter-equivalence.md`](docs/evidence/verify-adapter-equivalence.md)).
+Honest limit: the verifier's tool list keeps it off Write and Edit, not off the shell; Bash can
+still write files, so the prohibitions above are instructions, and the frozen plan's sha256 is what
+makes a changed plan detectable (`plan_modified`).
 
 ## `auth` and the sign-in check
 

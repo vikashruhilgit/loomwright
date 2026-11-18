@@ -8,6 +8,39 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.6.0 — 2026-11-18
+
+- `selvedge comment <run-dir> --pr <n> [--yes] [--base <ref>] [--allow-public-values]` posts a run
+  folder's verdicts to the PR as ONE comment, found by its `<!-- selvedge:verdict -->` marker and
+  updated in place (`PATCH`); it creates one only when no comment carries the marker, and never
+  touches a comment without it. The body reaches `gh` as a file, never as command-line text. It is
+  text only: a summary line, the short plan sha256 and revision, and per criterion the text, verdict,
+  interpretation, assumptions, steps as type and locator, the expected value, matched, the evidence
+  class and, for BLOCKED / NOT_VERIFIABLE, the reason with an unblock hint. Every URL is cut to its
+  path; no `fill` / `select` value, `{{NAME}}` value, header name or evidence file name is shown.
+- `selvedge.json` takes a `comment` key: `read_values` (default `false`) and `redact` (default `[]`,
+  JavaScript regular expressions). `comment` reads it from the PR's base branch only, never the
+  working tree. With the opt-in, a repo that is not `PRIVATE` (or whose visibility cannot be read)
+  is refused `read_values_public_repo` unless `--allow-public-values` is given, and every published
+  value is redacted (emails, runs of 6+ digits, URL query strings, 32+ character tokens, then the
+  configured patterns).
+- A later plan revision shows each criterion's own verdict on every earlier plan (`FAIL on plan 1 →
+  PASS on plan 2`, `not run on plan <r>`, or the whole run's verdict labelled `(whole run)` when
+  the earlier run folder is gone), and the summary counts `PASS after revision` separately.
+- New reasons: `read_values_public_repo`, `comment_requires_yes` (no `--yes` and stdin not a
+  terminal) and `verdict_missing` (no `verdict.json` in the run folder).
+- The Claude Code adapter: `/selvedge:verify [PR number | criteria file | pasted criteria]` resolves
+  the source to `selvedge criteria from-pr | from-md | from-text`, spawns the `verifier` subagent
+  (tools: Bash and Read only) that runs `criteria`, `plan --init`, `snapshot`, `plan --validate`,
+  `plan --freeze`, `run` and `verdict`, reports the table from `verdict.json`, and for a PR posts
+  through `selvedge comment … --yes` only after asking. The verifier never edits `plan.json` after
+  the freeze and never reads `~/.local/state/selvedge/`.
+- `skills/verify/SKILL.md` carries the same workflow, in the same command order, for any agent
+  host; `selvedge/tests/test-adapter.sh` pins the tools, the order, the prohibitions, the token
+  budget, the posting rule and the plugin description (<= 600 characters, no version token, equal
+  to the marketplace entry's). A live session's verdict equals a hand-run `run --replay` of the same
+  frozen plan: [`docs/evidence/verify-adapter-equivalence.md`](docs/evidence/verify-adapter-equivalence.md).
+
 ## 0.5.0 — 2026-11-17
 
 - `selvedge.json` takes an `auth` key: `env` (the names, never the values, of the environment
