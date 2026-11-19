@@ -895,8 +895,8 @@ rm -f "$R/scripts/ci-local-mutant.sh"
 
 # --- leak gate (af/39g AC6) ------------------------------------------------------------------------------
 # A fresh fixture whose test-one.sh can leave a process behind (FIXTURE_LEAK): `python` is the real
-# leaker's shape (start_app() in test-verify-walkthrough.sh: a detached `python3 <repo script> --port
-# <N>` listener, the test exits 0 once it answers), `nohup` a detached grandchild whose command line is
+# leaker's shape (a suite that starts a fixture app: a detached `python3 <repo script> --port <N>`
+# listener, the test exits 0 once it answers), `nohup` a detached grandchild whose command line is
 # only `sleep 271`, `wait` a suite that holds still until the harness has started an UNRELATED listener.
 # Every leaked pid lands in $LK/pids and kill_leaks stops it at the end of its leg.
 build_fixture

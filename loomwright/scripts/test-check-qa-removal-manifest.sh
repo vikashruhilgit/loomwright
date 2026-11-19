@@ -463,6 +463,19 @@ expect_rc "$L" 0
 if contains "$ERR" 'REFUSED'; then no "$L — the committed manifest was refused: $(head -3 "$ERR" | tr '\n' ' ')"; else ok "$L — no refusal"; fi
 if grep -q '^summary: [0-9][0-9]* rows, expect none: 0 MISMATCH' "$OUT"; then ok "$L — summary line"; else no "$L — no summary line in: $(tail -2 "$OUT" | tr '\n' '|')"; fi
 
+# The enforcing leg: every row up to the last landed item must hold on the real tree, so a keep row
+# (e.g. the `qa-executor:*)` arm, `verify-provides.sh`) that disappears fails CI here. Raise LANDED in
+# the same change that lands the next item.
+LANDED=11b2
+L="real-repo leg (\`--expect $LANDED\`, exit 0)"
+RC=0; bash "$SCRIPT" --root "$REPO" --expect "$LANDED" >"$OUT" 2>"$ERR" || RC=$?
+if [ "$RC" = 0 ]; then
+  ok "$L"
+else
+  no "$L — rc=$RC: $(grep -E '^(MISMATCH|pending)' "$OUT" | head -5 | tr '\n' '|') $(head -3 "$ERR" | tr '\n' ' ')"
+fi
+if grep -q "^summary: [0-9][0-9]* rows, expect $LANDED: 0 MISMATCH" "$OUT"; then ok "$L — summary line"; else no "$L — no summary line in: $(tail -2 "$OUT" | tr '\n' '|')"; fi
+
 echo "== AC6 scope rows"
 L='AC6 scope rows: the real manifest has a row for each Scope-named path'
 # has_row <path> [<reference cell>] — a data row of the committed manifest starts with that path cell

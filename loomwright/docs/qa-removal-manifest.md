@@ -83,7 +83,7 @@ Row count: 441
 | `loomwright/scripts/verify-helpers.sh` | — | delete | 11b2 | `/verify` helper library; no caller after 11b1 |
 | `loomwright/scripts/verify-run.sh` | — | delete | 11b2 | `/verify` executor; no caller after 11b1 |
 | `loomwright/docs/command-parts/agent-help/qa.md` | — | delete | 12 | the QA topic page of `/agent-help`; goes with the `agent-help` re-point |
-| `loomwright/scripts/telemetry-fixtures/golden/qa-failed__allow_with_repo.golden.txt` | — | delete | 12 | golden output of the QA telemetry fixture |
+| `loomwright/scripts/telemetry-fixtures/golden/qa-failed__allow_with_repo.golden.txt` | — | delete | 12 | golden output of the QA telemetry fixture; 11b2 refreshed it to the fail-safe `validator_unavailable schema=QA_RESULT` line its deleted validator now yields |
 | `loomwright/scripts/telemetry-fixtures/qa-failed.json` | — | delete | 12 | telemetry fixture for the QA_RESULT rubric; goes with the telemetry name-map re-point |
 | `.claude-plugin/README.md` | `.qa-summary` | re-point | 11b1 | names a QA run artifact |
 | `.claude-plugin/README.md` | `MISSING_FUNCTIONALITY_REPORT` | re-point | 11b1 | names a QA or verify schema 11b2 deletes |
@@ -384,7 +384,7 @@ Row count: 441
 | `loomwright/scripts/test-script-event-telemetry.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `QA_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |
-| `loomwright/scripts/test-send-telemetry-core.sh` | `validate-qa-result.py` | re-point | 12 | names a QA script 11b2 deletes |
+| `loomwright/scripts/test-send-telemetry-core.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-telemetry-threads.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-telemetry.sh` | `qa-failed` | re-point | 12 | names the QA telemetry fixture 12 deletes |
 | `loomwright/scripts/test-token-ledger.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |

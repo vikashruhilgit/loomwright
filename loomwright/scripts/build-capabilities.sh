@@ -292,7 +292,7 @@ PRIMARY_RULES='{
 # EXECUTE_RESULT: the Execute Manager's FINAL block; EXECUTE_CHECKPOINT is the mid-run resume handoff
 #   (both validated by validate-execute-result.py — docs/result-schemas/execute-checkpoint.md).
 # QA_RESULT: validate-qa-result.py's documented rule — "QA_RESULT wins whenever present"; VERIFY_RESULT
-#   is the --verify mode's block (docs/RESULT_SCHEMAS.md opening paragraph, §VERIFY_RESULT).
+#   is the --verify mode's block (docs/RESULT_SCHEMAS.md opening paragraph).
 #   MISSING_FUNCTIONALITY_REPORT is emitted BESIDE QA_RESULT (qa-executor.md "STEP 4 — EMIT: ALWAYS
 #   emit MISSING_FUNCTIONALITY_REPORT ... Emit QA_RESULT"), a companion report, never the final block.
 PLUGIN_NAME="$(jq -r '.name // empty' "$MANIFEST")"

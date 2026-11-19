@@ -542,7 +542,6 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **loomwright/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **loomwright/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
 - **loomwright/docs/ARCHITECTURE.md:** Visual agent topology
-- **loomwright/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
 
 ---
 

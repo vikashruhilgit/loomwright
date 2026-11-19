@@ -12,7 +12,8 @@
 #       minimal `run_real` path test-dispatch-pr-review.sh case 37 exercises. Its detached trap child
 #       fires notify-desktop.sh + send-webhook.sh --gate-type drain_died ASYNCHRONOUSLY, so the probe
 #       polls for the `.died` marker and then for that detached child to exit before reading anything.
-#   (P) test-propose-from-verify.sh run ALONE (its AC9 used to stage the REAL notify-desktop.sh).
+#   (P) test-propose-from-verify.sh run ALONE. Its notifier/webhook arms went with verify-helpers.sh,
+#       so (P) now guards against one coming back: the whole file must pass with nothing escaping.
 #   (N) notify-desktop.sh fired directly (see mutant (iii) below for why (D) cannot show the banner).
 #   (T) send-telemetry-core.sh non-dry-run with consent granted but no repo in the user-scope entry, so
 #       only LOOMWRIGHT_TELEMETRY_REPO could route it to `gh issue create`.
@@ -222,8 +223,8 @@ grep -q '^curl ' "$ELOG" && no "(D) the curl stub was reached — the unset laye
 echo "== (P) test-propose-from-verify.sh run ALONE under the owner's env (the file sources the helper itself) =="
 : > "$HITS"; : > "$OUTER_LOG"; P_HOME="$T/p-home"; mkdir -p "$P_HOME"
 in_danger "" "$T/egress-p.log" env HOME="$P_HOME" bash "$HERE/test-propose-from-verify.sh" > "$T/p.out" 2>&1; rc_p=$?
-[ "$rc_p" -eq 0 ] && grep -q 'AC9: the needs_auth desktop notification went to the AC9 stub notifier' "$T/p.out" \
-  && ok "(P) test-propose-from-verify.sh passes, AC9 included, with the owner's env exported" \
+[ "$rc_p" -eq 0 ] && grep -qE '^propose-from-verify: [1-9][0-9]* passed, 0 failed$' "$T/p.out" \
+  && ok "(P) test-propose-from-verify.sh passes with the owner's env exported" \
   || no "(P) rc=$rc_p: $(grep -E 'FAIL|passed' "$T/p.out" | tail -5)"
 [ "$(outer_notifier_calls)" -eq 0 ] && ok "(P) no osascript/notify-send/terminal-notifier call reached the outer shims (AC3)" \
   || no "(P) outer notifier calls: $(cat "$OUTER_LOG")"

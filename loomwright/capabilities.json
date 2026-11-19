@@ -1058,14 +1058,6 @@
       "schema_version": 1
     },
     {
-      "name": "GATE_VERDICT",
-      "schema_version": 1
-    },
-    {
-      "name": "GRAPHQL_RISK_OVERRIDES",
-      "schema_version": null
-    },
-    {
       "name": "GROUND_TRUTH_JSON",
       "schema_version": 1
     },
@@ -1078,10 +1070,6 @@
       "schema_version": null
     },
     {
-      "name": "MISSING_FUNCTIONALITY_REPORT",
-      "schema_version": 1
-    },
-    {
       "name": "PLAN_REVIEW_RESULT",
       "schema_version": 1
     },
@@ -1092,14 +1080,6 @@
     {
       "name": "PRODUCT_CONTEXT",
       "schema_version": null
-    },
-    {
-      "name": "QA_RESULT",
-      "schema_version": 1
-    },
-    {
-      "name": "QA_SESSION",
-      "schema_version": 1
     },
     {
       "name": "RED_TEAM_RESULT",
@@ -1119,22 +1099,6 @@
     },
     {
       "name": "SYSTEM_CONTRACT",
-      "schema_version": 1
-    },
-    {
-      "name": "VERIFY_ENV",
-      "schema_version": null
-    },
-    {
-      "name": "VERIFY_EVIDENCE",
-      "schema_version": 1
-    },
-    {
-      "name": "VERIFY_QUEUE",
-      "schema_version": null
-    },
-    {
-      "name": "VERIFY_RESULT",
       "schema_version": 1
     },
     {

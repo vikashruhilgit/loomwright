@@ -1,3 +1,4 @@
+validator_unavailable schema=QA_RESULT
 --- DRY RUN ---
 TARGET_REPO=example/repo
 THREAD_ACTION=open
