@@ -14,7 +14,7 @@ The Loomwright Plugin includes:
 
 - **Reliability primitives (v12.0.0, preserved)** — Inter-subtask output contracts via a `provides` / `requires` schema (planned by Launch Pad, validated by Plan Reviewer, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across the 10 execution-shaped agents (`xhigh` / `high` / `medium`; haiku-locked context-keeper and discovery-only product-owner intentionally exempt), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `loomwright/docs/ARCHITECTURE_CONTRACTS.md` (Effort Tiers) and `loomwright/docs/RESULT_SCHEMAS.md` (provides/requires schema, WORKER_RESULT v2).
 
-- **Opt-in GitHub Issues telemetry (v11.2.0, preserved)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `loomwright/docs/TELEMETRY.md` for the full design.
+- **Opt-in GitHub Issues telemetry (v11.2.0, preserved)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `loomwright/docs/TELEMETRY.md` for the full design.
 
 - **"Inline ≠ stop orchestrating" loophole closed (v11.1.2, preserved)** — The v11.1.1 main-thread guard accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to both slash commands, an inline-execution critical rule in `loomwright/agents/supervisor.md`, and a Phase 4.5 completion-tail runtime invariant that emits `status: failed` (and leaves the job in `in-progress/`) if `code-reviewer` was not invoked and `--skip-self-heal` was not explicitly passed.
 
@@ -36,8 +36,8 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
 - **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
 - **Review-PR** (`/review-pr <pr-url>`) — Standalone bounded review→fix→re-review loop against an existing PR; never auto-merges
-- **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
-- **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
+
+> `/qa-strategist`, `/qa-executor` and `/verify` were removed — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](../loomwright/docs/rationale/qa-split.md).
 
 ### Orchestration Shells (slash commands, not agents)
 
@@ -59,7 +59,7 @@ Skills are loaded on-demand to keep context small:
 - **Core:** Commits, Context7 lookups, Quality checklist, Pattern detection, Claude.md validation
 - **Workflow:** Supervisor readiness, Async orchestration, State management, Context summarization, Workflow management, Agent teams
 - **Product:** Brainstorming, Product discovery, MVP scoping, User story writing, Domain knowledge
-- **QA:** QA strategy, QA orchestration, QA test patterns, QA gates, Playwright E2E, Unit testing
+- **Testing:** Unit testing
 - **DevOps:** CI/CD, Monitoring/Observability, Error handling
 - **UI:** Frontend UI (design system, accessibility, responsive)
 
@@ -274,36 +274,6 @@ Adversarial audit — find what breaks in production.
 
 ---
 
-### /qa-strategist [target] [--audit .qa-summary.md]
-
-Plan risk-based test strategy or audit QA Executor results.
-
-```bash
-/qa-strategist src/                           # Strategy mode
-/qa-strategist --audit .qa-summary.md         # Audit mode
-/qa-strategist --focus auth                   # Focus area
-```
-
-**Output:** Risk classification, coverage targets, STRATEGIST_VERDICT
-
----
-
-### /qa-executor [--url http://...] [--rounds 1|2|3]
-
-Discover app structure, generate Playwright tests, find gaps, execute.
-
-```bash
-/qa-executor                                          # Auto-detect
-/qa-executor --url http://localhost:3000               # Explicit URL
-/qa-executor --url http://localhost:3000 --skip-strategy
-```
-
-**Requires:** `playwright.config.ts` and running application
-
-**Output:** Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT
-
----
-
 ### /commit
 
 Create conventional commits with Beads linking.
@@ -409,16 +379,6 @@ bd claim BD-XX                # Start task
 bd close BD-XX                # Complete, next unblocks
 ```
 
-### QA Automation
-
-```
-/qa-strategist src/                    # Risk-based strategy
-    |
-/qa-executor --url http://localhost:3000  # Generate + run tests
-    |
-/qa-strategist --audit .qa-summary.md    # Audit results
-```
-
 ---
 
 ## Project Structure
@@ -440,10 +400,10 @@ loomwright/                            # Marketplace wrapper repo
     ├── agents/                              # Agent prompts (one per role)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md
-    │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md
+    │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md
     ├── commands/                            # Slash commands — excerpt; full list: loomwright/commands/
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
-    │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md, verify.md
+    │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md
     │   ├── telemetry.md, dreaming.md, autonomous.md, automate.md, capability-check.md, insights.md, obsidian.md, pr-postmortem.md
     │   └── setup.md, agent-help.md
     ├── hooks/
@@ -504,8 +464,6 @@ Agents with `memory: project` build knowledge across sessions:
 | Code Reviewer | Review patterns, recurring issues, conventions |
 | Red Team Reviewer | Past vulnerabilities, attack patterns |
 | Product Owner | Domain context, terminology, preferences |
-| QA Strategist | Risk patterns, which routes break |
-| QA Executor | Flaky patterns, common failures |
 
 ### Quality Gate Hooks
 
@@ -586,7 +544,7 @@ No. Use what helps:
 - **Need full automation?** `/launch-pad` then `/supervisor`
 - **Need requirements?** `/product-owner`
 - **Need security audit?** `/red-team-reviewer`
-- **Need QA tests?** `/qa-executor`
+- **Need acceptance-criteria verification?** `/selvedge:verify` (Selvedge plugin)
 
 ### Do agents need internet?
 
