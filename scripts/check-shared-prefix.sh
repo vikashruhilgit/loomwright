@@ -5,7 +5,7 @@
 # (the "Shared Agent Contract"), whose SINGLE canonical source is
 # loomwright/docs/shared-agent-prefix.md (between the SHARED-AGENT-PREFIX v1
 # BEGIN/END marker lines). Build-time includes are not available for plugin
-# agents, so the 14 copies are literal — and byte-identity is the invariant,
+# agents, so the per-agent copies are literal — and byte-identity is the invariant,
 # not similarity: a one-char drift silently forks the contract. This gate
 # extracts the canonical block and verifies every agent file contains it
 # byte-identically and EXACTLY once.

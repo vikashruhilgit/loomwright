@@ -101,7 +101,7 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 | Setting | What It Does | Example |
 |---------|-------------|---------|
 | `name` | Agent identifier | `loomwright:supervisor-runner` |
-| `tools` | Byte-identical superset allowlist across all 14 agents | Same line everywhere; per-agent restriction lives in `disallowedTools` |
+| `tools` | Byte-identical superset allowlist across all agents | Same line everywhere; per-agent restriction lives in `disallowedTools` |
 | `disallowedTools` | The actual per-agent restriction | Workers can't spawn subagents (`Task` denied, though the superset declares it) |
 | `model` | Sets model for the agent | Context-Keeper uses haiku (fast, cheap) |
 | `maxTurns` | Limits API round-trips | Context-Keeper: 3 turns max |
@@ -275,7 +275,7 @@ loomwright/              # Nested plugin root
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   ├── setup.md                      # Optional-capability dashboard + guided configuration (incl. observability)
 │   └── agent-help.md
-├── agents/                           # Agent implementations (14 roles)
+├── agents/                           # Agent implementations (one file per role)
 │   ├── launch-pad.md                 # Supervisor readiness agent
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── execute-manager.md            # Phase 3 execution manager
@@ -299,7 +299,7 @@ loomwright/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (42 skills; 18 tech-stack skills moved to stackpack@atelier)
+└── skills/                           # Skill files (see SKILLS_INDEX.md; tech-stack skills moved to stackpack@atelier)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)

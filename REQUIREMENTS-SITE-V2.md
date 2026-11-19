@@ -32,7 +32,7 @@ Four things are being added, one thing is being corrected:
 | Fact | Value | Where verified |
 |---|---|---|
 | Plugin version | **15.41.0** | `loomwright/.claude-plugin/plugin.json` |
-| Agent roles | 14 (9 user-facing, 5 internal) | `loomwright/agents/*.md` |
+| Agent roles | user-facing + internal — count the files, never restate a number | `loomwright/agents/*.md` |
 | Slash commands | 21 | `loomwright/commands/*.md` |
 | Skills | 41 | `loomwright/skills/*/` |
 | Quality-gate hooks | 24 | `loomwright/hooks/hooks.json` (counted per hook entry) |
