@@ -2080,7 +2080,7 @@ leg_fresh_state_stale() {
     # review fix (iteration 2): the died phase left an OPEN PR on the feature branch state.md records — named on the
     # no-PR line only when state.md is THIS phase's (fresh); a stale state.md's branch is a previous run's
     printf -- '- session_id: %s\n- branch: feature/died-x\n' "$state" > "$CASE_ROOT/.supervisor/state.md"
-    if [ "$ghrc" = 0 ]; then printf '0\tpr list --head feature/died-x *\t[{"url":"%s"}]\n' "$opr" >> "$CASE_GH"
+    if [ "$ghrc" = 0 ]; then printf '0\tpr list --head feature/died-x *\t[{"url":"%s","state":"OPEN"}]\n' "$opr" >> "$CASE_GH"
     else printf '1\tpr list --head feature/died-x *\t\n' >> "$CASE_GH"; fi
     if [ -n "$recorded" ]; then
       awk -v l="- 2026-10-01T00:00:00Z ran /autonomous → PR $recorded (another item)" '{ print } $0 == "## Progress" { print l }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
@@ -2099,10 +2099,104 @@ leg_fresh_state_stale() {
     if [ "$stamp" = old ] || [ "$ghrc" != 0 ] || [ "$recorded" = "$opr" ] || [ "$stub" = garbage ]; then left=0; else left=1; fi
     f_call "$drv" --result "{${rep}\"status_reason\":\"phase_died\",\"no_pr_why\":\"phase-wait: died — no result line since the last launch\"}"
     rm -f "$CASE_BIN/stat"
-    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && { [ "$own" = 1 ] || ! grep -qv ' phase=driver$' < <(grep "session_id $state " "$CASE_RF"); } \
-      && if [ "$left" = 1 ]; then grep -qF -- "no PR: phase_died (phase-wait: died — no result line since the last launch; the phase left PR $opr open on feature/died-x — not drained" "$CASE_RF"; else ! grep -q 'the phase left PR' "$CASE_RF"; fi \
+    # a fresh state.md's open PR is ADOPTED (## Current, the ran line, the owned drain); otherwise the no-PR line
+    [ "$NC_RC" = 0 ] && { [ "$own" = 1 ] || ! grep -qv ' phase=driver$' < <(grep "session_id $state " "$CASE_RF"); } \
+      && if [ "$left" = 1 ]; then grep -qF -- "ran /autonomous → PR $opr (phase_died — adopted: the Supervisor phase opened this PR on feature/died-x, reads OPEN, then died with no SUPERVISOR_RESULT; phase-wait: died — no result line since the last launch)" "$CASE_RF" \
+           && ! grep -q 'no PR: phase_died' "$CASE_RF" && f_spawn_ok "$NC_OUT" drain drain
+         else grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && ! grep -q 'adopted' "$CASE_RF"; fi \
       && if [ -n "$want" ]; then grep -qE -- "^- [0-9TZ:-]+ $(printf '%s' "$want" | sed 's/[().]/\\&/g')\$" "$CASE_RF"; else ! grep -q 'phase=supervisor' "$CASE_RF"; fi \
       || { LEG_MSG="$c: exit $NC_RC ${NC_ERR:0:160}; ## Progress: $(grep 'session_id\|no PR' "$CASE_RF" | tr '\n' '|' | head -c 400)"; return 1; }
+  done
+  return 0
+}
+# leg_fresh_died_adopt <driver> — a Supervisor phase that opened its PR and then died (phase_died, no SUPERVISOR_RESULT)
+# never leaves the item to a re-plan. Live (the RUN report): the PR on the fresh state.md's branch is recorded in
+# ## Current through current-set and adopted — OPEN ⇒ this pass's ONE owned drain spawn (a bare call re-prints it,
+# nothing written); MERGED ⇒ SYNC's closeout and the check-off, no drain; no PR on the branch ⇒ the no-PR line and
+# done/stopped, ## Current pr: null, as before. Resume: a run file an older driver wrote (the no-PR phase_died line
+# naming `the phase left PR <url> open on <branch>`, ## Current pr: null) — --resume's RECONCILE adopts the PR and
+# reconciles it: OPEN ⇒ the owned drain spawn, never a second picked line or a Launch Pad spawn; MERGED ⇒ the closeout
+# checks it off and PICK moves to the NEXT item
+f_died_supervisor() { # <driver> — a fresh --start run up to the Supervisor phase spawn, state.md rewritten by "the phase"
+  local lp='LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: PASS\n'
+  # shellcheck disable=SC2059
+  f_plan_case "$1" "$(printf "$lp" .supervisor/jobs/pending/r.md)" $'# Item\n\n## Task\nx\n' .supervisor/jobs/pending/r.md $'# Brief\n\n## Task\nx\n'
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor || return 1
+  printf -- '- session_id: sup-died-1\n- branch: feature/died-x\n' > "$CASE_ROOT/.supervisor/state.md"
+}
+f_seamed_call() { # <seams file> <driver> <args…> — f_call with a seam file (the closeout output seam)
+  local se="$1" drv="$2"; shift 2
+  NC_OUT="$(NS_FRESH=1 NS_REAL_LOCK=1 in_case "$drv" "$se" bash "$drv" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
+}
+leg_fresh_died_adopt() {
+  local drv="$1" c item opr=https://github.com/vikashruhilgit/loomwright/pull/950 sha=4444444444444444444444444444444444444444 before
+  local died='{"status_reason":"phase_died","no_pr_why":"phase-wait: died — no result line since the last launch","session_id":"sup-died-1"}'
+  local legacy="; the phase left PR $opr open on feature/died-x — not drained (it wrote no SUPERVISOR_RESULT), left for the owner"
+  for c in open merged none legacy-open legacy-merged; do
+    f_died_supervisor "$drv" || { LEG_MSG="$c: no Supervisor phase spawn (exit $NC_RC) ${NC_ERR:0:160}"; return 1; }
+    item="$(np_item)"
+    printf 'closeout: synced — main at origin/main\n' > "$CASE_DIR/co.out"
+    printf 'NEXT_STEP_CLOSEOUT_OUT=%s\n' "$CASE_DIR/co.out" > "$CASE_DIR/seams.co"
+    case "$c" in
+      open) printf '0\tpr list --head feature/died-x *\t[{"url":"%s","state":"OPEN"}]\n0\tpr view %s*\t{"headRefOid":"%s","state":"OPEN"}\n' "$opr" "$opr" "$sha" >> "$CASE_GH" ;;
+      # a closed-unmerged PR listed first is nobody's: the MERGED one is the phase's
+      merged) printf '0\tpr list --head feature/died-x *\t[{"url":"%s/1","state":"CLOSED"},{"url":"%s","state":"MERGED"}]\n' "${opr%/*}" "$opr" >> "$CASE_GH" ;;
+      *) printf '0\tpr list --head feature/died-x *\t[]\n' >> "$CASE_GH" ;;
+    esac
+    f_seamed_call "$CASE_DIR/seams.co" "$drv" "$CASE_RF" --result "$died"
+    case "$c" in
+      open)
+        [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" drain drain \
+          && printf '%s' "$NC_OUT" | jq -e --arg p "$opr" --arg h "$sha" '.what == "owned drain" and .head_sha == $h and .invocation == ("/review-pr " + $p + " --until-mergeable --no-auto-postmortem")' >/dev/null 2>&1 \
+          && grep -qxF -- "- item: $item | status: running | pr: $opr | branch: feature/died-x" "$CASE_RF" \
+          && grep -qF -- "ran /autonomous → PR $opr (phase_died — adopted: the Supervisor phase opened this PR on feature/died-x, reads OPEN, then died" "$CASE_RF" \
+          && ! grep -q 'no PR: phase_died' "$CASE_RF" && [ "$(grep -c " picked $item\$" "$CASE_RF")" = 1 ] \
+          || { LEG_MSG="open: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}; $(sed -n '/^## Current/,$p' "$CASE_RF" | tr '\n' '|' | head -c 600)"; return 1; }
+        before="$NC_OUT"; cp "$CASE_RF" "$CASE_DIR/before.md"
+        f_call "$drv" --session-id coord-1
+        [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$before" ] && cmp -s "$CASE_DIR/before.md" "$CASE_RF" \
+          || { LEG_MSG="open: the bare call ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; } ;;
+      merged)
+        [ "$NC_RC" = 0 ] && grep -qxF -- "- [x] $item" "$CASE_RF" && grep -qE -- "^- [0-9TZ:-]+ checked off $item — merged $opr; remaining: " "$CASE_RF" \
+          && grep -qF -- "ran /autonomous → PR $opr (phase_died — adopted: the Supervisor phase opened this PR on feature/died-x, reads MERGED" "$CASE_RF" \
+          && ! grep -q 'owned drain started' "$CASE_RF" && ! printf '%s' "$NC_OUT" | jq -e '.phase == "drain"' >/dev/null 2>&1 \
+          || { LEG_MSG="merged: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}; $(sed -n '/^## Queue/,$p' "$CASE_RF" | tr '\n' '|' | head -c 700)"; return 1; } ;;
+      *)
+        [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+          && grep -qE -- "^- [0-9TZ:-]+ ran /autonomous — no PR: phase_died \\(phase-wait: died — no result line since the last launch\\)\$" "$CASE_RF" \
+          && grep -q "^- item: .* | status: running | pr: null" "$CASE_RF" && ! grep -q 'adopted' "$CASE_RF" \
+          || { LEG_MSG="$c: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}"; return 1; } ;;
+    esac
+    case "$c" in legacy-*) ;; *) continue ;; esac
+    # what an older driver wrote: the open PR named on the no-PR line, ## Current pr: null
+    NS_L="$legacy" awk '{ if (index($0, "ran /autonomous — no PR: phase_died (") && sub(/\)$/, "")) $0 = $0 ENVIRON["NS_L"] ")"; print }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+    grep -qF -- "$legacy)" "$CASE_RF" || { LEG_MSG="$c: the legacy line was not seeded"; return 1; }
+    printf '0\tpr list --state open *\t[]\n' >> "$CASE_GH"
+    if [ "$c" = legacy-open ]; then
+      printf '0\tpr view %s --json state,mergedAt\t{"state":"OPEN","mergedAt":null}\n0\tpr view %s*\t{"headRefOid":"%s","state":"OPEN"}\n' "$opr" "$opr" "$sha" >> "$CASE_GH"
+    else
+      printf '0\tauth status*\t\n0\tpr view %s --json state,mergedAt\t{"state":"MERGED","mergedAt":"2026-11-18T20:00:00Z"}\n0\tpr view %s --json headRefName,headRefOid\t{"headRefName":"feature/died-x","headRefOid":"%s"}\n' "$opr" "$opr" "$sha" >> "$CASE_GH"
+    fi
+    printf '0\tpr list *\t[]\n' >> "$CASE_GH"
+    # the REAL closeout here (no seam): its check-off and its ## Current reconcile are what the adoption unblocks
+    : > "$CASE_DIR/seams.none"
+    f_seamed_call "$CASE_DIR/seams.none" "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" --session-id coord-2
+    if [ "$c" = legacy-open ]; then
+      [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" drain drain && printf '%s' "$NC_OUT" | jq -e --arg p "$opr" '.invocation | startswith("/review-pr " + $p + " ")' >/dev/null 2>&1 \
+        && grep -qxF -- "- item: $item | status: running | pr: $opr | branch: feature/died-x" "$CASE_RF" \
+        && grep -qE -- "^- [0-9TZ:-]+ adopted PR $opr on feature/died-x — the phase_died line named it" "$CASE_RF" \
+        && [ "$(grep -c " picked $item\$" "$CASE_RF")" = 1 ] \
+        || { LEG_MSG="legacy-open --resume ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+    else
+      # the real closeout checks the row off AND reconciles ## Current to done (before the fix it skipped that:
+      # `## Current is <item> (null), not this item/PR`); the scratch has no base branch, so its sync / worktree
+      # steps are leftovers and the leftover gate asks — never a re-plan of this item
+      [ "$NC_RC" = 0 ] && grep -qxF -- "- [x] $item" "$CASE_RF" && grep -qE -- "^- [0-9TZ:-]+ adopted PR $opr on feature/died-x — " "$CASE_RF" \
+        && grep -qxF -- "- item: $item | status: done | pr: $opr | branch: feature/died-x" "$CASE_RF" && ! grep -q 'not this item/PR' "$CASE_RF" \
+        && [ "$(grep -c " picked $item\$" "$CASE_RF")" = 1 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER"' >/dev/null 2>&1 \
+        || { LEG_MSG="legacy-merged --resume ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}; $(sed -n '/^## Queue/,$p' "$CASE_RF" | tr '\n' '|' | head -c 700)"; return 1; }
+    fi
   done
   return 0
 }

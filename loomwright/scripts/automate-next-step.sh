@@ -1857,7 +1857,17 @@ ns_reconcile() {
   # no PR (a rate_limit park, a RUN that opened none): PICK re-picks the item — unless the owner stopped its plan
   # and its requirement has not changed since (ns_no_pr_stop_unchanged), which would re-run Launch Pad on the same input
   case "$PR" in http://*/pull/*|https://*/pull/*) ;; *)
-    local held
+    local held dl
+    # a Supervisor phase that died after opening its PR, recorded by a driver that did not adopt it (the no-PR
+    # phase_died line names `the phase left PR <url> open on <branch>`): adopt it now, then reconcile it as any
+    # in-flight PR — never a re-pick, whose fresh Launch Pad would open a second PR for the same item
+    if dl="$(ns_died_line_pr)"; then
+      ns_once once_rc_adopt ns_call_writer current-set "$RF" --item "$ITEM" --status running --pr "${dl%%"$TAB"*}" --branch "${dl#*"$TAB"}" --pause-reason null || return 1
+      ns_refresh
+      ns_once once_rc_adopt_line ns_progress "$(ns_ts) adopted PR $PR on $BRANCH — the phase_died line named it (the Supervisor phase opened it, then died with no SUPERVISOR_RESULT); reconciled as the in-flight PR, never re-planned" || return 1
+    fi
+  esac
+  case "$PR" in http://*/pull/*|https://*/pull/*) ;; *)
     if held="$(ns_no_pr_stop_unchanged)"; then
       ns_run_park reconcile no_pr_stop "$(ns_ts) parked no_pr_stop — ${held%%"$TAB"*}; requirement cksum ${held#*"$TAB"} (--resume changed nothing)" 1 \
         "$ITEM stays parked no_pr_stop (${held%%"$TAB"*}): its requirement is unchanged since the owner stopped it, so a re-pick would run Launch Pad on the same input. $(ns_no_pr_stop_next)"
@@ -1876,6 +1886,22 @@ ns_reconcile() {
       ns_release
       ns_emit_park reconcile "PR $PR of $ITEM reads $v (closed unmerged or vanished) — re-open or redo the work, or check the item off # skipped: / # abandoned: in ## Queue, then --resume" ;;
   esac
+}
+
+# ns_died_line_pr — "<url>\t<branch>" when this item's LAST `ran /autonomous` line (in its last `picked` segment) is a
+# no-PR phase_died line naming the PR the dead phase left open (`the phase left PR <url> open on <branch> — `), else
+# exit 1. Only that exact annotation counts: it was written after the branch lookup and the already-recorded guard
+ns_died_line_pr() {
+  local l re='the phase left PR (https?://[^[:space:]|]+/pull/[0-9]+) open on ([^[:space:]|]{1,200}) — '
+  l="$(ns_section '## Progress' | NS_I="${ITEM#./}" awk '
+    BEGIN { i = ENVIRON["NS_I"] }
+    { x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) { p = substr(x, 8); sub(/[ ;,].*/, "", p); sub(/^\.\//, "", p); cur = (p == i); last = ""; next }
+      if (cur && index(x, "ran /autonomous") == 1) last = x }
+    END { print last }')"
+  case "$l" in "ran /autonomous — no PR: phase_died ("*) ;; *) return 1 ;; esac
+  [[ "$l" =~ $re ]] || return 1
+  printf '%s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 }
 
 # step: reconcile-status — on a resume, the dry-run requirement reconcile (§4 step 7): one line per plan row,
@@ -2411,8 +2437,22 @@ ns_run_record() {
   else
     sr="$(rj "$r" status_reason)"; why="$(rj "$r" no_pr_why)"
     if [ "$(st run_fresh)" = true ] && [ "$sr" = phase_died ]; then
-      local opr; opr="$(ns_died_open_pr)"
-      [ -n "$opr" ] && why="$why; the phase left PR ${opr%%"$TAB"*} open on ${opr#*"$TAB"} — not drained (it wrote no SUPERVISOR_RESULT), left for the owner"
+      # the phase opened a PR and then died before its SUPERVISOR_RESULT: the PR is this item's, so the pass ADOPTS
+      # it — current-set records it in ## Current (before the ran line, as for a reported PR), an OPEN one goes on
+      # to this pass's ONE owned drain, a MERGED one to SYNC (closeout --no-trail, then the check-off). Never a
+      # re-plan: a re-pick would run a fresh Launch Pad and open a second PR for the same item. The lookup is
+      # cached (died_pr) — once ## Progress names the PR, ns_died_pr's already-recorded guard would hide it
+      local dpr dst dbr
+      dpr="$(st died_pr)"
+      if [ -z "$dpr" ]; then dpr="$(ns_died_pr)"; [ -n "$dpr" ] && st_set died_pr "$dpr"; fi
+      if [ -n "$dpr" ]; then
+        dst="${dpr##*"$TAB"}"; dpr="${dpr%"$TAB"*}"; dbr="${dpr#*"$TAB"}"; dpr="${dpr%%"$TAB"*}"
+        ns_once once_rc_current ns_call_writer current-set "$RF" --item "$ITEM" --status running --pr "$dpr" --branch "$dbr" || return 1
+        ns_refresh; st_set pr "$PR"
+        ns_once once_rc_ran ns_progress "$(ns_ts) ran /autonomous → PR $dpr (phase_died — adopted: the Supervisor phase opened this PR on $dbr, reads $dst, then died with no SUPERVISOR_RESULT; ${why:-no reason reported})" || return 1
+        [ "$dst" = MERGED ] && st_set adopted_merged true
+        NEXT=rate-limit; return 0
+      fi
     fi
     # a checkpoint's resume task, from the reported SUPERVISOR_RESULT itself (status checkpoint + task_id) when the
     # one-line why does not already name it: ns_checkpoint_task keys a re-pick on this line, and under
@@ -2429,22 +2469,26 @@ ns_run_record() {
   fi
   NEXT=rate-limit
 }
-# ns_died_open_pr — "<url>\t<branch>" of an OPEN PR a Supervisor phase that died (no SUPERVISOR_RESULT) left on
-# its feature branch, else empty. The branch is read from .supervisor/state.md only when THIS pass's phase rewrote
-# it (ns_state_md_fresh — a stale file names a previous run's branch); a PR this run file already records (another
-# item's) is never this phase's. Read-only through the driver's gh seam (LOOMWRIGHT_GH_BIN); a gh failure or no
-# branch ⇒ empty — the no-PR line then reads as it always did (an annotation, never a gate).
-ns_died_open_pr() {
-  local br url
+# ns_died_pr — "<url>\t<branch>\t<OPEN|MERGED>" of the PR a Supervisor phase that died (no SUPERVISOR_RESULT) left on
+# its feature branch, else empty: the branch's OPEN PR first, else its MERGED one (a closed-unmerged PR is nobody's
+# to adopt). The branch is read from .supervisor/state.md only when THIS pass's phase rewrote it (ns_state_md_fresh
+# — a stale file names a previous run's branch); a PR this run file already records (another item's) is never this
+# phase's. Read-only through the driver's gh seam (LOOMWRIGHT_GH_BIN); a gh failure or no branch ⇒ empty — the
+# no-PR line then reads as it always did (fail SAFE toward the owner: nothing adopted, the loop stops)
+ns_died_pr() {
+  local br row url st
   ns_state_md_fresh || return 0
   br="$(sed -n 's/^- branch:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"
   [[ "$br" =~ ^[^[:space:]|]{1,200}$ ]] || return 0
-  url="$(ns_gh pr list --head "$br" --state open --json url --limit 1 | "$JQ" -r '.[0].url // empty' 2>/dev/null)"
+  row="$(ns_gh pr list --head "$br" --state all --json url,state --limit 20 \
+      | "$JQ" -r '([.[] | select(.state == "OPEN")] + [.[] | select(.state == "MERGED")]) | .[0] // empty | "\(.url)\t\(.state)"' 2>/dev/null)"
+  url="${row%%"$TAB"*}"; st="${row#*"$TAB"}"
   ns_pr_ok "$url" || return 0
+  case "$st" in OPEN|MERGED) ;; *) return 0 ;; esac
   # an exact-URL match: `PR <url>` NOT followed by a digit (…/pull/1 never matches a recorded …/pull/12)
   NS_U="PR $url" awk 'BEGIN { u = ENVIRON["NS_U"] } { s = $0; while ((i = index(s, u)) > 0) { c = substr(s, i + length(u), 1)
       if (c !~ /[0-9]/) { f = 1; exit } s = substr(s, i + 1) } } END { exit !f }' "$RF" 2>/dev/null && return 0
-  printf '%s\t%s' "$url" "$br"
+  printf '%s\t%s\t%s' "$url" "$br" "$st"
 }
 
 # ================================================================================================
@@ -2530,7 +2574,11 @@ EOF
     ns_emit_park rate-limit "rate-limited at the end of RUN — parked rate_limit; --resume once the window clears"
     return 0
   fi
-  if [ -n "$PR" ] && [ "$PR" != null ]; then NEXT=drain; return 0; fi
+  if [ -n "$PR" ] && [ "$PR" != null ]; then
+    # a phase_died pass adopted a PR that already MERGED: nothing to drain — SYNC closes it out and checks it off
+    if [ "$(st adopted_merged)" = true ]; then NEXT=sync; else NEXT=drain; fi
+    return 0
+  fi
   local nsr ncl nl
   nsr="$(st nopr_reason)"; ncl="$(ns_no_pr_class "$nsr")"
   if [ -n "$ncl" ]; then
