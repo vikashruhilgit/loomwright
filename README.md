@@ -198,9 +198,9 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
 | **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (opt-in one-line run report; never overwrites a status line you already have), `base-branch` (view / pin the base branch), `providers` (route read and write seats to another AI CLI, per-repo consent); `/setup --help` lists them | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|retract\|audit\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/retract/audit/check (`audit` re-validates the standing store read-only) | Capturing durable team conventions |
-| **Propose** (command) | `/propose` · `/propose --domain` | Evidence-carrying candidate work items under `.supervisor/requirements/proposed/` from one basis per invocation: the churn ledger (inward, local, zero external calls); `--from-verify <run_id>`, one `/verify` run's evidence drafted into per-FAIL requirement files; `--from-scorecard`, an enhance-or-retire draft per feature the feature scorecard flags `review:`; or, with `--domain`, the project's domain — what competent apps in it do that this one does not, from `.agent/product.json` plus fetched sources — proposes, never queues | Deciding what to work on next   |
+| **Propose** (command) | `/propose` · `/propose --domain` | Evidence-carrying candidate work items under `.supervisor/requirements/proposed/` from one basis per invocation: the churn ledger (inward, local, zero external calls); `--from-verify <run_dir>`, one Selvedge run's `verdict.json` drafted into per-FAIL requirement files; `--from-scorecard`, an enhance-or-retire draft per feature the feature scorecard flags `review:`; or, with `--domain`, the project's domain — what competent apps in it do that this one does not, from `.agent/product.json` plus fetched sources — proposes, never queues | Deciding what to work on next   |
 
-> `/qa-strategist`, `/qa-executor` and `/verify` were removed — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](loomwright/docs/rationale/qa-split.md).
+> Acceptance verification and QA live in the Selvedge plugin — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](loomwright/docs/rationale/qa-split.md).
 
 
 ### Internal Agents
@@ -644,14 +644,6 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
 
 - **Main branch protection:** The `/commit` skill refuses commits on main/master without explicit flag.
 - **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
-
-### QA System (Level 1)
-
-- **Requires Playwright config:** `playwright.config.ts` must exist and app must be running
-- **Crawl limits:** Max 30 pages, depth 3, same-origin only
-- **Single debate round:** Strategist audits once (multi-round is Level 2+)
-- **No state modeling or fuzz:** L1 tests happy paths + basic errors only
-- **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral
 
 ---
 

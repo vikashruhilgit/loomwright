@@ -132,7 +132,7 @@ A fifth pass (or a third lens) has to name an information advantage neither row 
 
 ## Structured Outputs
 
-Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `loomwright/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`. Plan Reviewer's conditional **Criterion 15 (Canonical-List / Source-of-Truth Verification)** — fired only when a brief asserts a canonical-source claim and cites a source — emits findings under the additive free-form `canonical_source` PLAN_REVIEW_RESULT issue category (no `schema_version` bump; the `executable_acceptance` precedent).
+Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `PLAN_REVIEW_RESULT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `loomwright/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`. Plan Reviewer's conditional **Criterion 15 (Canonical-List / Source-of-Truth Verification)** — fired only when a brief asserts a canonical-source claim and cites a source — emits findings under the additive free-form `canonical_source` PLAN_REVIEW_RESULT issue category (no `schema_version` bump; the `executable_acceptance` precedent).
 
 **Two enforcement paths, depending on where the agent runs:**
 
@@ -454,15 +454,13 @@ Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-na
 - Temporary debugging notes
 - Information already in CLAUDE.md
 
-**Agents with persistent memory (6 total):**
+**Agents with persistent memory** (each agent's `memory: project` frontmatter is authoritative):
 | Agent | What It Remembers |
 |-------|-------------------|
 | Launch Pad | Commonly impacted files, project patterns |
 | Code Reviewer | Review patterns, recurring issues, codebase conventions |
 | Red Team Reviewer | Past vulnerabilities, attack patterns, what was already audited |
 | Product Owner | Domain context, terminology, stakeholder preferences |
-| QA Strategist | Per-project risk patterns, which routes tend to break |
-| QA Executor | Flaky patterns, common failures, successful test templates |
 
 ### Plugin Hooks (Quality Gates)
 
@@ -557,8 +555,6 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 | **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown; review gate policy fixed at every threshold (see `agents/orchestrator.md` §"Review Gate Policy") |
 | **Code Reviewer** | CLAUDE.md, code files, Beads task | Beads comments (review decisions) | Code quality, security, PASS/FAIL/NEEDS_HUMAN |
 | **Red Team Reviewer** | CLAUDE.md, code files, Context7 docs | Audit report | Adversarial review, find production failures |
-| **QA Strategist** | Source code, discovery data, .qa-summary.md | Risk classification, STRATEGIST_VERDICT | Risk-based test strategy and audit |
-| **QA Executor** | Source code, Playwright config, running app | Tests, discovery map, .qa-summary.md, QA_RESULT | Discovery, test generation, execution |
 
 ---
 
@@ -694,45 +690,17 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Never merge branches (Supervisor's FINALIZE handles merges)
   - Tool call budget: 60 calls max, checkpoint at boundaries
 
-#### **QA Strategist** (Risk Classification Agent)
-- **Objective:** Plan risk-based test strategy and audit QA Executor results
-- **Reads:** Source code (routes, controllers), discovery data, .qa-summary.md
-- **Writes:** Risk classification, coverage targets, STRATEGIST_VERDICT
-- **Responsibilities:**
-  - Discover routes/endpoints via static analysis
-  - Classify risk levels (HIGH/MEDIUM/LOW) based on auth, mutation, payment patterns
-  - Set coverage targets per risk level
-  - Audit QA Executor results and emit verdict (approved/rejected)
-- **Safety:**
-  - Read-only — never writes files, never runs tests
-  - Verdict is final on conflict (defaults to deeper testing)
-
-#### **QA Executor** (Discovery + Test Generation Agent)
-- **Objective:** Discover app, generate and run Playwright tests, orchestrate debate loop
-- **Reads:** Source code, Playwright config, running application
-- **Writes:** Discovery map, test files, .qa-summary.md, QA_RESULT
-- **Responsibilities:**
-  - Detect target URL and run 4-phase discovery engine
-  - Generate risk-based Playwright tests
-  - Execute tests and track coverage
-  - Report bugs and orchestrate Strategist audit
-- **Safety:**
-  - Playwright config required, app must be running
-  - No destructive actions during discovery (no form submissions, no delete/logout clicks)
-  - No production testing
-  - Budget tracking: 60 tool calls max
-
 ---
 
 ### Plugin Hooks (Quality Gates)
 
-All hooks are centralized in `hooks.json`, which is authoritative for both the wiring and the count — this guide deliberately restates neither, per §"Claim Duplication Rule" above. (v15.17.0 converted five entries from `type: prompt` to `type: command` without adding or removing any; the sixth, `code-reviewer`, followed after the 2026-09-27 SubagentHandback probe, so no `SubagentStop` matcher carries a prompt any more.) The kinds wired today: `SubagentStop` validators (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, **launch-pad-runner** — all `type: command` scripts) + 3 telemetry + 1 webhook + 1 progress-event `type: command` hooks (**`emit-progress-event.sh`**, v15.16.0 — appends a `subtask_complete` JSONL event under the existing `worker` `SubagentStop` matcher, consumed by `build-state.sh` to project `.supervisor/state.md`); `Stop`; `TaskCompleted`; `StopFailure`; **`PreToolUse[AskUserQuestion]`**; **`Notification`**; the recovery-context **`SessionStart`**; **`PostToolUse[Bash]`** × 3 (the v14.34.0 `gh pr create` until-mergeable review-drain backstop, `hook-dispatch-on-pr-create.sh`, PLUS the PR #116 review's **`reproject-state-on-terminal.sh`** — a second entry on the same matcher that mechanically re-projects `.supervisor/state.md`'s terminal status once `session_end` lands in the session log — PLUS the v15.66.0 worktree observer **`worktree-audit.sh record`**, a third entry on the same matcher that records the plugin's own `git worktree add/remove/prune` calls, replacing the removed `WorktreeCreate`/`WorktreeRemove` hooks); and the v14.47.0 per-project OTel-labeling **`SessionStart`** (`set-otel-resource-attrs.sh`). CODE_REVIEW_RESULT is validated at `schema_version: 3`. **The authoritative, always-current hook table lives in `loomwright/docs/HOOKS.md` §"Hook Table"** (relocated from the root `CLAUDE.md` in the v15.21.0 diet) — this guide deliberately does not duplicate it, because that duplicate silently drifted from v10 (9 hooks) to v14 (21 hooks).
+All hooks are centralized in `hooks.json`, which is authoritative for both the wiring and the count — this guide deliberately restates neither, per §"Claim Duplication Rule" above. (v15.17.0 converted five entries from `type: prompt` to `type: command` without adding or removing any; the sixth, `code-reviewer`, followed after the 2026-09-27 SubagentHandback probe, so no `SubagentStop` matcher carries a prompt any more.) The kinds wired today: `SubagentStop` validators (worker, execute-manager, code-reviewer, supervisor-runner, plan-reviewer, **launch-pad-runner** — all `type: command` scripts) + telemetry, webhook and progress-event `type: command` hooks (**`emit-progress-event.sh`**, v15.16.0 — appends a `subtask_complete` JSONL event under the existing `worker` `SubagentStop` matcher, consumed by `build-state.sh` to project `.supervisor/state.md`); `Stop`; `TaskCompleted`; `StopFailure`; **`PreToolUse[AskUserQuestion]`**; **`Notification`**; the recovery-context **`SessionStart`**; **`PostToolUse[Bash]`** × 3 (the v14.34.0 `gh pr create` until-mergeable review-drain backstop, `hook-dispatch-on-pr-create.sh`, PLUS the PR #116 review's **`reproject-state-on-terminal.sh`** — a second entry on the same matcher that mechanically re-projects `.supervisor/state.md`'s terminal status once `session_end` lands in the session log — PLUS the v15.66.0 worktree observer **`worktree-audit.sh record`**, a third entry on the same matcher that records the plugin's own `git worktree add/remove/prune` calls, replacing the removed `WorktreeCreate`/`WorktreeRemove` hooks); and the v14.47.0 per-project OTel-labeling **`SessionStart`** (`set-otel-resource-attrs.sh`). CODE_REVIEW_RESULT is validated at `schema_version: 3`. **The authoritative, always-current hook table lives in `loomwright/docs/HOOKS.md` §"Hook Table"** (relocated from the root `CLAUDE.md` in the v15.21.0 diet) — this guide deliberately does not duplicate it, because that duplicate silently drifted from v10 (9 hooks) to v14 (21 hooks).
 
 **Plugin restriction:** Claude Code ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Code Reviewer uses `disallowedTools: Write, Edit, NotebookEdit` to enforce read-only behavior since `permissionMode: plan` is ignored for plugins.
 
 ---
 
-### Persistent Memory (6 Agents)
+### Persistent Memory
 
 | Agent | What It Remembers | Storage |
 |-------|-------------------|---------|
@@ -740,8 +708,6 @@ All hooks are centralized in `hooks.json`, which is authoritative for both the w
 | Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/...code-reviewer/` |
 | Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/...red-team-reviewer/` |
 | Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/...product-owner/` |
-| QA Strategist | Per-project risk patterns, which routes tend to break | `.claude/agent-memory/...qa-strategist/` |
-| QA Executor | Flaky patterns, common failures, successful test templates | `.claude/agent-memory/...qa-executor/` |
 
 ---
 

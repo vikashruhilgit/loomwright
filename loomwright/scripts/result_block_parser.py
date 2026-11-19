@@ -23,7 +23,7 @@ Behaviour-compatible with, and lifted from, `validate-launch-pad-result.py`:
      emission shapes are supported, because the agents genuinely use both:
        (a) YAML form   `WORKER_RESULT:` + indented body
                        (docs/RESULT_SCHEMAS.md, execute-manager, supervisor,
-                       plan-reviewer, qa-executor)
+                       plan-reviewer)
        (b) Markdown    `## WORKER_RESULT` + `- key: value` bullets
            bullet form (agents/worker.md's Output Format)
      A blank line INSIDE a block does not truncate it (see find_last_block).
@@ -791,7 +791,7 @@ def strip_comment(raw):
 
         EXECUTE_CHECKPOINT  reason:  # ran out of budget      (rule 3)
         SUPERVISOR (failed) error:   # base branch mismatch   (rule 10)
-        QA_RESULT           summary: # nothing to report       (rule 3)
+        (removed QA block)  summary: # nothing to report       (rule 3)
 
     A fourth, in SEQUENCE position, is why the fix lives HERE and not only in
     _parse_mapping's key-line branch: `files_modified:` / `- # nothing yet`
@@ -1217,7 +1217,7 @@ def _parse_mapping(toks, i, indent, errors):
         # them, while a null does not:
         #     EXECUTE_CHECKPOINT  reason:  # ran out of budget    -> ok:true
         #     SUPERVISOR (failed) error:   # base branch mismatch -> ok:true
-        #     QA_RESULT           summary: # nothing to report     -> ok:true
+        #     (removed QA block)  summary: # nothing to report     -> ok:true
         # In each case the identical block written with an explicit `null`
         # correctly fires the rule (3, 10 and 3 respectively). All six are
         # committed regression cases.

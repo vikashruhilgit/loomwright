@@ -19,10 +19,9 @@
 #   --event-type gate                (NEW in v14.0.0 — autonomous-loop gates)
 #     Stdin is NOT read. Fields are taken from CLI flags:
 #       --gate-type <phase6_save|rubric|no_rubric|adjudication>   (required;
-#         additional values exist beyond this original four — e.g. verify's
-#         verify_needs_auth/verify_first_fail/verify_run_end, passed by
-#         verify-helpers.sh — this list is illustrative, not exhaustive; see
-#         docs/TELEMETRY.md for the authoritative full list)
+#         additional values exist beyond this original four — this list is
+#         illustrative, not exhaustive; see docs/TELEMETRY.md for the
+#         authoritative full list)
 #       --iteration <N>                                            (optional)
 #       --session-id <id>                                          (optional)
 #       --context <freeform string>                                (optional)
@@ -372,7 +371,7 @@ if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; the
       if [ -n "$(find "$sf" -mmin -120 2>/dev/null)" ]; then PLUGIN_CONTEXT=1; break; fi
     done
     if [ "$PLUGIN_CONTEXT" -eq 0 ] && [ -n "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ]; then
-      if tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
+      if tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
         PLUGIN_CONTEXT=1
       fi
     fi

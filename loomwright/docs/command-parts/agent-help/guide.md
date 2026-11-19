@@ -130,7 +130,7 @@ The plugin centralizes its hooks in `hooks/hooks.json`, which automatically enfo
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
-| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT). All of these are `type: command` validator scripts (five since v15.17.0; `code-reviewer`'s since the 2026-09-27 SubagentHandback probe). Plus 3 telemetry + 1 webhook + 1 progress-event `type: command` hooks |
+| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT). All of these are `type: command` validator scripts (five since v15.17.0; `code-reviewer`'s since the 2026-09-27 SubagentHandback probe). Plus telemetry, webhook and progress-event `type: command` hooks |
 | **PreToolUse (AskUserQuestion)** | Plugin about to block on a user question | Desktop banner (`notify-desktop.sh`) + paused-event webhook (v14.1.0) |
 | **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
 | **PostToolUse (Bash)** | A Bash tool call completes (e.g. `gh pr create`) | Backstops the until-mergeable review drain on PR creation (`hook-dispatch-on-pr-create.sh`); session-scope gated, fail-safe (v14.34.0). PLUS a second entry (`reproject-state-on-terminal.sh`, PR #116 review round) that mechanically re-invokes `build-state.sh` once `session_end` lands in the session log. PLUS a third leaf on the existing Bash matcher (v15.66.0): the worktree observer `worktree-audit.sh record` — records worktrees added through the Bash tool in a repo the plugin has run in, and its read-only `report` lists the ones never seen removed that git still lists |
@@ -264,9 +264,6 @@ loomwright/              # Nested plugin root
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md          # Adversarial auditor
 │   ├── review-pr.md                  # Standalone PR review-and-heal loop (never auto-merges)
-│   ├── qa-strategist.md              # Risk-based QA strategy
-│   ├── qa-executor.md                # Automated QA testing
-│   ├── verify.md                     # Walk a ticket through the running app (advisory)
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
 │   ├── insights.md                   # Local Obsidian-friendly insights dashboard from session logs
@@ -287,9 +284,7 @@ loomwright/              # Nested plugin root
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md
-│   ├── review-pr.md                  # Standalone PR review-and-heal runner
-│   ├── qa-strategist.md
-│   └── qa-executor.md
+│   └── review-pr.md                  # Standalone PR review-and-heal runner
 ├── hooks/                            # Plugin quality gate hooks
 │   └── hooks.json                    # SubagentStop + TaskCompleted validation
 ├── docs/                             # Architecture + schemas
@@ -297,7 +292,6 @@ loomwright/              # Nested plugin root
 │   ├── FAILURE_ESCALATION.md
 │   ├── ARCHITECTURE_CONTRACTS.md
 │   ├── ARCHITECTURE.md
-│   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
 └── skills/                           # Skill files (see SKILLS_INDEX.md; tech-stack skills moved to stackpack@atelier)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
@@ -401,13 +395,6 @@ These are Claude Code slash commands, so you can type them directly:
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
 | **Red Team Reviewer** | Attack work | Pre-launch, security review | Target scope | Fatal issues + fixes |
-
-### QA Pipeline (Test Automatically)
-
-| Agent | Purpose | When | Input | Output |
-|-------|---------|------|-------|--------|
-| **QA Strategist** | Plan test strategy | Before QA, or audit after | Source code or .qa-summary.md | Risk classification + STRATEGIST_VERDICT |
-| **QA Executor** | Run automated QA | After implementation | Running app + Playwright config | QA_RESULT + test files |
 
 ---
 

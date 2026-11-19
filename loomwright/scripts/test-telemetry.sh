@@ -217,7 +217,6 @@ run_core_dry_run() {
 # supervisor-pass-lastmsg.json         |  3   |       4       |       5         (v14.2.1: result carried in REAL `last_assistant_message` field, not `result_block`)
 # supervisor-escalated.json            |  3   |       4       |       0
 # supervisor-escalated-yaml.json       |  3   |       4       |       0         (heal-iter-2: real agent YAML mapping form, not bullet form)
-# qa-failed.json                       |  3   |       4       |       0
 # secrets-bait-ghp.json                |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
 # secrets-bait-email.json              |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
 # secrets-bait-lastmsg-ghp.json        |  2   |       2       |       2         (v14.2.1: secret in `last_assistant_message` still fails closed)
@@ -258,9 +257,6 @@ expected_would_exit() {
     code-review-shuffled.json:none)            printf '3\n' ;;
     code-review-shuffled.json:allow_no_repo)   printf '4\n' ;;
     code-review-shuffled.json:allow_with_repo) printf '0\n' ;;
-    qa-failed.json:none)                 printf '3\n' ;;
-    qa-failed.json:allow_no_repo)        printf '4\n' ;;
-    qa-failed.json:allow_with_repo)      printf '0\n' ;;
     *)
       # Unknown fixture — caller will note skip rather than assert.
       printf 'UNKNOWN\n'

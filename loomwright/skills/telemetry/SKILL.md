@@ -1,6 +1,6 @@
 ---
 name: telemetry
-description: Opt-in GitHub Issues telemetry for loomwright. Enables longitudinal analysis of agent quality by emitting structured, scored, redacted issues from `SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, and `QA_RESULT` blocks, plus plugin script steps that fail or warn (`scripts/emit-script-event.sh`). Use when a project wants to feed run outcomes back into the maintainer repo (or its own analytics repo) without standing up a backend.
+description: Opt-in GitHub Issues telemetry for loomwright. Enables longitudinal analysis of agent quality by emitting structured, scored, redacted issues from `SUPERVISOR_RESULT` and `CODE_REVIEW_RESULT` blocks, plus plugin script steps that fail or warn (`scripts/emit-script-event.sh`). Use when a project wants to feed run outcomes back into the maintainer repo (or its own analytics repo) without standing up a backend.
 version: "1.2.0"
 lastUpdated: "2026-10"
 ---
@@ -21,7 +21,7 @@ Full design: `loomwright/docs/TELEMETRY.md`.
 - A project has installed the loomwright plugin and wants to
   contribute anonymised run signal to a chosen repo (the maintainer
   repo, or a private analytics repo).
-- A maintainer wants to identify weak agents (`agent:qa-weak`,
+- A maintainer wants to identify weak agents (e.g.
   `agent:planner-weak`) across many runs.
 - A team wants to track score trends per `task:{agent-type}` after
   prompt or skill changes.
@@ -36,8 +36,8 @@ Full design: `loomwright/docs/TELEMETRY.md`.
   `telemetry pending` notice. A repo-relative
   `.supervisor/telemetry-consent.json` can at most *request* consent —
   it can never grant it on its own; see "Target repo" below.
-- The user wants to send arbitrary data. Only the three result blocks
-  (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`) are
+- The user wants to send arbitrary data. Only the result blocks
+  `SUPERVISOR_RESULT` and `CODE_REVIEW_RESULT` are
   recognised; everything else is `unknown_payload_skipped` (exit 5).
 - The host project is the user's own application repo and no explicit
   target has been chosen. There is **no `origin` fallback** — see
@@ -86,7 +86,7 @@ To stop sending: `/telemetry disable`. To inspect state:
 - **Plugin facts only, never project content** — for any source repo,
   private or public: agent type, schema, status enum, score, per-severity
   counts, tool names, plugin version. Issues Detected lines are fixed
-  templates (`[HIGH] new finding`, `failing_tests=2`), never the finding text
+  templates (`[HIGH] new finding`, `subtask_failed`), never the finding text
   (`docs/TELEMETRY.md` §"Privacy whitelist").
 - Labels (on open): `telemetry`, `score:{low|medium|high}` (round 1's),
   `task:{agent-type}`, and `agent:{name}-weak` for any sub-score `< 5`;
@@ -156,9 +156,9 @@ support disaster.
 ## Determinism
 
 Same input -> same score. The score function does not use timestamps
-or randomness. The scoring rubric is expressed as **three separate
-per-result-block tables** in `docs/TELEMETRY.md` (a unified mapping
-cannot disambiguate the three different status enums). Subtask #2b
+or randomness. The scoring rubric is expressed as **one table per
+result block** in `docs/TELEMETRY.md` (a unified mapping cannot
+disambiguate their different status enums). Subtask #2b
 implements those tables verbatim.
 
 ## Anti-patterns

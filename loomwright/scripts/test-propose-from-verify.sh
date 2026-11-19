@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-propose-from-verify.sh - self-tests for propose-from-verify.sh, the VERIFY basis of
-# `/propose`. HERMETIC: every fixture is built in a mktemp -d tree OUTSIDE the repo root; nothing
-# here depends on a real `.supervisor/verify/` run existing. Exit 0 = all pass, 1 = any failure.
+# `/propose`, which reads one Selvedge run folder's `verdict.json` (schema_version 1) as data.
+# HERMETIC: every fixture is built in a mktemp -d tree OUTSIDE the repo root; nothing here depends
+# on a real run folder existing. Exit 0 = all pass, 1 = any failure.
 # Registered automatically by ci.yml's test-*.sh glob.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -27,22 +28,40 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
 
-RUN_ID="verify-20260915T000000Z-example"
+RUN_ID="20261119T120000Z-a1b2c3"
+PLAN_SHA="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+C_FAIL="c-aaaaaaaaaaaa"; C_PASS1="c-bbbbbbbbbbbb"; C_PASS2="c-cccccccccccc"
+C_BLOCKED="c-dddddddddddd"; C_NV="c-eeeeeeeeeeee"; C_LATE="c-ffffffffffff"
 
-# make_evidence <dir> - writes evidence.jsonl with run_start + 2 FAIL(REAL_BUG) + 1 BLOCKED +
-# 1 DISCOVERY_GAP FAIL (must NOT draft) + 1 issue line. Returns the run dir.
+# crit <verdict> <expected-json> <failed_step-json> <interpretation-json> <steps-json> - one
+# criterion carrying the schema's full required key set (selvedge/schemas/verdict.schema.json).
+crit() {
+  jq -nc --arg v "$1" --argjson e "$2" --argjson fs "$3" --argjson i "$4" --argjson s "$5" '
+    {verdict: $v, evidence_class: "structured-read", read_value: null, matched: null, expected: $e,
+     reason: (if ($v == "BLOCKED" or $v == "NOT_VERIFIABLE") then "app_unreachable" else null end),
+     failed_step: $fs, interpretation: $i, unverified_assumptions: [], steps: $s}'
+}
+# The FAIL criterion lists steps[] OUT of index order: position 1 holds step 0 (goto) while step 1
+# is a `read` at position 2, so a positional `.steps[failed_step]` lookup names the wrong type.
+FAIL_STEPS='[{"step":2,"type":"expect","outcome":"mismatched","duration_ms":3},{"step":0,"type":"goto","outcome":"ok","duration_ms":1},{"step":1,"type":"read","outcome":"failed","duration_ms":2}]'
+OK_STEPS='[{"step":0,"type":"goto","outcome":"ok","duration_ms":1},{"step":1,"type":"expect","outcome":"matched","duration_ms":1}]'
+crit_fail() { crit FAIL '{"op":"equals","value":"4"}' 1 "$(jq -nc --arg t "${1:-The cart total shows 4 items after adding one}" '$t')" "$FAIL_STEPS"; }
+crit_pass() { crit PASS '{"op":"contains","value":"Welcome"}' null '"The home page greets the user"' "$OK_STEPS"; }
+
+# make_verdict <run_dir> <criteria-json> [schema_version-json] - writes <run_dir>/verdict.json with
+# every top-level field the schema requires.
+make_verdict() {
+  mkdir -p "$1"
+  jq -n --argjson c "$2" --argjson sv "${3:-1}" --arg p "$PLAN_SHA" '
+    {schema_version: $sv, target: "web", plan_sha256: $p, playwright_version: "1.50.0",
+     plan_revision: 1, prior_revisions: [], replay_of: null, data_state: "managed", hooks_run: [],
+     criteria: $c}' > "$1/verdict.json"
+}
+# make_run - the AC3 fixture: 1 FAIL + 2 PASS. Prints the run dir.
 make_run() {
   mr_dir="$(mktmp)/$RUN_ID"
-  mkdir -p "$mr_dir"
-  cat > "$mr_dir/evidence.jsonl" << EOF
-{"schema_version":1,"ts":"2026-09-15T00:00:00Z","run_id":"$RUN_ID","event":"run_start","ticket_path":".supervisor/requirements/example/01.md","ticket_kind":"requirement","branch":"feature/x","head_sha":"abc123","base_sha":"def456","env_contract_hash":null}
-{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"$RUN_ID","event":"ac","ac_id":"AC1","text":"AC1 text here","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"observed bug one","steps":[],"artifacts":["artifacts/AC1/a.png"]}
-{"schema_version":1,"ts":"2026-09-15T00:00:02Z","run_id":"$RUN_ID","event":"ac","ac_id":"AC2","text":"AC2 text here","scope":"ticket","verdict":"BLOCKED","classification":"ENVIRONMENT_ISSUE","reason":"env broke","steps":[],"artifacts":[]}
-{"schema_version":1,"ts":"2026-09-15T00:00:03Z","run_id":"$RUN_ID","event":"ac","ac_id":"AC3","text":"AC3 text here","scope":"ticket","verdict":"FAIL","classification":"DISCOVERY_GAP","reason":"could not author a spec in time","steps":[],"artifacts":[]}
-{"schema_version":1,"ts":"2026-09-15T00:00:04Z","run_id":"$RUN_ID","event":"ac","ac_id":"AC4","text":"AC4 text here","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"observed bug two","steps":[],"artifacts":[]}
-{"schema_version":1,"ts":"2026-09-15T00:00:05Z","run_id":"$RUN_ID","event":"issue","text":"A standalone issue found during the walk","severity":"MEDIUM","artifacts":["artifacts/console.txt"]}
-{"schema_version":1,"ts":"2026-09-15T00:00:06Z","run_id":"$RUN_ID","event":"run_end","status":"completed"}
-EOF
+  make_verdict "$mr_dir" "$(jq -nc --argjson f "$(crit_fail)" --argjson p "$(crit_pass)" \
+    --arg a "$C_FAIL" --arg b "$C_PASS1" --arg c "$C_PASS2" '{($b): $p, ($a): $f, ($c): $p}')"
   printf '%s' "$mr_dir"
 }
 
@@ -54,41 +73,49 @@ run_sut() {
 
 count_props() { find "$1" -maxdepth 1 -type f -name '*.md' 2>/dev/null | awk 'END{print NR+0}'; }
 
-echo "== AC1/AC5/AC10: 2 FAIL(REAL_BUG) + 1 BLOCKED + 1 FAIL(DISCOVERY_GAP) + 1 issue => exactly 3 drafts =="
+echo "== AC3: verdict.json with 1 FAIL + 2 PASS => exit 0, exactly one candidate =="
 RD="$(make_run)"
 OUT="$(mktmp)/out"
 run_sut "$RD" "$OUT"; rc=$?
-[ "$rc" -eq 0 ] && ok "exit 0" || no "exit $rc"
+[ "$rc" -eq 0 ] && ok "exit 0" || no "exit $rc: $(cat "$ROOT/last.err")"
 np="$(count_props "$OUT")"
-[ "$np" -eq 3 ] && ok "exactly 3 drafts written ($np)" || no "expected 3 drafts, got $np: $(ls "$OUT" 2>/dev/null)"
+[ "$np" -eq 1 ] && ok "exactly one candidate written ($np)" || no "expected 1 candidate, got $np: $(ls "$OUT" 2>/dev/null)"
+F="$OUT/verify-${RUN_ID}-${C_FAIL}.md"
+[ -f "$F" ] && ok "the candidate is named verify-<run_id>-<criterion_id>.md (derived, never counted)" || no "candidate $F missing: $(ls "$OUT" 2>/dev/null)"
+[ ! -e "$OUT/verify-${RUN_ID}-${C_PASS1}.md" ] && [ ! -e "$OUT/verify-${RUN_ID}-${C_PASS2}.md" ] \
+  && ok "PASS criteria are never drafted" || no "a PASS criterion was drafted"
 
-AC1_FILE="$(find "$OUT" -maxdepth 1 -name "verify-${RUN_ID}-AC1-*.md" | head -1)"
-AC4_FILE="$(find "$OUT" -maxdepth 1 -name "verify-${RUN_ID}-AC4-*.md" | head -1)"
-ISSUE_FILE="$(find "$OUT" -maxdepth 1 -name "verify-${RUN_ID}-issue-1-*.md" | head -1)"
-AC2_FILE="$(find "$OUT" -maxdepth 1 -name "verify-${RUN_ID}-AC2-*.md" | head -1)"
-AC3_FILE="$(find "$OUT" -maxdepth 1 -name "verify-${RUN_ID}-AC3-*.md" | head -1)"
-
-[ -n "$AC1_FILE" ] && ok "AC1 (FAIL/REAL_BUG) drafted" || no "AC1 draft missing"
-[ -n "$AC4_FILE" ] && ok "AC4 (FAIL/REAL_BUG) drafted" || no "AC4 draft missing"
-[ -n "$ISSUE_FILE" ] && ok "issue #1 drafted" || no "issue draft missing"
+echo "== AC3: the candidate cites criterion, interpretation, expected, failed step, run id, plan_sha256 =="
+has_line() { grep -qxF -- "$1" "${F:-/dev/null}"; }
+has_line "- criterion: $C_FAIL" && ok "cites the criterion id" || no "criterion id not cited"
+has_line "- interpretation: The cart total shows 4 items after adding one" && ok "cites the interpretation" || no "interpretation not cited"
+has_line '- expected: equals "4"' && ok "cites the expected value as op + value" || no "expected op/value not cited"
+has_line "- failed step: 1 (type: read)" && ok "cites failed_step 1 with ITS step's type (read), looked up by .step, not array position (goto)" \
+  || no "failed step not cited by .step lookup: $(grep -F 'failed step' "${F:-/dev/null}")"
+has_line "- run: $RUN_ID" && ok "cites the run id (the run folder's basename)" || no "run id not cited"
+has_line "- plan_sha256: $PLAN_SHA" && ok "cites plan_sha256" || no "plan_sha256 not cited"
+for sec in '## Depends on' '## Touches' '## Problem' '## Evidence' '## Suggested acceptance' '## Status: proposed'; do
+  has_line "$sec" && ok "carries '$sec'" || no "missing '$sec'"
+done
 
 # parallel-automate/10 (AC-7): the draft carries the planner's sections and `plan-waves --lint` accepts it.
-pw_lint_out="$(bash "$HERE/automate-helpers.sh" plan-waves "$AC1_FILE" --lint --root "$(dirname "$AC1_FILE")" 2>&1)"; pw_lint_rc=$?
-if [ "$pw_lint_rc" -eq 0 ] && grep -qxF '## Depends on' "$AC1_FILE" && grep -qxF '## Touches' "$AC1_FILE" \
+pw_lint_out="$(bash "$HERE/automate-helpers.sh" plan-waves "$F" --lint --root "$(dirname "$F")" 2>&1)"; pw_lint_rc=$?
+if [ "$pw_lint_rc" -eq 0 ] && grep -qxF '## Depends on' "$F" && grep -qxF '## Touches' "$F" \
   && grep -qF ': Touches ok (declared unknown); Depends on ok' <<<"${pw_lint_out%%$'\n'*}"; then
   ok "AC-7 propose-from-verify draft: ## Depends on none + ## Touches unknown (it names no change-site file); plan-waves --lint ok (declared unknown), exit 0"
 else no "AC-7 propose-from-verify draft lint (rc=$pw_lint_rc): $(printf '%s' "$pw_lint_out" | head -n1)"; fi
-# A draft whose text names an existing repo file carries it as Touches (a missing one and an
-# absolute path are dropped) and lints `ok` — the cwd's checkout is the root the names resolve against.
+
+# A draft whose interpretation names an existing repo file carries it as Touches (a missing one and
+# an absolute path are dropped) and lints `ok` — the cwd's checkout is the root names resolve against.
 VT_DIR="$(mktmp)/proj"; mkdir -p "$VT_DIR/src"; ( cd "$VT_DIR" && git init -q . ); : > "$VT_DIR/src/app.ts"
-VT_RD="$(mktmp)/verify-20260915T000000Z-vt"; mkdir -p "$VT_RD"
-printf '%s\n' '{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"verify-20260915T000000Z-vt","event":"ac","ac_id":"AC1","text":"Crash in src/app.ts (not src/none.ts, not /etc/hosts).","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"see src/app.ts","steps":[],"artifacts":[]}' > "$VT_RD/evidence.jsonl"
+VT_RD="$(mktmp)/20261119T120000Z-0000a1"
+make_verdict "$VT_RD" "$(jq -nc --argjson f "$(crit_fail 'Crash in src/app.ts (not src/none.ts, not /etc/hosts).')" --arg a "$C_FAIL" '{($a): $f}')"
 ( cd "$VT_DIR" && PROPOSE_FROM_VERIFY_OUT_DIR="$VT_DIR/out" bash "$SUT" "$VT_RD" ) >/dev/null 2>&1
-VT_F="$(find "$VT_DIR/out" -maxdepth 1 -name 'verify-*-AC1-*.md' 2>/dev/null | head -1)"
+VT_F="$(find "$VT_DIR/out" -maxdepth 1 -name "verify-*-${C_FAIL}.md" 2>/dev/null | head -1)"
 vt_sec="$(awk '/^## Touches$/{p=1; next} p && /^## /{exit} p && NF' "${VT_F:-/dev/null}")"
 vt_lint="$(bash "$HERE/automate-helpers.sh" plan-waves "${VT_F:-/nonexistent.md}" --lint --root "$VT_DIR" 2>&1)"; vt_rc=$?
 [ "$vt_sec" = "src/app.ts" ] && [ "$vt_rc" -eq 0 ] && grep -qF ': Touches ok; Depends on ok' <<<"${vt_lint%%$'\n'*}" \
-  && ok "AC-7 propose-from-verify: Touches = the existing file the text names (src/app.ts), lint ok" \
+  && ok "AC-7 propose-from-verify: Touches = the existing file the interpretation names (src/app.ts), lint ok" \
   || no "AC-7 named-file draft: Touches '$vt_sec', lint rc=$vt_rc: $(printf '%s' "$vt_lint" | head -n1)"
 # vt_touches' CONTAINMENT rule (extractor-only — the planner's --lint grammar is unaffected, so the
 # test-automate-helpers.sh X7 drift test does not cover it; this block and A12 in
@@ -100,10 +127,10 @@ CT_DIR="$(mktmp)/proj"; CT_OUT="$(mktmp)/outside"; mkdir -p "$CT_DIR/src" "$CT_O
 ln -s "$CT_OUT" "$CT_DIR/lnk"; ln -s "$CT_OUT/secret.txt" "$CT_DIR/flink.txt"
 ln -s src/app.ts "$CT_DIR/inlink.ts"; ln -s src "$CT_DIR/indir"
 git -C "$CT_DIR" add lnk flink.txt inlink.ts indir src/app.ts >/dev/null 2>&1
-CT_RD="$(mktmp)/verify-20260915T000000Z-ct"; mkdir -p "$CT_RD"
-printf '%s\n' '{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"verify-20260915T000000Z-ct","event":"ac","ac_id":"AC1","text":"bug: src/app.ts lnk/secret.txt flink.txt inlink.ts indir/app.ts .git/config .GIT/config .git/HEAD","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"r","steps":[],"artifacts":[]}' > "$CT_RD/evidence.jsonl"
+CT_RD="$(mktmp)/20261119T120000Z-0000c7"
+make_verdict "$CT_RD" "$(jq -nc --argjson f "$(crit_fail 'bug: src/app.ts lnk/secret.txt flink.txt inlink.ts indir/app.ts .git/config .GIT/config .git/HEAD')" --arg a "$C_FAIL" '{($a): $f}')"
 ( cd "$CT_DIR" && PROPOSE_FROM_VERIFY_OUT_DIR="$CT_DIR/out" bash "$SUT" "$CT_RD" ) >/dev/null 2>&1
-CT_F="$(find "$CT_DIR/out" -maxdepth 1 -name 'verify-*-AC1-*.md' 2>/dev/null | head -1)"
+CT_F="$(find "$CT_DIR/out" -maxdepth 1 -name "verify-*-${C_FAIL}.md" 2>/dev/null | head -1)"
 ct_sec="$(awk '/^## Touches$/{p=1; next} p && /^## /{exit} p && NF' "${CT_F:-/dev/null}")"
 ct_has() { grep -qxF -- "$1" <<<"$ct_sec"; }
 [ -n "$CT_F" ] || no "containment draft not written"
@@ -113,93 +140,144 @@ ct_has src/app.ts && ok "containment (e): a normal existing path is still accept
 ! ct_has inlink.ts && ct_has indir/app.ts && ok "containment (c): in-repo symlinked file rejected, in-repo symlinked dir accepted as written" || no "containment (c): in-repo symlink handling: '$ct_sec'"
 ! ct_has .git/config && ! ct_has .GIT/config && ! ct_has .git/HEAD && ok "containment (d): .git/ paths are rejected (any case)" || no "containment (d): .git path leaked into Touches: '$ct_sec'"
 [ "$ct_sec" = "$(printf 'indir/app.ts\nsrc/app.ts')" ] && ok "containment: Touches is exactly the two contained paths" || no "containment Touches set: '$(tr '\n' '|' <<<"$ct_sec")'"
-[ -z "$AC2_FILE" ] && ok "AC2 (BLOCKED) NOT drafted" || no "AC2 (BLOCKED) was drafted - defect"
-[ -z "$AC3_FILE" ] && ok "AC3 (FAIL/DISCOVERY_GAP) NOT drafted" || no "AC3 (FAIL/DISCOVERY_GAP) was drafted - defect"
 
-echo "== AC1: all four required sections, and ## Evidence cites a real line resolving to that ac_id =="
-for f in "$AC1_FILE" "$AC4_FILE" "$ISSUE_FILE"; do
-  [ -n "$f" ] && [ -f "$f" ] || { no "cannot check sections - file missing"; continue; }
-  b="$(basename "$f")"
-  for sec in '## Problem' '## Evidence' '## Suggested acceptance' '## Status: proposed'; do
-    grep -Fq "$sec" "$f" 2>/dev/null && ok "$b carries '$sec'" || no "$b missing '$sec'"
-  done
-done
+echo "== AC3: only FAIL criteria are drafted — PASS / BLOCKED / NOT_VERIFIABLE never =="
+MIX_RD="$(mktmp)/20261119T120000Z-00b10c"
+make_verdict "$MIX_RD" "$(jq -nc \
+  --argjson f "$(crit FAIL null null null '[]')" \
+  --argjson b "$(crit BLOCKED null null '"Login page"' '[]')" \
+  --argjson n "$(crit NOT_VERIFIABLE null null '"Email arrives"' '[]')" \
+  --argjson p "$(crit_pass)" \
+  --arg a "$C_FAIL" --arg bb "$C_BLOCKED" --arg nn "$C_NV" --arg pp "$C_PASS1" \
+  '{($nn): $n, ($bb): $b, ($pp): $p, ($a): $f}')"
+MIX_OUT="$(mktmp)/out-mix"
+run_sut "$MIX_RD" "$MIX_OUT"; rc_mix=$?
+MIX_F="$MIX_OUT/verify-$(basename "$MIX_RD")-${C_FAIL}.md"
+[ "$rc_mix" -eq 0 ] && [ "$(count_props "$MIX_OUT")" -eq 1 ] && [ -f "$MIX_F" ] \
+  && ok "FAIL + BLOCKED + NOT_VERIFIABLE + PASS => only the FAIL is drafted" \
+  || no "mixed verdicts: rc=$rc_mix, files: $(ls "$MIX_OUT" 2>/dev/null | tr '\n' ' ')"
+grep -qxF -- '- expected: none' "$MIX_F" 2>/dev/null && grep -qxF -- '- failed step: none' "$MIX_F" 2>/dev/null \
+  && grep -qxF -- '- interpretation: none' "$MIX_F" 2>/dev/null \
+  && ok "a FAIL with null expected / failed_step / interpretation cites 'none' for each" \
+  || no "null fields not rendered as none: $(grep -E '^- (expected|failed step|interpretation):' "$MIX_F" 2>/dev/null | tr '\n' '|')"
+NOFAIL_RD="$(mktmp)/20261119T120000Z-00000f"
+make_verdict "$NOFAIL_RD" "$(jq -nc --argjson p "$(crit_pass)" --argjson b "$(crit BLOCKED null null null '[]')" --arg a "$C_PASS1" --arg bb "$C_BLOCKED" '{($a): $p, ($bb): $b}')"
+NOFAIL_OUT="$(mktmp)/out-nofail"
+run_sut "$NOFAIL_RD" "$NOFAIL_OUT"; rc_nf=$?
+[ "$rc_nf" -eq 0 ] && [ "$(count_props "$NOFAIL_OUT")" -eq 0 ] && ok "no FAIL criterion => exit 0, zero candidates" || no "no-FAIL run: rc=$rc_nf, $(count_props "$NOFAIL_OUT") file(s)"
 
-if [ -n "$AC1_FILE" ]; then
-  ln1="$(grep -o 'evidence.jsonl line [0-9]*' "$AC1_FILE" | grep -o '[0-9]*' | head -1)"
-  if [ -n "$ln1" ]; then
-    resolved="$(sed -n "${ln1}p" "$RD/evidence.jsonl" | jq -r '.ac_id // empty' 2>/dev/null)"
-    [ "$resolved" = "AC1" ] && ok "AC1's cited evidence.jsonl line $ln1 resolves to ac_id AC1" \
-      || no "AC1's cited line $ln1 resolves to ac_id '$resolved', not AC1"
-  else
-    no "AC1 draft cites no evidence.jsonl line number"
-  fi
-  grep -Fq 'artifacts/AC1/a.png' "$AC1_FILE" && ok "AC1 draft cites its artifact path" || no "AC1 draft omits its artifact path"
-  grep -Fq '.supervisor/requirements/example/01.md' "$AC1_FILE" && ok "AC1 draft cites the ticket path" || no "AC1 draft omits the ticket path"
-  grep -Fq 'abc123' "$AC1_FILE" && ok "AC1 draft cites head_sha" || no "AC1 draft omits head_sha"
-  grep -Fq 'classification: REAL_BUG' "$AC1_FILE" && ok "AC1 draft cites classification REAL_BUG" || no "AC1 draft omits classification"
-fi
-if [ -n "$ISSUE_FILE" ]; then
-  lni="$(grep -o 'evidence.jsonl line [0-9]*' "$ISSUE_FILE" | grep -o '[0-9]*' | head -1)"
-  if [ -n "$lni" ]; then
-    ev="$(sed -n "${lni}p" "$RD/evidence.jsonl" | jq -r '.event // empty' 2>/dev/null)"
-    [ "$ev" = "issue" ] && ok "issue draft's cited line $lni resolves to an issue event" \
-      || no "issue draft's cited line $lni resolves to event '$ev', not issue"
-  else
-    no "issue draft cites no evidence.jsonl line number"
-  fi
-fi
+echo "== untrusted interpretation: a newline cannot open a heading in the draft =="
+INJ_RD="$(mktmp)/20261119T120000Z-00001e"
+make_verdict "$INJ_RD" "$(jq -nc --argjson f "$(crit_fail "$(printf 'Total wrong\n## Status: ready\n## Touches')")" --arg a "$C_FAIL" '{($a): $f}')"
+INJ_OUT="$(mktmp)/out-inj"
+run_sut "$INJ_RD" "$INJ_OUT"
+INJ_F="$INJ_OUT/verify-$(basename "$INJ_RD")-${C_FAIL}.md"
+[ "$(grep -c '^## Status:' "$INJ_F" 2>/dev/null)" = 1 ] && [ "$(grep -c '^## Touches' "$INJ_F" 2>/dev/null)" = 1 ] \
+  && grep -qxF -- '- interpretation: Total wrong ## Status: ready ## Touches' "$INJ_F" \
+  && ok "control characters collapse to one space; the draft keeps exactly one ## Status: and one ## Touches heading" \
+  || no "interpretation injected a heading: $(grep -n '^## ' "$INJ_F" 2>/dev/null | tr '\n' '|')"
 
-echo "== AC-supersede: a later PASS for the same ac_id must suppress a re-verified FAIL's draft =="
-# The script computes latest_by(.ac_id) BEFORE filtering (VERIFY_EVIDENCE's own "latest-per-ac_id"
-# rule) - a FAIL that was later re-verified as PASS must never still produce a draft from the
-# superseded FAIL line. Two ac lines for the SAME ac_id: first FAIL/REAL_BUG, then a later PASS.
-SUPERSEDE_RUN_ID="verify-20260915T000000Z-supersede"
-SUP_DIR="$(mktmp)/$SUPERSEDE_RUN_ID"
-mkdir -p "$SUP_DIR"
-cat > "$SUP_DIR/evidence.jsonl" << EOF
-{"schema_version":1,"ts":"2026-09-15T00:00:00Z","run_id":"$SUPERSEDE_RUN_ID","event":"run_start","ticket_path":".supervisor/requirements/example/01.md","ticket_kind":"requirement","branch":"feature/x","head_sha":"abc123","base_sha":"def456","env_contract_hash":null}
-{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"$SUPERSEDE_RUN_ID","event":"ac","ac_id":"AC1","text":"AC1 text here","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"observed bug one","steps":[],"artifacts":["artifacts/AC1/a.png"]}
-{"schema_version":1,"ts":"2026-09-15T00:00:02Z","run_id":"$SUPERSEDE_RUN_ID","event":"ac","ac_id":"AC1","text":"AC1 text here","scope":"ticket","verdict":"PASS","classification":null,"reason":"resumed and verified for real","steps":[],"artifacts":["artifacts/AC1/pass.png"]}
-{"schema_version":1,"ts":"2026-09-15T00:00:03Z","run_id":"$SUPERSEDE_RUN_ID","event":"run_end","status":"completed"}
-EOF
-SUP_OUT="$(mktmp)/out-supersede"
-run_sut "$SUP_DIR" "$SUP_OUT"; rc_sup=$?
-[ "$rc_sup" -eq 0 ] && ok "AC-supersede: exit 0" || no "AC-supersede: exit $rc_sup"
-SUP_AC1_FILE="$(find "$SUP_OUT" -maxdepth 1 -name "verify-${SUPERSEDE_RUN_ID}-AC1-*.md" 2>/dev/null | head -1)"
-[ -z "$SUP_AC1_FILE" ] && ok "AC-supersede: no draft for AC1 - the later PASS supersedes the earlier FAIL" \
-  || no "AC-supersede: a draft was written for AC1 despite its later PASS - $SUP_AC1_FILE"
-[ "$(count_props "$SUP_OUT")" -eq 0 ] && ok "AC-supersede: zero drafts written for this run" \
-  || no "AC-supersede: expected zero drafts, got $(count_props "$SUP_OUT"): $(ls "$SUP_OUT" 2>/dev/null)"
-
-echo "== AC3/AC10: idempotency - re-running yields the same 3 files, no duplicates =="
+echo "== AC3: idempotence - a re-run rewrites the same file byte for byte, no duplicate =="
+cp "$F" "$ROOT/first-run.md" 2>/dev/null
 before="$(find "$OUT" -type f | env LC_ALL=C sort)"
 run_sut "$RD" "$OUT"; rc2=$?
 after="$(find "$OUT" -type f | env LC_ALL=C sort)"
 [ "$rc2" -eq 0 ] && ok "exit 0 on re-run" || no "exit $rc2 on re-run"
-[ "$(count_props "$OUT")" -eq 3 ] && ok "still exactly 3 files after re-run" || no "file count changed after re-run: $(count_props "$OUT")"
-[ "$before" = "$after" ] && ok "the file SET is byte-identical (paths) across the re-run" \
-  || no "the file set changed across the re-run"
+[ "$(count_props "$OUT")" -eq 1 ] && ok "still exactly one file after re-run" || no "file count changed after re-run: $(count_props "$OUT")"
+[ "$before" = "$after" ] && ok "the file SET is identical across the re-run" || no "the file set changed across the re-run"
+cmp -s "$ROOT/first-run.md" "$F" && ok "the candidate is byte-identical across the re-run" || no "the candidate changed across the re-run: $(diff "$ROOT/first-run.md" "$F" | head -4)"
 
-echo "== AC10: a find diff of the tree before/after proves nothing was written outside proposed/ =="
+echo "== AC3: a find diff of the tree before/after proves nothing was written outside proposed/ =="
 CONT="$(mktmp)"
-mkdir -p "$CONT/.supervisor/requirements/proposed" "$CONT/.supervisor/verify"
-RD3="$CONT/.supervisor/verify/$RUN_ID"
+mkdir -p "$CONT/.supervisor/requirements/proposed" "$CONT/.selvedge/runs"
+RD3="$CONT/.selvedge/runs/$RUN_ID"
 mkdir -p "$RD3"
-cp "$RD/evidence.jsonl" "$RD3/evidence.jsonl"
+cp "$RD/verdict.json" "$RD3/verdict.json"
 printf 'pre-existing\n' > "$CONT/untouched.txt"
 hash_tree() {
   ( cd "$1" && find . -not -path './.supervisor/requirements/proposed' -not -path './.supervisor/requirements/proposed/*' \
       | env LC_ALL=C sort )
 }
 before10="$(hash_tree "$CONT")"
-( cd "$CONT" && PROPOSE_FROM_VERIFY_OUT_DIR=".supervisor/requirements/proposed" bash "$SUT" ".supervisor/verify/$RUN_ID" ) >/dev/null 2>&1
+( cd "$CONT" && PROPOSE_FROM_VERIFY_OUT_DIR=".supervisor/requirements/proposed" bash "$SUT" ".selvedge/runs/$RUN_ID" ) >/dev/null 2>&1
 after10="$(hash_tree "$CONT")"
 n10="$(find "$CONT/.supervisor/requirements/proposed" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 [ "$n10" -ge 1 ] && ok "the containment run actually emitted $n10 draft(s)" || no "the containment run emitted nothing - the diff would prove nothing"
 [ "$before10" = "$after10" ] && ok "no path outside .supervisor/requirements/proposed/ changed" \
   || no "the tree outside proposed/ changed:
 $(diff <(printf '%s\n' "$before10") <(printf '%s\n' "$after10"))"
+
+echo "== AC4: unusable input => exit 2, one stderr line naming the case, nothing written =="
+# refusal <label> <reason> <run_dir> [env-prefix...] - the out dir must not even be created.
+refusal() {
+  rf_label="$1"; rf_reason="$2"; rf_dir="$3"; shift 3
+  rf_out="$(mktmp)/out-refuse"
+  PROPOSE_FROM_VERIFY_OUT_DIR="$rf_out" "$@" "$SUT" "$rf_dir" >"$ROOT/last.out" 2>"$ROOT/last.err"; rf_rc=$?
+  rf_lines="$(awk 'END{print NR+0}' "$ROOT/last.err")"
+  if [ "$rf_rc" -eq 2 ] && [ "$rf_lines" -eq 1 ] && grep -qF "propose-from-verify: $rf_reason - " "$ROOT/last.err" \
+    && [ ! -e "$rf_out" ] && [ ! -s "$ROOT/last.out" ]; then
+    ok "$rf_label => exit 2, one stderr line naming $rf_reason, nothing written"
+  else
+    no "$rf_label: rc=$rf_rc (want 2), $rf_lines stderr line(s): $(head -c 300 "$ROOT/last.err"), out dir exists: $([ -e "$rf_out" ] && echo yes || echo no)"
+  fi
+}
+BASH_BIN="$(command -v bash)"
+refusal "empty run_dir arg" run_dir_missing "" bash
+refusal "nonexistent run_dir" run_dir_missing "$(mktmp)/does-not-exist" bash
+refusal "run_dir with no verdict.json" verdict_missing "$(mktmp)" bash
+NOJQ_BIN="$(mktmp)"   # an empty PATH dir: no jq (and no other external tool)
+refusal "jq absent from PATH" jq_missing "$RD" env PATH="$NOJQ_BIN" "$BASH_BIN"
+BAD="$(mktmp)/$RUN_ID"; mkdir -p "$BAD"
+printf '{oops\n' > "$BAD/verdict.json"; refusal "verdict.json not valid JSON" verdict_malformed "$BAD" bash
+: > "$BAD/verdict.json"; refusal "verdict.json empty" verdict_malformed "$BAD" bash
+printf '{"schema_version":1}\n{"schema_version":1}\n' > "$BAD/verdict.json"; refusal "verdict.json holding two JSON values" verdict_malformed "$BAD" bash
+printf '[1]\n' > "$BAD/verdict.json"; refusal "verdict.json not an object" verdict_malformed "$BAD" bash
+for drop in schema_version plan_sha256 criteria; do
+  jq --arg k "$drop" 'del(.[$k])' "$RD/verdict.json" > "$BAD/verdict.json"
+  refusal "verdict.json without $drop" verdict_malformed "$BAD" bash
+done
+jq '.plan_sha256 = "abc"' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "plan_sha256 not 64 hex" verdict_malformed "$BAD" bash
+jq --arg a "$C_PASS1" 'del(.criteria[$a].verdict)' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "a criterion without verdict" verdict_malformed "$BAD" bash
+jq --arg a "$C_PASS1" '.criteria[$a].verdict = "PAS"' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "a criterion verdict outside the enum (PAS)" verdict_malformed "$BAD" bash
+jq --arg a "$C_FAIL" 'del(.criteria[$a].failed_step)' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "a criterion missing its failed_step key" verdict_malformed "$BAD" bash
+jq '.criteria["c-xyz"] = .criteria["'"$C_PASS1"'"]' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "a criterion key that is not c-<12 hex>" verdict_malformed "$BAD" bash
+# Validated WHOLE before the first write: a valid FAIL sorts first and the malformed criterion
+# last, so a script that wrote per criterion would leave the FAIL's draft behind.
+jq --arg z "$C_LATE" '.criteria[$z] = {verdict: "FAIL"}' "$RD/verdict.json" > "$BAD/verdict.json"
+refusal "a valid FAIL followed by a malformed criterion (no partial proposal)" verdict_malformed "$BAD" bash
+jq '.schema_version = 2' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "schema_version 2 (otherwise valid, one FAIL)" unknown_schema_version "$BAD" bash
+jq '.schema_version = "1"' "$RD/verdict.json" > "$BAD/verdict.json"; refusal "schema_version the string \"1\"" unknown_schema_version "$BAD" bash
+refusal "propose-common.sh not found" propose_common_missing "$RD" env PROPOSE_COMMON_SH="$ROOT/no-such-common.sh" bash
+NOTDIR="$(mktmp)/plain-file"; : > "$NOTDIR"
+PROPOSE_FROM_VERIFY_OUT_DIR="$NOTDIR/out" bash "$SUT" "$RD" >"$ROOT/last.out" 2>"$ROOT/last.err"; rc_ud=$?
+[ "$rc_ud" -eq 2 ] && [ "$(awk 'END{print NR+0}' "$ROOT/last.err")" -eq 1 ] && grep -qF 'propose-from-verify: out_dir_unwritable - ' "$ROOT/last.err" \
+  && [ -f "$NOTDIR" ] && [ ! -s "$NOTDIR" ] \
+  && ok "an output dir that cannot be created => exit 2, one stderr line naming out_dir_unwritable" \
+  || no "out_dir_unwritable: rc=$rc_ud: $(head -c 300 "$ROOT/last.err")"
+
+echo "== a draft refused by the write guard => exit 1; the other drafts are still written whole =="
+GR_RD="$(mktmp)/20261119T120000Z-00009d"
+make_verdict "$GR_RD" "$(jq -nc --argjson f "$(crit_fail)" --arg a "$C_FAIL" --arg z "$C_LATE" '{($a): $f, ($z): $f}')"
+GR_OUT="$(mktmp)/out-guard"; mkdir -p "$GR_OUT"; GR_TARGET="$(mktmp)/elsewhere.md"; : > "$GR_TARGET"
+ln -s "$GR_TARGET" "$GR_OUT/verify-$(basename "$GR_RD")-${C_FAIL}.md"
+run_sut "$GR_RD" "$GR_OUT"; rc_gr=$?
+[ "$rc_gr" -eq 1 ] && [ -f "$GR_OUT/verify-$(basename "$GR_RD")-${C_LATE}.md" ] && [ ! -s "$GR_TARGET" ] \
+  && grep -qF 'refusing to write' "$ROOT/last.err" \
+  && ok "a planted symlink at one candidate name => exit 1, that write refused (target untouched), the other FAIL still drafted" \
+  || no "guard refusal: rc=$rc_gr (want 1), files: $(ls "$GR_OUT" | tr '\n' ' '), target size: $(wc -c < "$GR_TARGET")"
+
+echo "== AC6 (D4): the script reads verdict.json as data — nothing from the verifier's code =="
+# Code lines only (full-line comments dropped): no path into the verifier's tree, no CLI call to
+# it, no JavaScript runtime. A mutant copy with one such line appended proves the grep is live.
+d4_hits() { grep -v '^[[:space:]]*#' "$1" | grep -niE 'selvedge|(^|[^A-Za-z0-9_])(node|npx|deno|bun)([^A-Za-z0-9_]|$)|\.m?js([^A-Za-z0-9_]|$)'; }
+D4="$(d4_hits "$SUT")"
+[ -z "$D4" ] && ok "AC6: no selvedge path / CLI call and no node in propose-from-verify.sh's code lines" || no "AC6: D4 violated: $D4"
+grep -qF 'verdict.json' "$SUT" && grep -qF 'jq ' "$SUT" && ok "AC6: it reads verdict.json with jq" || no "AC6: verdict.json / jq read not found"
+D4_MUT="$ROOT/mutant-d4.sh"
+{ cat "$SUT"; printf '. "$SCRIPT_DIR/../../selvedge/lib/verdict.mjs"\n'; } > "$D4_MUT"
+[ -n "$(d4_hits "$D4_MUT")" ] && ok "AC6 MUTATION CONTROL: a sourced selvedge/ line turns the D4 grep red" || no "AC6 mutation control: the D4 grep missed a selvedge/ line"
+{ cat "$SUT"; printf 'node selvedge/bin/x verdict "$RUN_DIR"\n'; } > "$D4_MUT"
+[ -n "$(d4_hits "$D4_MUT")" ] && ok "AC6 MUTATION CONTROL: a node CLI line turns the D4 grep red" || no "AC6 mutation control: the D4 grep missed a node line"
 
 echo "-- MUTATION CONTROL (AC12): stripping ## Evidence from the writer must fail the suite's own assertions --"
 MUT="$ROOT/mutant-noevidence.sh"
@@ -210,15 +288,15 @@ if [ -s "$MUT" ] && ! cmp -s "$MUT" "$SUT" && bash -n "$MUT" 2>/dev/null; then
   RDM="$(make_run)"
   OUTM="$(mktmp)/outm"
   run_sut "$RDM" "$OUTM" "$MUT"
-  m_ac1="$(find "$OUTM" -maxdepth 1 -name "verify-${RUN_ID}-AC1-*.md" | head -1)"
-  if [ -n "$m_ac1" ] && [ -f "$m_ac1" ]; then
-    if grep -Fq '## Evidence' "$m_ac1" 2>/dev/null; then
+  m_f="$OUTM/verify-${RUN_ID}-${C_FAIL}.md"
+  if [ -f "$m_f" ]; then
+    if grep -Fq '## Evidence' "$m_f" 2>/dev/null; then
       no "MUTATION CONTROL: the mutant's draft still carries '## Evidence' - the deletion did not take effect"
     else
-      ok "MUTATION CONTROL: without the '## Evidence' emission, the draft lacks that section - the AC1 section-presence assertion above would turn RED against this mutant"
+      ok "MUTATION CONTROL: without the '## Evidence' emission, the draft lacks that section - the section-presence assertion above would turn RED against this mutant"
     fi
   else
-    no "MUTATION CONTROL: the mutant produced no AC1 draft at all - inconclusive"
+    no "MUTATION CONTROL: the mutant produced no draft at all - inconclusive"
   fi
 else
   no "could not build a valid '## Evidence' mutant - AC12 is uncontrolled"
@@ -256,19 +334,14 @@ else
   sz_run stdout "$SZ_STDOUT/propose-common.sh"; rc_stdout=$?
   [ "$rc_real" -eq 0 ] && [ "$rc_nocall" -eq 0 ] && [ "$rc_stdout" -eq 0 ] && ok "AC14: exit 0 with and without the size line" || no "AC14: rc real=$rc_real nocall=$rc_nocall stdout=$rc_stdout"
   n_real="$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-real.err")"
-  [ "$n_real" = 3 ] && ok "AC14: one right-size line per written draft on stderr (3)" || no "AC14: $n_real size lines on stderr: $(cat "$ROOT/sz-real.err")"
+  [ "$n_real" = 1 ] && ok "AC14: one right-size line per written draft on stderr (1)" || no "AC14: $n_real size lines on stderr: $(cat "$ROOT/sz-real.err")"
   [ ! -s "$ROOT/sz-real.out" ] && cmp -s "$ROOT/sz-real.out" "$ROOT/sz-nocall.out" && ok "AC14: stdout byte-identical (empty) with and without the size line" || no "AC14: stdout differs: $(cat "$ROOT/sz-real.out")"
   [ -s "$ROOT/sz-real.sum" ] && cmp -s "$ROOT/sz-real.sum" "$ROOT/sz-nocall.sum" && ok "AC14: the drafts are byte-identical with and without the size line" || no "AC14: drafts differ: $(diff "$ROOT/sz-real.sum" "$ROOT/sz-nocall.sum")"
   grep -vE "$SZ_LINE_RE" "$ROOT/sz-real.err" > "$ROOT/sz-real.rest"
   cmp -s "$ROOT/sz-real.rest" "$ROOT/sz-nocall.err" && ok "AC14: stderr gains ONLY the size lines (every other stderr line unchanged)" || no "AC14: other stderr changed: $(diff "$ROOT/sz-real.rest" "$ROOT/sz-nocall.err")"
   [ "$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-nocall.err")" = 0 ] && ok "AC14 MUTATION CONTROL: the call line deleted ⇒ no size line (the per-draft count turns red)" || no "AC14 nocall mutant still printed a size line"
-  [ "$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-stdout.out")" = 3 ] && ok "AC14 MUTATION CONTROL: the call's >&2 dropped ⇒ the lines land on stdout (the stdout-identical assertion turns red)" || no "AC14 stdout mutant stdout: $(cat "$ROOT/sz-stdout.out")"
+  [ "$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-stdout.out")" = 1 ] && ok "AC14 MUTATION CONTROL: the call's >&2 dropped ⇒ the lines land on stdout (the stdout-identical assertion turns red)" || no "AC14 stdout mutant stdout: $(cat "$ROOT/sz-stdout.out")"
 fi
-
-echo "== usage / fail-safe: missing run_dir, nonexistent run_dir, missing evidence.jsonl all exit 0 =="
-run_sut "" "$(mktmp)/o1"; [ $? -eq 0 ] && ok "empty run_dir arg: exit 0" || no "empty run_dir arg: nonzero exit"
-run_sut "$(mktmp)/does-not-exist" "$(mktmp)/o2"; [ $? -eq 0 ] && ok "nonexistent run_dir: exit 0" || no "nonexistent run_dir: nonzero exit"
-EMPTYRD="$(mktmp)"; run_sut "$EMPTYRD" "$(mktmp)/o3"; [ $? -eq 0 ] && ok "run_dir with no evidence.jsonl: exit 0" || no "run_dir with no evidence.jsonl: nonzero exit"
 
 echo
 echo "propose-from-verify: $pass passed, $fail failed"

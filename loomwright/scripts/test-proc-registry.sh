@@ -767,7 +767,7 @@ leg_summary_scan() {
   reg --pid "$la" --kind lane --purpose lookalike --max-lifetime 999999 2>/dev/null
   lst="$(env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$la" | trimmed)"
   lcmd="$(env LC_ALL=C ps -ww -o command= -p "$la" | trimmed)"
-  gone="$WORK/gone-$RANDOM/verify-fixture-app.py"
+  gone="$WORK/gone-$RANDOM/fixture-app.py"
   exists="$WORK/exists-$RANDOM.py"; : > "$exists"
   fx="$WORK/scan-snap.$RANDOM"
   {

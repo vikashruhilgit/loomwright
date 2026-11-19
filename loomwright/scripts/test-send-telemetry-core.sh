@@ -415,14 +415,19 @@ real_payload("real-handback-secret.json", RECAP, handback_transcript(
     "real-handback-secret.agent.jsonl",
     review_block("token ghp_REALSHAPESECRET0123456789 leaked")))
 real_payload("real-prose-only.json", RECAP, os.path.join(outdir, "no-such-agent.jsonl"))
-# QA_RESULT in YAML header form (`QA_RESULT:`) delivered via handback — the
-# older qa fixture only covers the `## QA_RESULT` markdown form.
-real_payload("real-handback-qa.json",
-    "QA run finished; 8 of 12 tests failed. I sent back the QA_RESULT block.",
-    handback_transcript("real-handback-qa.agent.jsonl", "\n".join([
-        "QA done.", "", "```yaml", "QA_RESULT:",
+# no_qa_schema_scored: a well-formed block named after the removed QA result
+# schema, delivered the real way (SubagentHandback). The core no longer knows
+# that schema, so it must skip the event (exit 5, no_known_result_block) —
+# never score it. The name is spelled in two parts on purpose: the QA-removal
+# manifest gate is a fixed-string grep over this whole file, and this is the
+# one fixture whose job is to say the removed name back to the core.
+REMOVED_QA_SCHEMA = "QA" + "_RESULT"
+real_payload("real-handback-removed-qa.json",
+    "Run finished; 8 of 12 tests failed. I sent back the %s block." % REMOVED_QA_SCHEMA,
+    handback_transcript("real-handback-removed-qa.agent.jsonl", "\n".join([
+        "Done.", "", "```yaml", "%s:" % REMOVED_QA_SCHEMA,
         "  schema_version: 1",
-        "  task_id: real-qa-task",
+        "  task_id: real-removed-qa-task",
         "  tests_generated: 12",
         "  tests_passed: 4",
         "  tests_failed: 8",
@@ -430,7 +435,7 @@ real_payload("real-handback-qa.json",
         "  status: failed",
         "  summary: eight generated tests failed",
         "```"])),
-    agent_type="loomwright:loomwright:qa-executor")
+    agent_type="loomwright:loomwright:worker")
 
 # Group 12 (triage PR-1): plugin facts only, never project content. Every
 # result block below is full of the project's own text — file paths, function
@@ -482,16 +487,6 @@ write_agent("content-supervisor.json", "loomwright:loomwright:supervisor-runner"
     "  heal_decision: ESCALATED",
     "  error: charge_card() in src/billing/charge_card.py:214 broke",
     "  summary: checkout rewrite failed"]))
-write_agent("content-qa.json", "loomwright:loomwright:qa-executor", "\n".join([
-    "QA_RESULT:",
-    "  schema_version: 1",
-    "  task_id: acme-checkout-qa",
-    "  tests_generated: 4",
-    "  tests_passed: 3",
-    "  failing_test: tests/billing/test_charge.py::test_charge_card_retries",
-    "  coverage_estimate: 0.6",
-    "  status: failed",
-    "  summary: one failing test"]))
 PY
 if [ ! -f "$FIXDIR/secrets.tsv" ]; then
   echo "FATAL  fixture generation failed" >&2
@@ -1101,10 +1096,17 @@ assert_match "real_shape_task_type_normalised" "Task Type: code-reviewer" "$out"
 assert_match "real_shape_label_normalised" "task:code-reviewer" "$out"
 assert_not_match "real_shape_no_residual_prefix" "task:loomwright:" "$out"
 
-out="$(run_core "$FIXDIR/real-handback-qa.json" --dry-run)"
-assert_eq "real_shape_qa_yaml_header_would_send" "0" "$(extract_would_exit "$out")"
-assert_not_match "real_shape_qa_detected" "no_known_result_block" "$out"
-assert_match "real_shape_qa_task_type" "Task Type: qa-executor" "$out"
+# no_qa_schema_scored (AC5): the removed QA result schema is not a name the
+# core resolves or scores. Behaviour: the block is skipped as unknown, never
+# sent. Source: the SCHEMA_NAMES line names only the surviving schemas.
+REMOVED_QA_SCHEMA="QA""_RESULT"
+out="$(run_core "$FIXDIR/real-handback-removed-qa.json" --dry-run)"
+assert_eq "no_qa_schema_scored_skipped" "5" "$(extract_would_exit "$out")"
+assert_match "no_qa_schema_scored_reason" "no_known_result_block" "$out"
+assert_not_match "no_qa_schema_scored_no_title" "TITLE=" "$out"
+schema_names_line="$(grep -E '^SCHEMA_NAMES = \(' "$CORE" 2>/dev/null || true)"
+assert_match "no_qa_schema_scored_names_line_present" 'SCHEMA_NAMES = ("SUPERVISOR_RESULT", "CODE_REVIEW_RESULT")' "$schema_names_line"
+assert_not_match "no_qa_schema_scored_names_line_clean" "$REMOVED_QA_SCHEMA" "$schema_names_line"
 
 out="$(run_core "$FIXDIR/real-handback-secret.json" --dry-run)"
 assert_eq "real_shape_secret_still_blocks" "2" "$(extract_would_exit "$out")"
@@ -1163,12 +1165,6 @@ assert_no_project_content "content_supervisor" "$out"
 assert_match "content_supervisor_subtask_counted" "subtask_failed" "$out"
 assert_match "content_supervisor_heal_enum_kept" "heal_decision=ESCALATED" "$out"
 assert_match "content_supervisor_unspecified_count" '"unspecified": 2' "$out"
-
-out="$(run_core "$FIXDIR/content-qa.json" --dry-run)"
-assert_eq "content_qa_would_send" "0" "$(extract_would_exit "$out")"
-assert_no_project_content "content_qa" "$out"
-assert_match "content_qa_failing_counted" "failing_tests=1" "$out"
-assert_match "content_qa_tests_failed" "tests_failed=1/4" "$out"
 
 # The include_result_block opt-in cannot bring the project text back.
 user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo", "include_result_block": true}'

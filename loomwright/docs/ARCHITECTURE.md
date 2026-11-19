@@ -72,22 +72,14 @@
 
                     ┌──────────────────────────────────────────┐
                     │           POST-EXECUTION                  │
-                    └──┬──────────────────────┬───────────────┘
-                       │                      │
-              ┌────────▼──────────┐  ┌────────▼──────────────┐
-              │  QA Strategist   │  │  Red Team Reviewer    │
-              │  #FF6347         │  │  #DC143C              │
-              │  maxT: 40        │  │  maxT: 60             │
-              │  Risk strategy   │  │  Adversarial audit    │
-              └────────┬─────────┘  └───────────────────────┘
+                    └──┬───────────────────────────────────────┘
                        │
-              ┌────────▼─────────┐
-              │  QA Executor    │
-              │  #FF4500         │
-              │  maxT: 80        │
-              │  Discovery +     │
-              │  Tests + Debate  │
-              └──────────────────┘
+              ┌────────▼──────────────┐
+              │  Red Team Reviewer    │
+              │  #DC143C              │
+              │  maxT: 60             │
+              │  Adversarial audit    │
+              └───────────────────────┘
 ```
 
 ---
@@ -130,16 +122,6 @@ Implement → /code-reviewer → PASS/FAIL/NEEDS_HUMAN
 /commit → Conventional Commits
 ```
 
-### QA Pipeline
-
-```
-/qa-strategist src/ → Risk Classification + Coverage Targets
-    ↓
-/qa-executor → Discovery → Test Generation → Execution → Coverage
-    ↓
-/qa-strategist --audit .qa-summary.md → STRATEGIST_VERDICT
-```
-
 ### Pre-Launch Audit
 
 ```
@@ -175,4 +157,3 @@ Fix FATAL/CRITICAL findings
 - Result schemas: `docs/RESULT_SCHEMAS.md`
 - Failure escalation: `docs/FAILURE_ESCALATION.md`
 - Architecture contracts: `docs/ARCHITECTURE_CONTRACTS.md`
-- QA system blueprint: `docs/QA_SYSTEM_BLUEPRINT.md`

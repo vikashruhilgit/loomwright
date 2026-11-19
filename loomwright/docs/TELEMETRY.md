@@ -9,7 +9,7 @@ once the wrapper, core, and `/telemetry` slash command land.
 ## Overview
 
 Telemetry is an **opt-in**, structured feedback channel that turns finished
-agent runs (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`) — and the
+agent runs (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`) — and the
 steps of plugin scripts that fail or warn (§"Script events") — into GitHub
 issues in a target repo of the user's choice. Each issue carries a derived
 score, a labelled categorisation, and a redacted JSON payload. The goal is
@@ -97,7 +97,7 @@ SubagentStop hook (hooks.json)
 
 Both `send-telemetry-core.sh` and `send-webhook.sh` (the `supervisor_result`
 path) need the finishing subagent's final output text to parse the
-`SUPERVISOR_RESULT` / `CODE_REVIEW_RESULT` / `QA_RESULT` block out of it. That
+`SUPERVISOR_RESULT` / `CODE_REVIEW_RESULT` block out of it. That
 text is **not** in a top-level `result_block` field — a real Claude Code
 `SubagentStop` payload does not carry one.
 
@@ -130,7 +130,7 @@ final text is in **`last_assistant_message`**.
    working; absent on real payloads today.
 3. Last assistant message read out of the transcript JSONL — preferring the
    subagent-scoped **`agent_transcript_path`** (the `code-reviewer` /
-   `qa-executor` / `supervisor-runner` SubagentStop hooks all fire from a
+   `supervisor-runner` SubagentStop hooks both fire from a
    Task-spawned subagent, whose own messages live here), then the shared
    session **`transcript_path`**. This is the only field the hook docs
    guarantee, so it is the durable fallback.
@@ -279,9 +279,9 @@ own line:
 
 | Matcher | Emits `token_ledger`? | How |
 |---------|----------------------|-----|
-| `loomwright:code-reviewer`, `loomwright:qa-executor`, `loomwright:supervisor-runner` | yes | chained after `send-telemetry.sh` |
+| `loomwright:code-reviewer`, `loomwright:supervisor-runner` | yes | chained after `send-telemetry.sh` |
 | `loomwright:worker` | yes (since the PR #435 fix-now — before it worker spend, usually the largest share, was never ledgered) | chained after `emit-progress-event.sh`, in the leaf AFTER `validate-worker-result.py`'s own leaf |
-| the other ten (`context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-strategist`, `red-team-reviewer`, `review-pr-runner`, `rubric-grader`) | yes | the matcher's own line (v15.60.0) |
+| the rest (`context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `red-team-reviewer`, `review-pr-runner`, `rubric-grader`) | yes | the matcher's own line (v15.60.0) |
 
 Claude Code's own `general-purpose` subagents have no matcher here and are not
 ledgered. **A rejected worker stop still writes its line:** the runtime runs a
@@ -352,8 +352,8 @@ fan-out, same shape as the `token_ledger` chain):
 }
 ```
 
-Unlike `token_ledger` (chained onto `code-reviewer` / `qa-executor` /
-`supervisor-runner`), this event fires **only** on `loomwright:worker`
+Unlike `token_ledger` (registered on every agent's `SubagentStop` matcher,
+per the coverage table above), this event fires **only** on `loomwright:worker`
 completion — the Single-Agent Path's one worker and every subtask worker on
 the Parallel Path, but not the reviewer, Execute Manager, or Supervisor
 itself. `emit-progress-event.sh` reads the same verified `SubagentStop`
@@ -1075,8 +1075,8 @@ ten seconds later is still appended, and 21f/21g pin the inclusive edge: stamps 
 seconds apart are one completion, three seconds apart are two.
 
 **Adjacent-duplicate guard (confirmed, not assumed).**
-`emit-token-ledger.sh` is registered under three `SubagentStop` matchers
-(`loomwright:code-reviewer`, `loomwright:qa-executor`,
+When measured, `emit-token-ledger.sh` was registered under three `SubagentStop`
+matchers (`loomwright:code-reviewer`, a since-removed QA agent's, and
 `loomwright:supervisor-runner`). They are **not** mutually exclusive in
 practice: they only discriminate when the payload actually carries an
 `agent_type`. Measured on the live log: **94/94** typed firings emitted
@@ -1095,8 +1095,8 @@ because the guard it belongs to never depended on the answer: it keys on
 byte-identity, not on a duplicate count. At three blocks, only two
 lines were measured per untyped firing, so exactly one block's emitter
 produced nothing. What is established from the repo: an emitter handed empty
-stdin writes no line and exits 0 (probed directly); both
-`validate-qa-result.py` and `validate-supervisor-result.py` read stdin to EOF
+stdin writes no line and exits 0 (probed directly); both the since-removed
+QA validator and `validate-supervisor-result.py` read stdin to EOF
 via `result_block_parser.extract_payload()`, and each sits in the same matcher
 block AHEAD of that block's ledger command, whereas the `code-reviewer`
 block's preceding hook is `type: prompt` (not a stdin-consuming subprocess);
@@ -1274,10 +1274,10 @@ log the redacted stderr, exit 0.
 
 ## Scoring rubric (deterministic, per-result-block)
 
-The three result block schemas (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`,
-`QA_RESULT`) use different status enums, different counters, and different
-notions of "success". A single unified mapping cannot disambiguate them, so
-the rubric is expressed as **three separate tables**. The score function
+The two result block schemas (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`) use
+different status enums, different counters, and different notions of
+"success". A single unified mapping cannot disambiguate them, so the rubric is
+expressed as **one table per schema**. The score function
 selects exactly one table per call based on which result block was found.
 
 **Determinism rule:** Same input -> same output. The score function does
@@ -1355,36 +1355,6 @@ BLOCKING/HIGH/drift -> base `9`, no deltas -> **`9`**. Bucket: `high`.
 
 ---
 
-### Rubric C — `QA_RESULT`
-
-The score is anchored to the test pass ratio, then adjusted for coverage.
-If `tests_generated == 0`, the run is treated as `filter_skipped` (exit 5)
-upstream and never scored.
-
-Let `r = tests_passed / tests_generated`.
-
-| Condition          | Base score |
-|--------------------|------------|
-| `r == 1.0`         | **9** |
-| `0.9 <= r < 1.0`   | **7** |
-| `0.7 <= r < 0.9`   | **5** |
-| `r < 0.7`          | **3** |
-
-**Adjustments:**
-
-| Signal                              | Delta   |
-|-------------------------------------|---------|
-| `coverage_estimate < 0.5`           | `-1.0`  |
-| `self_check_gates_passed < 5` (out of 5) | `-0.5 * (5 - passed)` |
-
-Floor at `0`, ceiling at `10`.
-
-**Worked example.** `tests_passed: 9`, `tests_generated: 10` -> `r = 0.9`,
-base `7`. `coverage_estimate: 0.42` -> `-1.0`. Final score **`6`**.
-Bucket: `medium`.
-
----
-
 ## Issue body template
 
 Every round renders the layout below (from `temp/self-learning.md` §1).
@@ -1400,7 +1370,7 @@ other byte.
 
 ```markdown
 ## Task Summary
-- Task Type: <agent_type, e.g. supervisor / code-reviewer / qa-executor>
+- Task Type: <agent_type, e.g. supervisor / code-reviewer>
 - Success: <true|false — derived from status enum, see below>
 - Score: <N>/10
 - Bucket: <low|medium|high>
@@ -1418,8 +1388,7 @@ other byte.
                         those says so in one line instead of rendering
                         nothing
     SUPERVISOR_RESULT:  `subtask_failed` per failed subtask (names not sent),
-                        `subtasks_failed=<N>`, `heal_decision=<ENUM|OTHER>`
-    QA_RESULT:          `failing_tests=<N>` (names not sent), `tests_failed=<n>/<N>`>
+                        `subtasks_failed=<N>`, `heal_decision=<ENUM|OTHER>`>
                                   (omit section if empty)
 
 ## AI Suggestions
@@ -1456,8 +1425,8 @@ whitelist"). `issues_by_category` is present for `CODE_REVIEW_RESULT` only.
 **Both counts come from the PARSED result block** (#508): `issues` counts
 every parsed issue by severity, all four categories included, so a
 drift-only FAIL no longer posts as zero findings (#373, #378); before #508
-they were counted from the rendered `new` lines. Other schemas have no
-severity, so their Issues Detected lines count as `unspecified`.
+they were counted from the rendered `new` lines. `SUPERVISOR_RESULT` has no
+severity, so its Issues Detected lines count as `unspecified`.
 `primary_error` and `task_id` are still computed, but only for the LOCAL
 round identity and `telemetry-sent.log` (§"Dedup window").
 
@@ -1465,7 +1434,6 @@ round identity and `telemetry-sent.log` (§"Dedup window").
 
 - `SUPERVISOR_RESULT`: `true` iff `status == "completed"` AND `heal_decision == "PASS"`.
 - `CODE_REVIEW_RESULT`: `true` iff `decision == "PASS"`.
-- `QA_RESULT`: `true` iff `tests_passed == tests_generated` AND no failing gates.
 
 **Title format (exact):**
 
@@ -1495,7 +1463,6 @@ comments. Additional labels stack as conditions are met.
 | `score:high`                       | Final score `>= 8`.                                                                        |
 | `task:supervisor`                  | `agent_type == "supervisor"` (matched on `SUPERVISOR_RESULT`).                             |
 | `task:code-reviewer`               | `CODE_REVIEW_RESULT`.                                                                      |
-| `task:qa-executor`                 | `QA_RESULT`.                                                                               |
 | `telemetry:healed-in-loop`         | Added by the closing pass: the loop this thread recorded ended in a pass. Created with `gh label create --force` first (best effort — a failure is logged, the close still proceeds). |
 | `agent:{name}-weak`                | When any sub-score `< 5`. `{name}` is the sub-agent identifier (lowercased, dash-separated). E.g. `agent:planner-weak`. |
 
@@ -1880,7 +1847,6 @@ thread (§"Posting policy").
 |----------------------|------------------------------|
 | `SUPERVISOR_RESULT`  | `{"completed"}` (with `heal_decision == "PASS"`) |
 | `CODE_REVIEW_RESULT` | `{"PASS"}`                   |
-| `QA_RESULT`          | `tests_passed == tests_generated` AND all gates passed |
 
 **Send if:** derived score `< 5` OR status is in the interesting set:
 
@@ -1888,7 +1854,6 @@ thread (§"Posting policy").
 |----------------------|----------------------------------------------------------------------------------|
 | `SUPERVISOR_RESULT`  | `{"failed", "completed_with_escalation"}` (also `"checkpoint"` is interesting)  |
 | `CODE_REVIEW_RESULT` | `{"FAIL", "NEEDS_HUMAN"}`                                                       |
-| `QA_RESULT`          | any failing test, or any failing self-check gate                                 |
 
 The interest filter runs **after** privacy and target-repo resolution, in
 the thread step. Order matters: privacy violations always log even on
@@ -1905,7 +1870,7 @@ a reviewer round whose finding was already healed inside the same PR, filed
 as its own issue.
 
 **1. A stop the validator rejects is not posted.** The telemetry hook and the
-result-block validator (`validate-{code-review,qa,supervisor}-result.py`) are
+result-block validator (`validate-{code-review,supervisor}-result.py`) are
 sibling commands in the same `SubagentStop` matcher group (`hooks/hooks.json`),
 so neither sees the other's result and their order is not something to rely
 on. A blocked stop is not final — the runtime feeds the reason back and the
@@ -1930,7 +1895,7 @@ else the session id. The key is
 `sha256("v1" ⊕ destination repo ⊕ agent ⊕ source repo slug ⊕ target)`; it,
 and everything it is computed from, stays in the map below and is never
 posted. One target therefore has one thread per agent (`code-reviewer`,
-`supervisor`, `qa-executor`) per destination.
+`supervisor`) per destination.
 
 **3. Open, comment, close.**
 
@@ -2011,7 +1976,6 @@ Round identity:
 - `CODE_REVIEW_RESULT`: first `new` BLOCKING issue's `description`, else
   first `new` HIGH issue's `description`, else the first `drift`
   BLOCKING/HIGH one, else empty.
-- `QA_RESULT`: first failing test name, else empty.
 
 `.supervisor/logs/telemetry-sent.log` is still appended on every post — an
 audit line, no longer a dedup source.
@@ -2049,7 +2013,7 @@ distinct from the GitHub Issues telemetry described above:
 
 | Channel | Purpose | Trigger | Cadence |
 |---------|---------|---------|---------|
-| GitHub Issues telemetry | **Longitudinal analytics** — agent scores, issue patterns, trend lines aggregated over weeks | `code-reviewer`, `qa-executor`, `supervisor-runner` SubagentStop | Per qualifying run, dedup-windowed |
+| GitHub Issues telemetry | **Longitudinal analytics** — agent scores, issue patterns, trend lines aggregated over weeks | `code-reviewer`, `supervisor-runner` SubagentStop | Per qualifying run, dedup-windowed |
 | Webhook notifications  | **Real-time ops alerts** — "did the run finish? what's the PR? did self-heal escalate? is it paused waiting on me?" | `supervisor-runner` SubagentStop; `/autonomous` gates (v14.0.0); `PreToolUse[AskUserQuestion]` pauses (v14.1.0) | Fire-and-forget per event |
 
 Both can be enabled simultaneously, neither depends on the other, and both
@@ -2097,7 +2061,7 @@ A single JSON object, `Content-Type: application/json`:
 Field semantics:
 
 - **`agent`** — always the literal string `"supervisor"` for v12.2.0; reserved
-  for future expansion (e.g., `"qa-executor"`) without breaking consumers.
+  for future expansion (e.g., `"code-reviewer"`) without breaking consumers.
 - **`status`** — copied verbatim from `SUPERVISOR_RESULT.status`. One of
   `completed | completed_with_escalation | failed | checkpoint`. The
   `SUPERVISOR_RESULT` block is located inside the agent's resolved result text
@@ -2210,9 +2174,8 @@ the env var is unset.
 
 **Known `gate_type` values and firing sites** (closed set in v14.0.0; new
 values require updating both this doc and `skills/autonomous-loop/SKILL.md`;
-the additive sets fired from outside autonomous-loop are documented in their
-own sections below — §"`/verify --notify` gate events" and §"`/automate`
-merge-watch gate event"):
+the additive set fired from outside autonomous-loop is documented in its
+own section below — §"`/automate` merge-watch gate event"):
 
 | `gate_type`      | Firing site                                                                                 | When                                                                                                |
 |------------------|---------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
@@ -2267,7 +2230,7 @@ Field semantics:
   payloads from supervisor_result payloads (which have `"agent": "supervisor"`
   as their stable type discriminator).
 - **`gate_type`** — one of the four values in the table above, or a value
-  from the additive `/verify --notify` / `/automate` merge-watch sections below. Consumers
+  from the additive `/automate` merge-watch section below. Consumers
   SHOULD treat unrecognized values as opaque rather than rejecting; new
   values may be added in future versions.
 - **`iteration`** — **emitted as a JSON string** (e.g., `"2"`, `"0"`), not
@@ -2299,48 +2262,10 @@ loop saw fit to forward.
 - `scripts/send-webhook.sh` — the implementation (both event-type paths
   live in the same script).
 
-### `/verify --notify` gate events (v-next)
-
-A SEPARATE, ADDITIVE closed set — the pre-existing table above (`phase6_save` /
-`rubric` / `no_rubric` / `adjudication`, autonomous-loop's own gates) is
-UNCHANGED by this addition. `/verify --notify` fires the same
-`send-webhook.sh --event-type gate` seam, with its own three `gate_type`
-values, dispatched from `scripts/verify-helpers.sh`'s `evidence_append`
-(the `VERIFY_EVIDENCE` store's sole writer — see §VERIFY_EVIDENCE in
-`docs/RESULT_SCHEMAS.md`), never from `commands/verify.md`'s main thread:
-
-| `gate_type`          | Firing site                                                              | When                                                                                          | Fires at most |
-|-----------------------|---------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|---------------|
-| `verify_needs_auth`   | `verify-helpers.sh evidence_append`, on a `pause` line with `reason: needs_auth` | The run paused for a human sign-in. Also fires `notify-desktop.sh` (a synthetic `Notification`-shaped payload, never `PreToolUse[AskUserQuestion]` — `/verify` never calls that tool). | once per run |
-| `verify_first_fail`   | `verify-helpers.sh evidence_append`, on the first `ac` line with `verdict: FAIL` | The first FAIL of the run was just recorded — any classification, not only `REAL_BUG`.        | once per run |
-| `verify_run_end`      | `verify-helpers.sh evidence_append`, on the `run_end` line                | The run finished (`completed` or `aborted` — a `paused` run never reaches a `run_end` line).  | once per run |
-
-Enablement is a **filesystem marker**, not an env var: `<run_dir>/.notify-enabled`,
-created by `verify-run.sh preflight --notify` or `verify-run.sh notify-enable
-<run_dir>` (the `--resume --notify` path, which never calls `preflight`). This
-is a deliberate departure from autonomous-loop's env-var-resolved
-`LOOMWRIGHT_WEBHOOK_URL` gate: `/verify`'s VERIFY MODE runs its per-AC recording
-inside a Task-spawned qa-executor subagent — a separate process with no shared
-shell state with the `/verify` main thread that parsed `--notify` — while a
-file under the run dir both processes already read is visible regardless of
-which one is running. `--context` folds in `run_id`, `ticket`, and the derived
-counts row (`PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n`)
-already computed by `verify-helpers.sh summary_build` — never a fresh tally.
-No change to `send-webhook.sh` itself, its payload schema, or the
-pre-existing four-value table above; `--notify` on `/verify` is a passthrough
-flag, never persisted (same convention as `/automate --notify` — re-pass it
-on `--resume` to keep notifying a resumed run). `LOOMWRIGHT_WEBHOOK_URL`
-unset ⇒ the existing gate-path no-op (line 1 of this file's gate behaviour):
-exit 0, the run completes unaffected.
-
-**Cross-references:** `commands/verify.md` §"Notify", `scripts/verify-helpers.sh`
-(`verify_notify_dispatch` / `verify_notify_once`), `scripts/verify-run.sh`
-(`preflight --notify`, `notify-enable`).
-
 ### `/automate` merge-watch gate event (v-next)
 
-A SEPARATE, ADDITIVE closed set of two values — the autonomous-loop table and
-the `/verify --notify` table above are UNCHANGED by this addition. The
+A SEPARATE, ADDITIVE closed set of two values — the autonomous-loop table
+above is UNCHANGED by this addition. The
 `/automate` merge watcher (`scripts/automate-merge-watch.sh`, armed at the
 `awaiting_merge` and `escalated` parks — protocol authority
 `skills/automate-loop/SKILL.md` §6 "Post-merge close-out") fires the same

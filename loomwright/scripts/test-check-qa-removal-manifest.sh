@@ -30,6 +30,8 @@
 #
 # Legs over the committed manifest itself (after the fixture legs, before the RESULT tail; read only):
 #   real-repo      — no `--expect` over the real tree and the default manifest path ⇒ exit 0, no refusal.
+#   live-expect-12 — the real checker with `--expect 12` over this checkout ⇒ exit 0, no MISMATCH row
+#                    (every keep row still holds and no re-pointed reference has returned).
 #   AC6 scope rows — the committed manifest has a row for every path the requirement's Scope names.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -463,17 +465,22 @@ expect_rc "$L" 0
 if contains "$ERR" 'REFUSED'; then no "$L — the committed manifest was refused: $(head -3 "$ERR" | tr '\n' ' ')"; else ok "$L — no refusal"; fi
 if grep -q '^summary: [0-9][0-9]* rows, expect none: 0 MISMATCH' "$OUT"; then ok "$L — summary line"; else no "$L — no summary line in: $(tail -2 "$OUT" | tr '\n' '|')"; fi
 
-# The enforcing leg: every row up to the last landed item must hold on the real tree, so a keep row
-# (e.g. the `qa-executor:*)` arm, `verify-provides.sh`) that disappears fails CI here. Raise LANDED in
-# the same change that lands the next item.
-LANDED=11b2
-L="real-repo leg (\`--expect $LANDED\`, exit 0)"
+# live-expect-12 — the enforcing leg, read-only over this checkout: every row of every item (11b1, 11b2
+# and 12, so every re-point row too) must hold on the real tree. A keep row that disappears (e.g. the
+# `qa-executor:*)` arm, `verify-provides.sh`) or a removed QA name that comes back into a re-pointed
+# file (e.g. `/qa-executor` in notify-desktop.sh's transcript regex) fails CI here. 12 is the last
+# item, so this leg is not raised again.
+LANDED=12
+echo "== live-expect-12"
+L="live-expect-12: real-repo leg (\`--expect $LANDED\`, exit 0, 0 MISMATCH)"
 RC=0; bash "$SCRIPT" --root "$REPO" --expect "$LANDED" >"$OUT" 2>"$ERR" || RC=$?
 if [ "$RC" = 0 ]; then
   ok "$L"
 else
   no "$L — rc=$RC: $(grep -E '^(MISMATCH|pending)' "$OUT" | head -5 | tr '\n' '|') $(head -3 "$ERR" | tr '\n' ' ')"
 fi
+n_mm="$(grep -c '^MISMATCH ' "$OUT")"
+if [ "$n_mm" = 0 ]; then ok "$L — no MISMATCH row"; else no "$L — $n_mm MISMATCH row(s): $(grep '^MISMATCH ' "$OUT" | head -5 | tr '\n' '|')"; fi
 if grep -q "^summary: [0-9][0-9]* rows, expect $LANDED: 0 MISMATCH" "$OUT"; then ok "$L — summary line"; else no "$L — no summary line in: $(tail -2 "$OUT" | tr '\n' '|')"; fi
 
 echo "== AC6 scope rows"

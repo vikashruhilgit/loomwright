@@ -37,7 +37,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
 - **Review-PR** (`/review-pr <pr-url>`) — Standalone bounded review→fix→re-review loop against an existing PR; never auto-merges
 
-> `/qa-strategist`, `/qa-executor` and `/verify` were removed — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](../loomwright/docs/rationale/qa-split.md).
+> Acceptance verification and QA live in the Selvedge plugin — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](../loomwright/docs/rationale/qa-split.md).
 
 ### Orchestration Shells (slash commands, not agents)
 

@@ -222,13 +222,12 @@ try:
 except Exception:
     fail("parser_unavailable", "result_block_parser_import_failed", 1)
 
-SCHEMA_NAMES = ("SUPERVISOR_RESULT", "CODE_REVIEW_RESULT", "QA_RESULT")
+SCHEMA_NAMES = ("SUPERVISOR_RESULT", "CODE_REVIEW_RESULT")
 # The validator each block's SubagentStop group runs beside this core
-# (hooks/hooks.json): code-reviewer, qa-executor, supervisor-runner.
+# (hooks/hooks.json): code-reviewer, supervisor-runner.
 SIBLING_VALIDATORS = {
     "SUPERVISOR_RESULT": "validate-supervisor-result.py",
     "CODE_REVIEW_RESULT": "validate-code-review-result.py",
-    "QA_RESULT": "validate-qa-result.py",
 }
 
 # ---- Parse JSON ------------------------------------------------------------
@@ -498,15 +497,6 @@ def fint(key, default=0):
         except ValueError:
             return default
 
-def ffloat(key, default=0.0):
-    v = ftext(key)
-    if not v:
-        return default
-    try:
-        return float(v)
-    except ValueError:
-        return default
-
 def flist(key):
     v = fields.get(key)
     return v if isinstance(v, list) else []
@@ -630,52 +620,12 @@ def score_code_review(parsed):
     success = (decision == "PASS")
     return clamp(base), decision.lower(), primary_error, success
 
-def qa_failing_tests():
-    n = len([x for x in flist("failing_tests") if x is not None])
-    if ftext("failing_test"):
-        n += 1
-    return n
-
-def score_qa():
-    """Rubric C — QA_RESULT."""
-    tg = fint("tests_generated", 0)
-    tp = fint("tests_passed", 0)
-    coverage = ffloat("coverage_estimate", 0.0)
-    gates_passed = fint("self_check_gates_passed", 5)
-
-    if tg == 0:
-        # Per spec: filter_skipped upstream. Signal that to bash.
-        fail("filter_skipped", "tests_generated_zero", 5)
-
-    r = float(tp) / float(tg) if tg > 0 else 0.0
-    if r >= 1.0:
-        base = 9.0
-    elif r >= 0.9:
-        base = 7.0
-    elif r >= 0.7:
-        base = 5.0
-    else:
-        base = 3.0
-    if coverage < 0.5:
-        base += -1.0
-    if gates_passed < 5:
-        base += -0.5 * (5 - gates_passed)
-
-    primary_error = ftext("failing_test")
-    if not primary_error:
-        ft = [rbp.as_text(x).strip() for x in flist("failing_tests") if x is not None]
-        primary_error = ft[0] if ft else ""
-    success = (tp == tg and gates_passed >= 5)
-    return clamp(base), "qa", primary_error, success
-
 # ---- Run scoring -----------------------------------------------------------
 review_issues = parsed_review_issues() if schema == "CODE_REVIEW_RESULT" else []
 if schema == "SUPERVISOR_RESULT":
     score_f, status, primary_error, success = score_supervisor()
-elif schema == "CODE_REVIEW_RESULT":
+else:  # CODE_REVIEW_RESULT, the only other name in SCHEMA_NAMES
     score_f, status, primary_error, success = score_code_review(review_issues)
-else:
-    score_f, status, primary_error, success = score_qa()
 
 if score_f < 4:
     bucket = "low"
@@ -702,10 +652,8 @@ def normalise_agent(at, schema):
     if not s:
         if schema == "SUPERVISOR_RESULT":
             s = "supervisor"
-        elif schema == "CODE_REVIEW_RESULT":
-            s = "code-reviewer"
         else:
-            s = "qa-executor"
+            s = "code-reviewer"
     return s
 
 agent_norm = normalise_agent(agent_type, schema)
@@ -752,21 +700,12 @@ elif schema == "CODE_REVIEW_RESULT":
     if ftext("decision").upper() == "FAIL" and not issues:
         # Truthful empty FAIL: say so instead of rendering nothing.
         issues.append("no BLOCKING/HIGH new or drift finding was parsed (counts below)")
-else:  # QA_RESULT
-    failing_count = qa_failing_tests()
-    if failing_count:
-        # The test NAMES are project content; only their number is sent.
-        issues.append("failing_tests=%d" % failing_count)
-    tg = fint("tests_generated", 0)
-    tp = fint("tests_passed", 0)
-    if tg > 0 and tp < tg:
-        issues.append("tests_failed=%s/%s" % (tg - tp, tg))
 
 # Issues per severity — a STRUCTURED count for raw_data, computed from the
 # PARSED result, never from the rendered lines above: CODE_REVIEW_RESULT
 # counts every parsed issue (all four categories, so a drift-only FAIL is no
 # longer posted as zero findings — #373/#378) and also splits by category;
-# the other schemas have no severity concept, so their lines count as
+# SUPERVISOR_RESULT has no severity concept, so its lines count as
 # "unspecified".
 issues_by_severity = {"blocking": 0, "high": 0, "medium": 0, "low": 0, "unspecified": 0}
 issues_by_category = None
@@ -975,8 +914,7 @@ if [ -z "$EXIT_CODE" ]; then
 fi
 
 # Stage 1 may signal early exit (privacy_blocked=2, parser_unavailable=1,
-# json_parse_failed/empty/no block/validator_rejected/unparseable_block/QA
-# tests_generated==0 = 5). The interest filter is NOT in stage 1 — it runs in
+# json_parse_failed/empty/no block/validator_rejected/unparseable_block = 5). The interest filter is NOT in stage 1 — it runs in
 # stage 2, after consent + target-repo resolution, because it depends on
 # whether the review target already has an open thread.
 if [ "$EXIT_CODE" != "0" ]; then

@@ -33,17 +33,3 @@
 
 ---
 
-### QA Workflow Diagram
-
-```
-/qa-strategist src/ → Risk Classification + Coverage Targets
-    ↓
-/qa-executor → Discovery → Tests → Execute → Coverage → Bugs
-    ↓
-/qa-strategist --audit .qa-summary.md → STRATEGIST_VERDICT
-    ↓
-approved: QA complete | rejected: re-run with gaps addressed
-```
-
----
-

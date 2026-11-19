@@ -133,7 +133,7 @@ GENERIC_WORDS='workflow automation orchestration'
 # Trusted-root surfaces — the files that carry the rules a PR is judged by. PLAIN words (no `*`, `?`
 # or `[`), so noglob never touches them: the any-depth rule is a `case` on `*/<name>` built in code.
 TRUSTED_ROOT_ANYDEPTH='CLAUDE.md AGENTS.md REVIEW.md CLAUDE.local.md'
-TRUSTED_ROOT_ROOTONLY='.claude/ .mcp.json .agent/rules/ .agent/risk.json .agent/verify.json'
+TRUSTED_ROOT_ROOTONLY='.claude/ .mcp.json .agent/rules/ .agent/risk.json selvedge.json'
 SIZE_LINES=400
 SIZE_FILES=15
 REASON_CAP=20
@@ -361,7 +361,7 @@ trusted_root_hit() {
     m="${n%/}"
     # exact path — also the bare `/`-less form of a directory entry (a symlink or file)
     case "$1" in "$m") return 0 ;; esac
-    # an ANCESTOR of an entry (a `.agent` symlink replaces `.agent/rules/`, `.agent/verify.json`, ...)
+    # an ANCESTOR of an entry (a `.agent` symlink replaces `.agent/rules/`, `.agent/risk.json`, ...)
     case "$m" in "$1"/*) return 0 ;; esac
     # under a `/`-terminated directory entry
     case "$n" in */) case "$1" in "$n"*) return 0 ;; esac ;; esac

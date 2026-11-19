@@ -202,11 +202,11 @@ is_plugin_context() {
   # Claude Code hook payloads. Grep for canonical plugin agent / command
   # references in the last 200 lines (cheap; bounded). Patterns:
   #   - loomwright:<agent>  — Task-spawn references
-  #   - /launch-pad, /supervisor, /autonomous, /code-reviewer, /qa-executor,
-  #     /qa-strategist, /red-team-reviewer, /product-owner, /agent-help,
-  #     /telemetry, /dreaming — the 12 plugin slash commands
+  #   - /launch-pad, /supervisor, /autonomous, /code-reviewer,
+  #     /red-team-reviewer, /product-owner, /agent-help, /telemetry,
+  #     /dreaming — plugin slash commands (commands/ is the authority)
   if [ -n "$transcript_path" ] && [ -r "$transcript_path" ]; then
-    if tail -200 "$transcript_path" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
+    if tail -200 "$transcript_path" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
       return 0
     fi
   fi
