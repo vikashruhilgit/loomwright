@@ -11,15 +11,16 @@
 # would be testing something other than what they name.
 #
 # Covers (each = an acceptance criterion):
-#   (a) 14 rows against the REAL agents directory, and every row's hex byte-matches that
+#   (a) one row per colour-declaring agent in the REAL agents directory (the count is derived from
+#       agents/*.md, never restated here), and every row's hex byte-matches that
 #       agent's frontmatter `color:` — asserted PER AGENT, never as a bulk count
-#   (b) DELETING a `color:` line drops that row and makes `--check` FAIL; ADDING a 15th agent
+#   (b) DELETING a `color:` line drops that row and makes `--check` FAIL; ADDING one more agent
 #       makes it FAIL too — the drift the hand-maintained table could not notice
-#   (c) a hex that is NOT a CSS named colour renders the em-dash fallback, never a guess. The 14
-#       live hexes are all CSS names, so this branch is unreachable in production and would
+#   (c) a hex that is NOT a CSS named colour renders the em-dash fallback, never a guess. The live
+#       hexes are all CSS names, so this branch is unreachable in production and would
 #       otherwise ship untested
-#   (d) a VALID CSS name from OUTSIDE the 14 in use (`#FA8072` -> `Salmon`) still resolves.
-#       Paired with (c) this pins both branches: without it, a 14-entry subset implementation
+#   (d) a VALID CSS name from OUTSIDE the set in use (`#FA8072` -> `Salmon`) still resolves.
+#       Paired with (c) this pins both branches: without it, a subset implementation keyed to the live hexes
 #       passes (c) trivially by returning the em-dash for everything it does not know
 #   (e) the marker pair is what the writer keys off — a doc without it gets
 #       `LEGEND MARKERS MISSING` and is NOT rewritten (no guessing where the table goes), and
@@ -87,11 +88,14 @@ for f in "$REAL_AGENTS"/*.md; do
   [ -n "$c" ] && agents_with_color=$((agents_with_color+1))
 done
 [ "$agents_with_color" -gt 0 ] || setup_fail "no agent frontmatter declares a color: — fixture-free assertions below would be vacuous"
-if [ "$rows" = "$agents_with_color" ] && [ "$rows" = "14" ]; then
-  ok "(a2) the generated legend has one row per colour-declaring agent, and that is 14"
+# AC 6 originally pinned the literal agent count here; the count's authority is the agents/ dir
+# (CLAUDE.md: a count lives only in its authority), so (a2) derives it from agents/*.md frontmatter
+# above, and the setup_fail above is the non-zero floor that keeps this from passing as 0 == 0.
+if [ "$rows" = "$agents_with_color" ]; then
+  ok "(a2) the generated legend has one row per colour-declaring agent ($rows)"
 else
-  no "(a2) the generated legend has one row per colour-declaring agent, and that is 14" \
-     "rows=$rows agents_with_color=$agents_with_color (AC 6 pins 14)"
+  no "(a2) the generated legend has one row per colour-declaring agent" \
+     "rows=$rows agents_with_color=$agents_with_color"
 fi
 
 # Per-agent hex parity — asserted one agent at a time, never as a bulk claim.
@@ -170,9 +174,9 @@ fi
 
 row="$(printf '%s\n' "$out" | grep -F '| salmon |' | head -1)"
 if has "$row" '| salmon | Salmon | `#FA8072` |'; then
-  ok "(d) a CSS name from OUTSIDE the 14 in use (#FA8072) resolves to Salmon — the lookup is the published standard"
+  ok "(d) a CSS name from OUTSIDE the set in use (#FA8072) resolves to Salmon — the lookup is the published standard"
 else
-  no "(d) a CSS name from OUTSIDE the 14 in use (#FA8072) resolves to Salmon — the lookup is the published standard" \
+  no "(d) a CSS name from OUTSIDE the set in use (#FA8072) resolves to Salmon — the lookup is the published standard" \
      "row=$row — an em-dash here means the table is a subset keyed to today's agent set"
 fi
 

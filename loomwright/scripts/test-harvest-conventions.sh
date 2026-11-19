@@ -207,23 +207,26 @@ if [ -d "$REPO_ROOT/.claude/agent-memory" ] && [ -f "$A_LEDGER" ] \
   # a live-prose input is a tripwire on the next unrelated doc edit, not a test of this engine. The
   # ordering IS the requirement's claim (§2's table separates these three) and it is what justifies
   # PROJECT_WIDE_PCT sitting between them.
+  # The third (narrow, stay-put) example was a QA Executor memory entry until qa-split 11b1
+  # deleted that store; it is now project_insights_per_run_frontmatter_gap — a code-reviewer
+  # entry scoped to one script (build-insights.sh), the same single-role, narrowly scoped shape.
   pw_grad="$(pw_of attack_failclosed_vs_failsafe_split)"
   pw_jq="$(pw_of attack_jq_only_json_injection)"
-  pw_gf="$(pw_of golden_fixture_regen)"
-  if [ -n "$pw_grad" ] && [ -n "$pw_jq" ] && [ -n "$pw_gf" ]; then
-    [ "$pw_grad" -gt "$pw_jq" ] && [ "$pw_grad" -gt "$pw_gf" ] \
-      && ok "(a2) the cross-role (corroborating) example outscores both stay-put entries (${pw_grad}% > ${pw_jq}% / ${pw_gf}%) — the separation PROJECT_WIDE_PCT is set between" \
-      || no "(a2) separation lost: failclosed=${pw_grad}% jq_only=${pw_jq}% golden_fixture=${pw_gf}%"
+  pw_narrow="$(pw_of project_insights_per_run_frontmatter_gap)"
+  if [ -n "$pw_grad" ] && [ -n "$pw_jq" ] && [ -n "$pw_narrow" ]; then
+    [ "$pw_grad" -gt "$pw_jq" ] && [ "$pw_grad" -gt "$pw_narrow" ] \
+      && ok "(a2) the cross-role (corroborating) example outscores both stay-put entries (${pw_grad}% > ${pw_jq}% / ${pw_narrow}%) — the separation PROJECT_WIDE_PCT is set between" \
+      || no "(a2) separation lost: failclosed=${pw_grad}% jq_only=${pw_jq}% insights_frontmatter=${pw_narrow}%"
     # ...and the gap is WIDE, not a rounding artifact: a threshold can only sit between them if it is.
-    gap_jq=$((pw_grad - pw_jq)); gap_gf=$((pw_grad - pw_gf))
-    [ "$gap_jq" -ge 20 ] && [ "$gap_gf" -ge 20 ] \
-      && ok "(a3) that separation is wide (+${gap_jq} / +${gap_gf} points), so a threshold can sit between them" \
-      || no "(a3) separation too narrow to place a threshold: +${gap_jq} / +${gap_gf} points"
+    gap_jq=$((pw_grad - pw_jq)); gap_narrow=$((pw_grad - pw_narrow))
+    [ "$gap_jq" -ge 20 ] && [ "$gap_narrow" -ge 20 ] \
+      && ok "(a3) that separation is wide (+${gap_jq} / +${gap_narrow} points), so a threshold can sit between them" \
+      || no "(a3) separation too narrow to place a threshold: +${gap_jq} / +${gap_narrow} points"
     # Where they actually landed today, reported and NOT counted as a pass — the buckets are a
     # function of live prose, so a green counter here would be measuring CLAUDE.md, not this engine.
-    echo "  note: today's buckets — failclosed=$(bucket_of attack_failclosed_vs_failsafe_split) jq_only=$(bucket_of attack_jq_only_json_injection) golden_fixture=$(bucket_of golden_fixture_regen)"
+    echo "  note: today's buckets — failclosed=$(bucket_of attack_failclosed_vs_failsafe_split) jq_only=$(bucket_of attack_jq_only_json_injection) insights_frontmatter=$(bucket_of project_insights_per_run_frontmatter_gap)"
   else
-    no "(a2/a3) the worked-example entries were not scored: failclosed='$pw_grad' jq_only='$pw_jq' golden_fixture='$pw_gf'"
+    no "(a2/a3) the worked-example entries were not scored: failclosed='$pw_grad' jq_only='$pw_jq' insights_frontmatter='$pw_narrow'"
   fi
   # AC1 §1 names this one as a well-formed candidate — it must be triaged, wherever it lands.
   got="$(bucket_of project_self_heal_rubber_stamp)"

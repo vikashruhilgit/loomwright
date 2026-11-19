@@ -31,7 +31,7 @@ of `loomwright/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
 `scripts/check-doc-currency.sh` verifies. A row a removal PR finds missing, wrong or over-broad is
 changed here in that PR, with the row count below, never worked around.
 
-Row count: 436
+Row count: 437
 
 ## Rows
 
@@ -360,6 +360,7 @@ Row count: 436
 | `loomwright/scripts/test-committed-twin-scrub.sh` | `qa-executor` | re-point | 11b1 | names a removed QA agent |
 | `loomwright/scripts/test-emit-block-parses.sh` | `QA_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/scripts/test-emit-block-parses.sh` | `VERIFY_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
+| `loomwright/scripts/test-harvest-conventions.sh` | `golden_fixture_regen` | re-point | 11b1 | scored a deleted QA agent-memory entry as its worked example |
 | `loomwright/scripts/test-insights.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |
 | `loomwright/scripts/test-no-fixed-sleep-race.sh` | `verify-walkthrough` | re-point | 11b2 | names a removed QA skill or its test |
 | `loomwright/scripts/test-no-pipefail-grep-q.sh` | `verify-run.sh` | re-point | 11b2 | names a QA script 11b2 deletes |

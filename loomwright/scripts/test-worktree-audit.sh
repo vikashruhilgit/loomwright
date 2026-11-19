@@ -157,11 +157,15 @@ check_payload_reads "$d/empty.sh" && no "AC-1 an empty extraction PASSED (vacuou
 echo "== AC-2: no empty-string extraction =="
 [ "$(jq '.hooks | has("WorktreeCreate") or has("WorktreeRemove")' "$HOOKS_JSON")" = "false" ] \
   && ok "AC-2 hooks.json has neither WorktreeCreate nor WorktreeRemove" || no "AC-2 a destructive worktree hook survives in hooks.json"
-# A literal on purpose: deriving it from hooks.json would compare the file with itself (x == x) and
-# could never catch a leaf dropped or added alongside the worktree-hook removal. 47 = 46 + iq02 T04
-# 3a's new PostToolUse `emit-lifecycle.sh answered` leaf; 48 = 47 + lane-guardrails' Stop
-# `guard-lane-wait-armed.sh` leaf.
-[ "$(jq '[.hooks[][].hooks[]] | length' "$HOOKS_JSON")" = "48" ] && ok "AC-2 leaf hook count is 48" || no "AC-2 leaf hook count != 48"
+# Scoped to what this change owns, not the global leaf total: a pinned total of every hooks.json
+# leaf failed on each unrelated hook added or removed elsewhere, and the count's authority is
+# hooks.json itself (CLAUDE.md: a count lives only in its authority). What the worktree-hook
+# removal must hold is that worktree-audit.sh is wired exactly ONCE in the whole file (a duplicate
+# registration would double-record every command; zero means the observer was dropped) — with the
+# Bash-matcher leaf check below, that also places it nowhere else. The has() check above covers the
+# destructive WorktreeCreate/WorktreeRemove hooks coming back; the Bash matcher checks below, its shape.
+[ "$(jq '[.hooks[][].hooks[] | select((.command // "") | contains("worktree-audit.sh"))] | length' "$HOOKS_JSON")" = "1" ] \
+  && ok "AC-2 worktree-audit.sh is wired by exactly one leaf in all of hooks.json" || no "AC-2 worktree-audit.sh leaf count across hooks.json != 1"
 [ "$(jq '[.hooks.PostToolUse[] | select(.matcher == "Bash")] | length' "$HOOKS_JSON")" = "1" ] && ok "AC-2 exactly ONE PostToolUse Bash matcher-object" || no "AC-2 Bash matcher-object count != 1"
 [ "$(jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks | length' "$HOOKS_JSON")" = "4" ] && ok "AC-2 the Bash matcher carries four leaves" || no "AC-2 Bash matcher leaf count != 4"
 grep -q 'worktree-audit.sh" record || true' < <(jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$HOOKS_JSON") \
