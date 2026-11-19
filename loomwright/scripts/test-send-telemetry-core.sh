@@ -112,12 +112,12 @@ open(sys.argv[3], "w").write(json.dumps(doc))
 user_scope_write_raw() { printf '%s' "$1" > "$SB_EGRESS"; }
 
 # copy_core_siblings <dir> — a mutant core finds its helpers BESIDE itself
-# (resolver, the shared result-block parser, the three sibling validators).
+# (resolver, the shared result-block parser, the sibling validators).
 copy_core_siblings() {
   local d="$1" f
   mkdir -p "$d"
   for f in resolve-egress-config.sh result_block_parser.py result_nested_keys.py validate-code-review-result.py \
-           validate-qa-result.py validate-supervisor-result.py; do
+           validate-supervisor-result.py; do
     cp "$SCRIPT_DIR/$f" "$d/"
   done
 }

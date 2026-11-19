@@ -384,7 +384,7 @@ Row count: 441
 | `loomwright/scripts/test-script-event-telemetry.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `QA_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |
-| `loomwright/scripts/test-send-telemetry-core.sh` | `validate-qa-result.py` | re-point | 12 | names a QA script 11b2 deletes |
+| `loomwright/scripts/test-send-telemetry-core.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-telemetry-threads.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-telemetry.sh` | `qa-failed` | re-point | 12 | names the QA telemetry fixture 12 deletes |
 | `loomwright/scripts/test-token-ledger.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |
