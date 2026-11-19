@@ -1,6 +1,7 @@
 # Part 1 of the QA removal: the QA agents, commands, skills, hooks and memory are gone, with a migration note
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/946
 
 > Phase 4, item 11b (part 1 of 2) and item 13 of the approved plan `qa-split/00-plan.md` (rev 2, owner-approved 2026-11-12).
 > Item 13 (the migration note and rationale doc) is folded in here: the release that removes
@@ -31,8 +32,19 @@ rationale doc,
   mirror rows; the tracked agent-memory dir `.claude/agent-memory/loomwright-loomwright-qa-executor/`.
 - Scripts, schema docs, `QA_SYSTEM_BLUEPRINT.md` and the CI Playwright steps stay for part 2, unless a
   gate in this PR needs one gone.
-- Update every count the doc-currency gate checks (plugin and marketplace descriptions, CLAUDE.md's
-  agent-roles heading and table, README) to the new numbers.
+- **Counts (owner decision 2026-11-18, `LP-RULE-OVR` → honor the house rule):** only the two manifest
+  `description` fields (`loomwright/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) keep
+  their counts, updated in place. Every prose surface that states a count — `CLAUDE.md`, `README.md`,
+  `.claude-plugin/README.md`, `loomwright/commands/agent-help.md`, `loomwright/docs/ARCHITECTURE.md` —
+  drops the number instead of restating a new one (e.g. heading "The Agent Roles"). The fragment,
+  rationale doc and evidence file name no agent/command/skill/hook count. `check-doc-currency.sh` and
+  its test stay green.
+- **agent-help's remaining QA mentions stay for item 12** (owner decision 2026-11-18): the manifest
+  assigns every `agent-help.md` and `docs/command-parts/agent-help/*.md` QA mention to item 12
+  (`re-point`), including agent-help's Quick Start "QA Pipeline" block and `more.md`'s QA diagram
+  command lines, and `agent-help/qa.md`'s delete. This PR removes only agent-help's per-command
+  `### … /qa-strategist|/qa-executor|/verify` sections and the count lines; it does not move manifest
+  rows. The evidence file lists those mentions as remaining until item 12.
 - Make only the edits other files need for this PR's own gates to pass; behaviour-changing re-points are
   item 12.
 - **Keep** every manifest `keep` row, in particular `classify_kind`'s `qa-executor` arm and
@@ -48,6 +60,10 @@ rationale doc,
 - Given a brief whose Executable Acceptance has a `qa-executor: x` bullet, when ground truth runs, then it
   still records the bullet as deferred and spawns nothing (unchanged behaviour, pinned by the existing
   test).
+- Given `loomwright/commands/agent-help.md`, when
+  `grep -nE '^### [^ ]+ /(qa-strategist|qa-executor|verify) ' loomwright/commands/agent-help.md` runs,
+  then it prints nothing. The pattern is anchored after the heading's emoji (`[^ ]+`), so the kept
+  `### 🌱 /propose … a /verify Run …` heading does not match; never use the unanchored `^### .*/(…) `.
 - `bash scripts/check-doc-currency.sh` passes with the new counts, and `check-token-budget.sh` has no entry
   for a deleted file.
 - The tag `pre-qa-removal` exists on the remote and points at the commit this branch started from.
@@ -66,6 +82,12 @@ rationale doc,
 - 2026-11-12: remove QA after Phase 1; keep the `qa-executor` arm until item 09 or D18 lands; tag
   `pre-qa-removal` before deleting (plan §6, item 11a).
 - 2026-11-18: start Phase 4 now; item 13 folded into this item; 11b split in two parts (this session).
+- 2026-11-18 (`LP-SCOPE`, first Launch Pad attempt): accept the 18 extra paths this PR's own gates need —
+  now listed in `## Touches` below; the plan does not change.
+- 2026-11-18 (`LP-RULE-OVR`): honor the one-place-for-counts house rule (see Scope "Counts").
+- 2026-11-18 (`LP-FAIL`, Refine offline): the first plan failed review 3/3 only on AC8's unanchored grep
+  (it matched the kept `/propose` heading) — fixed in the acceptance criteria above — and on an open
+  question about agent-help's QA Pipeline block / `more.md` diagram — settled above (item 12).
 
 ## Priority: MVP
 
@@ -118,3 +140,28 @@ loomwright/.claude-plugin/plugin.json
 CLAUDE.md
 README.md
 changelog.d
+.claude-plugin/README.md
+CHANGELOG.md
+docs/evidence/qa-split-11b1-removal.md
+loomwright/capabilities.json
+loomwright/commands/agent-help.md
+loomwright/docs/ARCHITECTURE.md
+loomwright/docs/HOOKS.md
+loomwright/docs/prompt-history-refs-baseline.json
+loomwright/docs/qa-removal-manifest.md
+loomwright/docs/vendor-coupling-manifest.json
+loomwright/scripts/adapters/providers/lens-roles.sh
+loomwright/scripts/adapters/providers/test-lens-roles.sh
+loomwright/scripts/resolve-routing.sh
+loomwright/scripts/test-agent-memory-permission.sh
+loomwright/scripts/test-build-capabilities.sh
+loomwright/scripts/test-check-contract-parity.sh
+loomwright/scripts/test-non-interactive-gates-seam.sh
+loomwright/scripts/test-verify-walkthrough.sh
+scripts/check-contract-parity.sh
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-19T09:43:40Z
+- **Brief:** .supervisor/jobs/done/2026-11-18-qa-split-11b1-remove-qa-surfaces.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/946
