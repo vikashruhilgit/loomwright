@@ -418,10 +418,10 @@ real_payload("real-prose-only.json", RECAP, os.path.join(outdir, "no-such-agent.
 # no_qa_schema_scored: a well-formed block named after the removed QA result
 # schema, delivered the real way (SubagentHandback). The core no longer knows
 # that schema, so it must skip the event (exit 5, no_known_result_block) —
-# never score it. The name is spelled in two parts on purpose: the QA-removal
-# manifest gate is a fixed-string grep over this whole file, and this is the
-# one fixture whose job is to say the removed name back to the core.
-REMOVED_QA_SCHEMA = "QA" + "_RESULT"
+# never score it. This is the one fixture whose job is to say the removed name
+# back to the core, so the QA-removal manifest carries a `keep` row for
+# QA_RESULT in this file (loomwright/docs/qa-removal-manifest.md).
+REMOVED_QA_SCHEMA = "QA_RESULT"
 real_payload("real-handback-removed-qa.json",
     "Run finished; 8 of 12 tests failed. I sent back the %s block." % REMOVED_QA_SCHEMA,
     handback_transcript("real-handback-removed-qa.agent.jsonl", "\n".join([
@@ -1099,7 +1099,7 @@ assert_not_match "real_shape_no_residual_prefix" "task:loomwright:" "$out"
 # no_qa_schema_scored (AC5): the removed QA result schema is not a name the
 # core resolves or scores. Behaviour: the block is skipped as unknown, never
 # sent. Source: the SCHEMA_NAMES line names only the surviving schemas.
-REMOVED_QA_SCHEMA="QA""_RESULT"
+REMOVED_QA_SCHEMA="QA_RESULT"   # literal on purpose: the manifest's keep row pins it
 out="$(run_core "$FIXDIR/real-handback-removed-qa.json" --dry-run)"
 assert_eq "no_qa_schema_scored_skipped" "5" "$(extract_would_exit "$out")"
 assert_match "no_qa_schema_scored_reason" "no_known_result_block" "$out"

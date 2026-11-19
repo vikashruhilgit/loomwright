@@ -73,10 +73,28 @@ run_sut() {
 
 count_props() { find "$1" -maxdepth 1 -type f -name '*.md' 2>/dev/null | awk 'END{print NR+0}'; }
 
+# clock_shim <fixed-output> - a PATH dir whose `date` prints <fixed-output> whatever its args.
+# The first AC3 run and its idempotence re-run happen inside the same second, so a real clock
+# never differs between them; each runs under its OWN fixed clock so any clock-derived byte in
+# the candidate differs and the byte-identity pin turns red. Scoped to one command's env.
+clock_shim() {
+  cs_dir="$(mktmp)"
+  printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$1" > "$cs_dir/date"
+  chmod +x "$cs_dir/date"
+  printf '%s' "$cs_dir"
+}
+CLOCK_FIRST="$(clock_shim 'Sat Jan  1 00:00:00 UTC 2000')"
+CLOCK_RERUN="$(clock_shim 'Thu Dec 31 23:59:59 UTC 2099')"
+# run_sut_clock <clock-dir> <run_dir> <out_dir> - run_sut with the clock shim first on PATH.
+run_sut_clock() {
+  rsc_clock="$1"; shift
+  PATH="$rsc_clock:$PATH" run_sut "$@"
+}
+
 echo "== AC3: verdict.json with 1 FAIL + 2 PASS => exit 0, exactly one candidate =="
 RD="$(make_run)"
 OUT="$(mktmp)/out"
-run_sut "$RD" "$OUT"; rc=$?
+run_sut_clock "$CLOCK_FIRST" "$RD" "$OUT"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0" || no "exit $rc: $(cat "$ROOT/last.err")"
 np="$(count_props "$OUT")"
 [ "$np" -eq 1 ] && ok "exactly one candidate written ($np)" || no "expected 1 candidate, got $np: $(ls "$OUT" 2>/dev/null)"
@@ -177,10 +195,13 @@ INJ_F="$INJ_OUT/verify-$(basename "$INJ_RD")-${C_FAIL}.md"
   && ok "control characters collapse to one space; the draft keeps exactly one ## Status: and one ## Touches heading" \
   || no "interpretation injected a heading: $(grep -n '^## ' "$INJ_F" 2>/dev/null | tr '\n' '|')"
 
-echo "== AC3: idempotence - a re-run rewrites the same file byte for byte, no duplicate =="
+echo "== AC3: idempotence - a re-run (under a different fixed clock) rewrites the same file byte for byte, no duplicate =="
 cp "$F" "$ROOT/first-run.md" 2>/dev/null
+[ "$(PATH="$CLOCK_FIRST:$PATH" date -u)" != "$(PATH="$CLOCK_RERUN:$PATH" date -u)" ] \
+  && ok "the first run and the re-run see different clocks (a clock-derived byte cannot survive both)" \
+  || no "the clock shims print the same value - the byte-identity pin below would not pin clock independence"
 before="$(find "$OUT" -type f | env LC_ALL=C sort)"
-run_sut "$RD" "$OUT"; rc2=$?
+run_sut_clock "$CLOCK_RERUN" "$RD" "$OUT"; rc2=$?
 after="$(find "$OUT" -type f | env LC_ALL=C sort)"
 [ "$rc2" -eq 0 ] && ok "exit 0 on re-run" || no "exit $rc2 on re-run"
 [ "$(count_props "$OUT")" -eq 1 ] && ok "still exactly one file after re-run" || no "file count changed after re-run: $(count_props "$OUT")"
