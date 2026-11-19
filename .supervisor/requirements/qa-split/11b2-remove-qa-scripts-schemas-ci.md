@@ -1,6 +1,7 @@
 # Part 2 of the QA removal: the QA scripts, schema docs, blueprint and CI Playwright steps are gone
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/950
 
 > Phase 4, item 11b (part 2 of 2) of the approved plan `qa-split/00-plan.md` (rev 2, owner-approved
 > 2026-11-12). Decisions: D1, Q4. Works strictly from 11a's manifest rows marked `11b2`. Part 1
@@ -96,3 +97,9 @@ loomwright/docs/QA_SYSTEM_BLUEPRINT.md
 .github/workflows/ci.yml
 scripts/ci-local.sh
 changelog.d
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-19T16:43:21Z
+- **Brief:** .supervisor/jobs/done/2026-11-19-qa-split-11b2-remove-qa-scripts-ci.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/950
