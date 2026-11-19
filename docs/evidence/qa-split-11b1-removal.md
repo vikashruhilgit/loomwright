@@ -210,10 +210,15 @@ ls: loomwright/docs/command-parts/agent-help/qa.md: No such file or directory
 - `loomwright/docs/command-parts/agent-help/guide.md` — the SubagentStop row naming `qa-executor`, the
   file-tree lines for `qa-strategist.md` / `qa-executor.md` / `QA_SYSTEM_BLUEPRINT.md`, and the
   "QA Pipeline (Test Automatically)" table.
-- `loomwright/docs/command-parts/agent-help/knowledge.md` — `/dreaming --agent qa-executor` examples and
-  the valid-target list naming QA Executor.
+- `loomwright/docs/command-parts/agent-help/knowledge.md` — only the `/propose` mentions in the next
+  bullet (the `/verify Run` heading and the `--from-verify` lines).
 - The `### 🌱 /propose — … a /verify Run …` heading (in the router and in `knowledge.md`) and the
   `/propose --from-verify` lines.
+
+Note (2026-11-19): this list first also named, in `knowledge.md`, the `/dreaming --agent qa-executor`
+examples and the valid-target list naming QA Executor. By owner ruling during Phase 4.5 they were
+removed in this PR instead of item 12, so they no longer remain. The outputs recorded above were
+captured before that change and are left as they were.
 
 ### Honest limits
 

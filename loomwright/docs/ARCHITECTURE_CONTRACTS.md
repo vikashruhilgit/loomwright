@@ -26,10 +26,8 @@
 | Product Owner | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
 | Orchestrator | no | no (control case — no `memory:`, so no grant; see `disallowedTools` section) | yes | no | no | no | inherit |
 | Red Team Reviewer | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
-| QA Strategist | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
 | Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
 | Rubric Grader | no | no | yes (read-only git only) | yes (rubric scoring) | no | no | haiku |
-| QA Executor | yes | yes | yes (+ LSP) | no | yes | no | inherit |
 | review-pr-runner | yes (code-reviewer + general-purpose fix worker) | yes (fix worker pushes the PR branch) | yes (`gh`/`git`) | yes (via code-reviewer) | no | no | inherit |
 
 > **review-pr-runner is NEVER `Task`-spawned (AC9).** It must run only as the **main agent of its own session** (`claude --agent loomwright:review-pr-runner`, launched fresh from the plain-`/supervisor` completion tail) or **inline on the main thread** via `/review-pr <pr-url>`. It spawns its own children (`code-reviewer` for review, `general-purpose` for the bounded fix); the rule was written when subagents could not nest. Claude Code now allows nesting three layers deep by default (§"Subagent nesting"), so the rule is retained pending owner review; see agnostic-phase1/06. In the `/autonomous` EVALUATE sense, the review-heal *loop body* runs as a Task step that performs review-and-fix inline — it does NOT `Task`-spawn the `-runner` agent. Canonical contract: `skills/review-heal/SKILL.md`.
@@ -42,15 +40,15 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 all agents), every agent below carries a `tools:` allowlist that is byte-identical across the
 plugin (`Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch`). Each
 agent's per-row `disallowedTools` below is derived as `superset − observed effective toolset`, NOT
-`superset − previously-declared tools` — four agents (Launch Pad, Product Owner, QA Strategist, Red
-Team Reviewer) deliberately omit `Write`/`Edit` from their denylist because the harness's
+`superset − previously-declared tools` — Launch Pad, Product Owner and Red Team Reviewer
+deliberately omit `Write`/`Edit` from their denylist because the harness's
 `memory: project` grant gave them that capability effectively even though their prior declared
 `tools:` never listed it; blocking it there would have removed a capability they actually have
 today, not merely tidied a list.
 
 > ⚠️ **PROVISIONAL — this row-set carries the weakest evidence in the table, and the hedge belongs
-> here too.** The four `memory: project` rows below that leave `Write`/`Edit` **unblocked**
-> (`launch-pad`, `product-owner`, `qa-strategist`, `red-team-reviewer`) rest on an **environment
+> here too.** The `memory: project` rows below that leave `Write`/`Edit` **unblocked**
+> (`launch-pad`, `product-owner`, `red-team-reviewer`) rest on an **environment
 > observation, not a CI-verifiable fact** — see `POINTER_AUDIT.md` §"The effective-toolset model, and
 > the evidence for it" for the 14-row table and its method. `shared-agent-prefix.md` and
 > `POINTER_AUDIT.md` both hedge this; **this table previously did not, and that inconsistency was the
@@ -72,8 +70,6 @@ today, not merely tidied a list.
 | Orchestrator | Write, Edit, Task, TaskOutput, LSP, WebSearch, WebFetch | Read-only planner; no `memory:` declared, so no Write/Edit grant — the control case that shows the grant is tied to `memory: project`, not to plugin agents generally |
 | Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash, TaskOutput, LSP, WebSearch, WebFetch | Read-only; no mutation via any path; keeps its pre-existing 5-item denylist |
 | Product Owner | Task, TaskOutput, LSP | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
-| QA Executor | TaskOutput, WebSearch, WebFetch | Already declared `Write`/`Edit`/`Task`/`LSP` directly; only the newly-allowlisted items need blocking |
-| QA Strategist | Task, TaskOutput, LSP, WebSearch, WebFetch | Keeps its pre-existing `Task` block; **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
 | Red Team Reviewer | Task, TaskOutput, LSP | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
 | review-pr-runner | Write, Edit, TaskOutput, LSP, WebSearch, WebFetch | Non-memory; delegates edits to its `Task`-spawned `general-purpose` fix worker rather than writing itself |
 | Rubric Grader | Write, Edit, NotebookEdit, Task, TaskOutput, LSP, WebSearch, WebFetch | Read-only Phase 4.5 grader; advisory only — must never mutate the diff it scores or spawn sub-agents; keeps its pre-existing 4-item denylist |
@@ -113,7 +109,8 @@ restriction for every agent, not just the six that already relied on it. The hon
   moves from allowlist to denylist here; the other five (`context-keeper`, `plan-reviewer`,
   `qa-strategist`, `rubric-grader`, `worker`) already denied it explicitly. The per-agent table above
   is the check: a row omits one of these five exactly when that agent already declared it before this
-  change.
+  change. The counts are as of that change; `qa-executor` and `qa-strategist` have since been removed
+  from the plugin, so the table no longer carries their rows.
 
 ---
 
@@ -133,8 +130,6 @@ restriction for every agent, not just the six that already relied on it. The hon
 | Orchestrator | user-facing | user | Reads CLAUDE.md (+ Beads when active) → EPIC / TASK with skill references. Defaults to one task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); **no paired review subtask is generated at any threshold (Fix 7, v15.18.0)** — the deterministic `outputs_verified` gate plus tests/lint is the per-task gate throughout, and Phase 4.5's integrated review is the sole LLM gate — see `agents/orchestrator.md` §"Review Gate Policy". **Beads-optional:** a `## Persistence Mode` block branches on `beads_active` (probe `test -d .beads && bd --version`); when absent, skips all `bd` and writes the task tree to `.supervisor/requirements/{slug}-plan.md` — the no-per-subtask-review policy applies in both modes. Detection logic already lived in the shared `context-setup` skill; this wires output to it (matching Code Reviewer's long-standing Beads-optional pattern) |
 | Code Reviewer | user-facing | user | LSP, read-only mode, schema_v3 (adds `drift` category, severity caps via hook). **Auto-expands to consistency audit** when diff touches `agents/`, `commands/`, `skills/`, `docs/`, or plugin metadata |
 | Red Team Reviewer | user-facing | user | 6 attack vectors; persistent memory of past audits |
-| QA Strategist | user-facing | user | Three modes (Strategy / Gate Audit / Post-Execution Audit); spawned twice (gate audit Phase 11, results audit Phase 13) |
-| QA Executor | user-facing | user | Multi-phase Level 1 protocol (phases 1–13, non-monotonic order), `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/110/60 budget (default/scoped/plan) with 60/80/92% zones |
 | Review-PR (`review-pr-runner`) | user-facing | user / Supervisor completion-tail / autonomous EVALUATE | `/review-pr <pr-url>` standalone review→fix→re-review loop against an existing PR; resolves PR-URL → head branch, spawns `code-reviewer` + `general-purpose` fix worker; **never auto-merges**; emits `REVIEW_HEAL_RESULT`. NEVER Task-spawned (subagents-cannot-spawn-subagents) — run inline via `/review-pr` or as `claude --agent …:review-pr-runner`. Authority is the `review-heal` skill. |
 | Execute Manager | internal | Supervisor (Phase 3, Parallel Path — inline or runner) | Owns poll loop in isolated context, 60 tool-call budget; re-verifies each worker's `provides` ON DISK via `scripts/verify-provides.sh` (+1 Bash per subtask) — disk wins over the worker's self-report; runs `scripts/run-pin-mutations.sh` beside it (+1 Bash; a `not_held` earns one re-spawn, then is recorded and carried to Phase 4.5) |
 | Context-Keeper | internal | Supervisor / Execute Manager | **Sole agent writer** of the state file — `## Session` is seeded once by `initialize` and projected thereafter by `scripts/build-state.sh`; no Supervisor path (inline or runner) writes it directly (`agents/supervisor.md`, `agents/context-keeper.md`); haiku model, batch updates, atomic writes |
@@ -186,8 +181,6 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | Worker | ~6k tokens | Focused implementation |
 | Code Reviewer | ~4k tokens | Read-only analysis |
 | Context-Keeper | ~200 tokens | Atomic state ops, < 50 token responses |
-| QA Executor | ~8k tokens | Discovery + generation + execution |
-| QA Strategist | ~3k tokens | Risk classification |
 | Launch Pad | ~5-7k tokens | Discovery + analysis + brief assembly + plan review (~5k typical, ~7k worst-case with 3 review cycles) |
 | Product Owner | ~4k tokens | Domain analysis + story writing |
 | Orchestrator | ~3k tokens | Task decomposition |
@@ -232,7 +225,6 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | `.supervisor/history/` | Supervisor (create) | Read-only after creation |
 | `.supervisor/worker-summaries/` | Worker (inline mode) | Execute Manager (read) |
 | `.worker-summary.md` (in worktree) | Worker (parallel mode) | Execute Manager (read) |
-| `.qa-summary.md` | QA Executor (write) | QA Strategist (read in audit mode) |
 | `.supervisor/twin/` | `scripts/write-system-contract.sh` (sole writer) | Readers via `scripts/read-system-contract.sh`; Context-Keeper is OUT of this path |
 
 ---
@@ -580,7 +572,6 @@ All result schemas include a `schema_version` field. Current versions: CODE_REVI
 |--------|--------|--------|
 | Task pass rate | ≥90% | WORKER_RESULT status=completed |
 | First-pass review rate | ≥80% | CODE_REVIEW_RESULT decision=PASS |
-| QA coverage | ≥70% routes | QA_RESULT coverage_estimate |
 | Worker retry rate | ≤10% | Logs (retry count / total spawns) |
 | Merge success rate | ≥95% | Supervisor FINALIZE outcomes |
 

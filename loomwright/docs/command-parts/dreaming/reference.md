@@ -119,7 +119,7 @@ Use `/dreaming` periodically — for example, weekly or after every N completed 
 
 - During active execution — `/dreaming` reflects on past sessions, not the current one
 - When you need code changes — `/dreaming` never touches code (it persists approved memory/LESSONS/promotions, and its two branch-and-PR paths stage only `.agent/rules/*.json` and its own recorded project-memory and agent-memory writes); use `/supervisor` or `/code-reviewer` for code changes
-- For agents not currently supported — four agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner), but the `--agent` flag covers only Code Reviewer and Red Team Reviewer; the other two are out of scope
+- For agents not currently supported — the agents with `memory: project` are Launch Pad, Code Reviewer, Red Team Reviewer and Product Owner (authority: each agent's frontmatter), but the `--agent` flag covers only Code Reviewer and Red Team Reviewer; the other two are out of scope
 
 ## See Also
 
