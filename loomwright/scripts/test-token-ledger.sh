@@ -1410,9 +1410,8 @@ echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two 
 # past two — and an UNTYPED payload matches all of them at once, because a matcher only
 # discriminates when the payload carries an `agent_type`. The `loomwright:worker` matcher joined
 # them (parallel-automate/24 fix-now: worker spend was never ledgered), so one untyped completion
-# now fans out to TWELVE concurrent invocations of this script against one file (one per
-# SubagentStop matcher in hooks.json that runs it — every agent this plugin ships); case 26 pins
-# that coverage against hooks.json, and docs/HOOKS.md's "SubagentStop lane emitters" row agrees.
+# now fans out to TWELVE concurrent invocations of this script against one file — every agent
+# this plugin ships; case 26 pins that coverage against hooks.json.
 # FAN_N is 15 rather than 12 on purpose: three more than production can produce, because headroom
 # above the real figure is the safe direction for a control and an under-count is not. The dedupe is supposed to
 # collapse them to a single line; at two invocations that was never in doubt, at fifteen the
