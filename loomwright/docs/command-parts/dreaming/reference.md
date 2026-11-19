@@ -4,7 +4,7 @@
 ## /dreaming — Reflection Report
 
 **Sessions analyzed:** 5 (2026-05-03 → 2026-05-09)
-**Agents reflecting:** code-reviewer, red-team, qa-executor
+**Agents reflecting:** code-reviewer, red-team
 **Contract:** read-only until per-item Accept. Memory/LESSONS/agent-memory writes go through the repo-root sole writers; CLAUDE.md stays paste-to-apply.
 
 ---
@@ -12,7 +12,7 @@
 ### 1. Recurring Patterns
 
 - **Pattern A — Missing boundary tests** (3/5 sessions: 2026-05-03, 2026-05-06, 2026-05-09)
-  Workers shipped CRUD endpoints without negative-case tests; QA Executor flagged the gap each time.
+  Workers shipped CRUD endpoints without negative-case tests; Code Reviewer flagged the gap each time.
 - **Pattern B — `provides:` drift** (4/5 sessions)
   Subtask briefs declared `provides:` symbols that did not match the symbols actually emitted; outputs_gap was non-empty in each case.
 - **Pattern C — Code Reviewer re-flagging stale TODOs** (5/5 sessions)
@@ -32,8 +32,8 @@
   Evidence: 3 distinct sessions (2026-05-03, 2026-05-06, 2026-05-09)
   Status: **PENDING USER APPROVAL**
 
-- **[qa-executor]** _add_ → `.claude/agent-memory/.../boundary-tests.md`
-  Text: "If a subtask touches a CRUD endpoint and the brief has no boundary-test criterion, generate boundary tests anyway and report the gap."
+- **[red-team]** _add_ → `.claude/agent-memory/.../boundary-tests.md`
+  Text: "If a subtask touches a CRUD endpoint and the brief has no boundary-test criterion, attack the boundary cases anyway and report the gap."
   Linked insight: 1
   Evidence: 1 session (2026-05-06)
   Status: **PENDING USER APPROVAL**
@@ -57,7 +57,7 @@
 ### 6. Proposed LESSONS
 
 - category: testing — "When a subtask touches a CRUD endpoint with no boundary-test criterion, generate boundary tests anyway."
-  Score: 0.72 (recall-frequency 3/5 × outcome 0.8 [QA-flagged gap] × diversity 3 distinct subtasks)
+  Score: 0.72 (recall-frequency 3/5 × outcome 0.8 [reviewer-flagged gap] × diversity 3 distinct subtasks)
   Linked insight: 1
   Status: **PENDING USER APPROVAL**
 - category: contracts — "Author `provides:` symbols from the actual diff, not from memory." (category full → replaces oldest: "Prefer interface-first contracts")
@@ -74,7 +74,7 @@ For each item above, choose **Accept**, **Reject**, or **Edit** (per-item — th
 Worked recommendation pass over the items above (the rules are in that section's table; the point of printing it is that every marker is checkable against the report):
 
 - §3 `[code-reviewer]` — evidence 3 distinct sessions ⇒ `Accept (Recommended)` first, description citing "3 sessions corroborate".
-- §3 `[qa-executor]` — evidence 1 session ⇒ **no recommendation**, neutral order.
+- §3 `[red-team]` — evidence 1 session ⇒ **no recommendation**, neutral order.
 - §4 additive — evidence 2 distinct sessions ⇒ `Accept (Recommended)`, header `CLAUDE.md`. Recommended even though it is paste-to-apply: the marker is about the evidence, not about who performs the write.
 - §5 candidate — evidence 1 session ⇒ **no recommendation**, neutral order.
 - §6 `testing` — highest-scoring proposal in its category and evidence spans 3 subtasks ⇒ `Accept (Recommended)`.
@@ -104,7 +104,6 @@ Three of eight recommended is a normal-looking pass; zero is also normal. Abstai
 | `/supervisor` | Forward (execute) | Autonomously execute tasks end-to-end |
 | `/code-reviewer` | Lateral (live audit) | Review the current diff or files |
 | `/red-team-reviewer` | Lateral (live audit) | Adversarially attack the current state |
-| `/qa-executor` | Forward (test) | Generate and run tests against the running app |
 | **`/dreaming`** | **Backward (reflect)** | **After several sessions, distill patterns into proposed memory + CLAUDE.md updates** |
 
 Use `/dreaming` periodically — for example, weekly or after every N completed `/supervisor` runs — to harvest durable lessons from session logs and keep agent memory and project documentation aligned with how the team actually works.
@@ -120,14 +119,13 @@ Use `/dreaming` periodically — for example, weekly or after every N completed 
 
 - During active execution — `/dreaming` reflects on past sessions, not the current one
 - When you need code changes — `/dreaming` never touches code (it persists approved memory/LESSONS/promotions, and its two branch-and-PR paths stage only `.agent/rules/*.json` and its own recorded project-memory and agent-memory writes); use `/supervisor` or `/code-reviewer` for code changes
-- For agents not currently supported — six agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor), but v12.2.0's `--agent` flag covers only Code Reviewer, Red Team Reviewer, and QA Executor; the other three are out of scope until a follow-up release
+- For agents not currently supported — four agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner), but the `--agent` flag covers only Code Reviewer and Red Team Reviewer; the other two are out of scope
 
 ## See Also
 
 - `/supervisor` — Autonomous workflow whose logs are the input to `/dreaming`
 - `/code-reviewer` — Live (forward) review counterpart
 - `/red-team-reviewer` — Live (forward) adversarial counterpart
-- `/qa-executor` — Live (forward) QA counterpart
 - `/agent-help` — Full command list
 - `loomwright/skills/memory-tool/SKILL.md` — Decision aid for what to write to agent memory directories (consulted on demand)
 - `.supervisor/logs/{session_id}.jsonl` — Source data consumed by `/dreaming`

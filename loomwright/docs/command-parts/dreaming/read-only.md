@@ -17,7 +17,7 @@ This contract is non-negotiable: a `/dreaming` invocation that mutates code, age
 
 ### Enforcement boundary (honest disclosure)
 
-The agents `/dreaming` spawns in reflection mode — Code Reviewer, Red Team Reviewer, QA Executor — have **full write tools** in their normal forward-execution mode. When `/dreaming` spawns them via `Task(subagent_type: ...)`, they inherit the tool permissions declared in their registered frontmatter; the Task tool does NOT support overriding `disallowedTools` per-call. That means the read-only constraint for reflection-spawned agents is **prompt-level**, not tool-level: enforced by the HARD RULES block in the reflection-mode task prompt template above and by the agents' own training to follow explicit instructions, NOT by the harness blocking Write/Edit calls.
+The agents `/dreaming` spawns in reflection mode — Code Reviewer and Red Team Reviewer — have **full write tools** in their normal forward-execution mode. When `/dreaming` spawns them via `Task(subagent_type: ...)`, they inherit the tool permissions declared in their registered frontmatter; the Task tool does NOT support overriding `disallowedTools` per-call. That means the read-only constraint for reflection-spawned agents is **prompt-level**, not tool-level: enforced by the HARD RULES block in the reflection-mode task prompt template above and by the agents' own training to follow explicit instructions, NOT by the harness blocking Write/Edit calls.
 
 In practice, a well-functioning agent honors the HARD RULES. The mitigation against drift is:
 

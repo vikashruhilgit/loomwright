@@ -7,14 +7,13 @@
 /dreaming                                      # All agents, last 5 sessions
 /dreaming --agent code-reviewer                # Reflect with Code Reviewer only
 /dreaming --agent red-team --sessions 10       # Red Team, last 10 sessions
-/dreaming --agent qa-executor --sessions 3     # QA Executor, last 3 sessions
 /dreaming --agent all --sessions 20            # All agents, deeper history
 /dreaming --full-model                         # Reflection spawns inherit the session model (skip sonnet default)
 /dreaming --force                              # Skip the curation-readiness check and reflect anyway
 ```
 
 **Parameters:**
-- `--agent all|code-reviewer|red-team|qa-executor` (default `all`)
+- `--agent all|code-reviewer|red-team` (default `all`)
 - `--sessions N` (default `5`)
 - `--full-model` (default off — reflection spawns default to `model: "sonnet"` per `docs/ARCHITECTURE_CONTRACTS.md` §Cost Profiles → "Async analysis surfaces"; flag restores `inherit`)
 - `--force` (default off — skips the curation-readiness check from `scripts/curation-status.sh`; without it `/dreaming` declines, advisory and exit 0, below an **unvalidated** threshold guess of `15` **unreflected** session logs — logs never fed to reflection that carry reflection signal, tracked as a consumed set rather than a timestamp so a windowed run never retires the backlog it did not read — overridable at `.curation.thresholds.dreaming` in `.supervisor/config.json`). `/insights` has the same flag; `/pr-postmortem` deliberately has none — it targets one named PR and never declines.
@@ -48,7 +47,7 @@
 **When NOT to Use:**
 - During active execution → `/dreaming` reflects on *past* sessions
 - When you need code changes → `/dreaming` never touches code (its two PRs stage only `.agent/rules/*.json` and its own recorded project-memory and agent-memory writes); use `/supervisor` or `/code-reviewer`
-- For agents without persistent memory → only Code Reviewer, Red Team Reviewer, and QA Executor are valid targets
+- For agents without persistent memory → only Code Reviewer and Red Team Reviewer are valid targets
 
 **Learn More:** see `loomwright/commands/dreaming.md` for the full parameter table, the reflection-mode task prompt template, the read-only-until-Accept contract (incl. the two remote-affecting actions and their gates), the rules PR and memory PR delivery queues, and example output
 

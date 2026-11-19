@@ -37,7 +37,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.3.0 | 2026-10-09 |
+| Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload) | ~500 | 1.3.0 | 2026-10-09 |
 | Commit | `commit/` | Supervisor (on-demand Read at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~600 | 1.1.0 | 2026-06 |
 | Pattern Detector | `pattern-detector/` | Code Reviewer (reference) | ~500 | 1.0.0 | 2026-03 |
 | Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (on-demand Read when CLAUDE.md lacks a library fact), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
@@ -61,11 +61,6 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
 | Frontend UI | `frontend-ui/` | Worker (reference) | ~600 | 1.1.0 | 2026-10 |
-
-## Testing / QA
-
-| Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
-|------------|-----------|-----------------|------------|---------|--------------|
 
 ---
 

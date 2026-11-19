@@ -1,6 +1,6 @@
 ## Reflection-Mode Task Prompt
 
-The agents `/dreaming` spawns (Code Reviewer, Red Team Reviewer, QA Executor) all have system prompts tuned for **forward** work — reviewing diffs, attacking running systems, generating tests. To put them into reflection mode, `/dreaming` MUST pass a task prompt that overrides their default behavior. The prompt below is the canonical template — `/dreaming` constructs an instance of it for each spawned agent and substitutes the placeholders.
+The agents `/dreaming` spawns (Code Reviewer, Red Team Reviewer) both have system prompts tuned for **forward** work — reviewing diffs and attacking running systems. To put them into reflection mode, `/dreaming` MUST pass a task prompt that overrides their default behavior. The prompt below is the canonical template — `/dreaming` constructs an instance of it for each spawned agent and substitutes the placeholders.
 
 ```
 You are running in REFLECTION MODE for the /dreaming command, not your normal forward-execution mode.
@@ -78,5 +78,5 @@ OUTPUT (mandatory six-section report, in this order):
 If a section has no candidates, write "(no proposals — N/M sessions reviewed)" rather than padding. Empty proposals are honest; fabricated ones are a defect.
 ```
 
-Per-agent customization: `/dreaming` may prepend a one-line role hint (e.g., "Focus on review-finding patterns" for Code Reviewer, "Focus on attack-vector patterns" for Red Team Reviewer, "Focus on test-coverage and infrastructure-discovery patterns" for QA Executor) but MUST NOT remove or weaken any of the HARD RULES above.
+Per-agent customization: `/dreaming` may prepend a one-line role hint (e.g., "Focus on review-finding patterns" for Code Reviewer and "Focus on attack-vector patterns" for Red Team Reviewer) but MUST NOT remove or weaken any of the HARD RULES above.
 
