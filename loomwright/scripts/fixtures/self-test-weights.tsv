@@ -97,7 +97,6 @@
 3	loomwright/scripts/test-propose-work.sh
 3	loomwright/scripts/test-read-lessons.sh
 4	loomwright/scripts/test-read-orientation.sh
-0	loomwright/scripts/test-read-playwright-pin.sh
 1	loomwright/scripts/test-read-postmortem.sh
 1	loomwright/scripts/test-read-product.sh
 3	loomwright/scripts/test-read-rules.sh
@@ -139,11 +138,7 @@
 3	loomwright/scripts/test-twin-graph.sh
 6	loomwright/scripts/test-validate-code-review-result.sh
 78	loomwright/scripts/test-validate-entry.sh
-9	loomwright/scripts/test-verify-evidence.sh
 1	loomwright/scripts/test-verify-provides.sh
-4	loomwright/scripts/test-verify-queue.sh
-20	loomwright/scripts/test-verify-seam.sh
-149	loomwright/scripts/test-verify-walkthrough.sh
 8	loomwright/scripts/test-wait-for-checks.sh
 13	loomwright/scripts/test-wait-lib.sh
 2	loomwright/scripts/test-webhook.sh

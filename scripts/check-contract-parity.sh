@@ -97,13 +97,13 @@ PARITY_UNRESOLVED="__PARITY_UNRESOLVED__"
 #   2. CLASS / FUNCTION docstrings — several quote field names too;
 #   3. `#` COMMENTS — every rule block carries a section-header comment naming
 #      its field ("# ── (4) coverage_estimate present when tests were run ──";
-#      4 of the 5 converted validators have them — qa 4 comment-lines, execute
-#      2, supervisor 2, plan-review 2, worker 0);
+#      most converted validators have them — execute 2 comment-lines,
+#      supervisor 2, plan-review 2, worker 0);
 #   4. BARE STRING STATEMENTS that are not body[0] — the PEP-258 "attribute
 #      docstring" convention, or a stray one left by a partial deletion.
 # Grepping the raw source therefore lets PROSE satisfy the pin-drift guard:
-# deleting the executable rule-4 block from validate-qa-result.py leaves zero
-# coverage_estimate mentions in code, yet a guard that misses ANY ONE of the
+# deleting a validator's executable rule-4 block (the since-removed QA
+# validator's coverage_estimate rule) leaves zero coverage_estimate mentions in code, yet a guard that misses ANY ONE of the
 # four still prints ✓ and exits 0 — the same fail-open class as the concat
 # reading above, one layer deeper. Since the five prompt strings this guard used
 # to grep are gone, it is the only thing between a silently-weakened validator
@@ -195,7 +195,7 @@ def strip_string_statements(src, path):
         \"\"\"The required fields, including coverage_estimate.\"\"\"
 
     — and a partial deletion can leave a stray one mid-function. Verified by
-    construction: replacing validate-qa-result.py's executable rule-4 block with
+    construction: replacing a validator's executable rule-4 block with
     a single bare string statement passed a body[0]-only strip. Matching any
     ast.Expr whose value is a string is both simpler and strictly stronger, and
     it cannot over-strip: a string in ast.Expr position is a statement evaluated

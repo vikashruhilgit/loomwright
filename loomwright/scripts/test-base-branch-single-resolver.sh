@@ -4,7 +4,7 @@
 #
 # Why: the base used to be resolved in four unrelated ways — inline `symbolic-ref
 # refs/remotes/origin/HEAD` copies with a silent `main` fallback in the /automate trail and lane
-# modules and verify-run.sh, a bare `base=main` in supervisor-next-step.sh, `BASE_REF="main"` in
+# modules (and a since-removed QA runner), a bare `base=main` in supervisor-next-step.sh, `BASE_REF="main"` in
 # wait-for-checks.sh and an origin/main > origin/development probe in reconcile-jobs.sh — so item
 # PRs, lanes, waves and trail PRs could each pick a different base. resolve-base-branch.sh is now
 # the one resolver (flag > brief > .supervisor/config.json .base_branch > origin/HEAD > gh >

@@ -20,7 +20,7 @@
 #      index heading must have a row in that block naming a split file that holds a heading with
 #      that text. Matching drops backticks and accepts a word-boundary prefix (an anchor
 #      "`session_end` JSONL hard-signal fields" resolves to the heading that adds "(System Twin)").
-#      CHANGELOG.md is excluded (frozen release history). Mutants: one row removed, one row
+#      CHANGELOG.md and fixtures/corpus-briefs/ are excluded (frozen history). Mutants: one row removed, one row
 #      re-pointed to the wrong split file — each must FAIL. The anchors block is excluded from
 #      checks A-D (it is the one index heading with no pointer line).
 # Headings are detected fence-aware: a `## ` line inside a ``` / ~~~ fenced block is not a section.
@@ -139,10 +139,11 @@ all_headings() {
 CITE_RE="RESULT_SCHEMAS(\\.md)?(\`|'s|\`'s)?[ ]?§[ ]?(\"[^\"]+\"|\`?[A-Za-z_][A-Za-z0-9_]*\`?)"
 
 # cited_anchors — one "<normalized anchor>\t<file>" row per section citation of this doc in the
-# tracked tree (CHANGELOG.md excluded). A quoted anchor left open at end of line is joined with
+# tracked tree (CHANGELOG.md and loomwright/scripts/fixtures/corpus-briefs/ excluded: frozen
+# history that may cite a since-removed section). A quoted anchor left open at end of line is joined with
 # the next line (its leading comment marker stripped), at most twice.
 cited_anchors() {
-  git -C "$REPO" grep -lE 'RESULT_SCHEMAS' -- . ':!CHANGELOG.md' | while IFS= read -r f; do
+  git -C "$REPO" grep -lE 'RESULT_SCHEMAS' -- . ':!CHANGELOG.md' ':!loomwright/scripts/fixtures/corpus-briefs/' | while IFS= read -r f; do
     awk '
       function open_quote(s,   t) { t = s; if (!sub(/.*§ ?"/, "", t)) return 0; return (index(t, "\"") == 0) }
       {

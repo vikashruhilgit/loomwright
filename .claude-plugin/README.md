@@ -416,7 +416,6 @@ loomwright/                            # Marketplace wrapper repo
         ├── FAILURE_ESCALATION.md            # Retry limits and escalation paths
         ├── ARCHITECTURE_CONTRACTS.md        # Capability matrix, budgets, rules
         ├── ARCHITECTURE.md                  # Visual agent topology
-        ├── QA_SYSTEM_BLUEPRINT.md           # QA system architecture
         └── SPIKES/                          # Capability spike investigations + deferral records
 ```
 

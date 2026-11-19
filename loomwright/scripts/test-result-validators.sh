@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# test-result-validators.sh — self-tests for result_block_parser.py and the five
-# per-schema validators that replace the mechanical `type: prompt` SubagentStop
+# test-result-validators.sh — self-tests for result_block_parser.py and the
+# per-schema validators (the V_* list below) that replace the mechanical `type: prompt` SubagentStop
 # hooks (Fix 4 / 4e, Subtask 1).
 #
 # DETERMINISTIC, NO LIVE SIDE EFFECTS. Every case pipes a synthesized
@@ -34,7 +34,7 @@
 #                                          and truthiness are different tests)
 #   * >= 1 cross-field invariant violation
 #
-# Plus, for every one of the six Python files, the exit-0-by-contract check on
+# Plus, for every Python file in ALL_PY, the exit-0-by-contract check on
 # garbage and on empty stdin (R3: a validator that exits non-zero under
 # `|| true` is a silently dead validator).
 #
@@ -55,14 +55,13 @@ PARSER="$SCRIPT_DIR/result_block_parser.py"
 V_WORKER="$SCRIPT_DIR/validate-worker-result.py"
 V_EXECUTE="$SCRIPT_DIR/validate-execute-result.py"
 V_SUPERVISOR="$SCRIPT_DIR/validate-supervisor-result.py"
-V_QA="$SCRIPT_DIR/validate-qa-result.py"
 V_PLAN="$SCRIPT_DIR/validate-plan-review-result.py"
 
-ALL_PY="$PARSER $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN"
+ALL_PY="$PARSER $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN"
 
 for f in $ALL_PY "$FIXDIR/worker-valid-bullet.md" "$FIXDIR/worker-valid-yaml.md" \
          "$FIXDIR/execute-result-valid.md" "$FIXDIR/execute-checkpoint-valid.md" \
-         "$FIXDIR/supervisor-valid.md" "$FIXDIR/qa-result-valid.md" \
+         "$FIXDIR/supervisor-valid.md" \
          "$FIXDIR/plan-review-valid.md" "$FIXDIR/subagentstop-payload.json"; do
   if [ ! -e "$f" ]; then
     echo "FATAL  required file not found: $f" >&2
@@ -1474,7 +1473,7 @@ assert_pass "worker: heading + conventional blank line is not reported as a MISS
 # folded a trailing comment into the value, `completed  # done` matched none of
 # them, so all three checks were silently SKIPPED — the fail-open class this
 # whole PR exists to prevent, and invisible because these run as `type: command`
-# hooks under `|| true`. Worker is the only one of the five validators where
+# hooks under `|| true`. Worker is the only one of the validators where
 # this fails OPEN rather than merely rejecting: its `status` is a DELIBERATE
 # non-enum (see the module docstring), so a polluted value slips past the `==`
 # instead of tripping an enum or int guard.
@@ -2809,599 +2808,6 @@ run_v "$V_SUPERVISOR" "$F"
 assert_fail "supervisor: [FALSIFIES @4f63dea] markdown form, blank+comment was rejected on a bogus parse error so rule 13 never ran" \
   "rubric_score must be null or a string 'N/M' with N >= 0, M >= 1, M >= N"
 
-# ── E. qa-executor validator ─────────────────────────────────────────────────
-echo "== E. validate-qa-result.py — 5 rules =="
-
-run_v "$V_QA" "$FIXDIR/qa-result-valid.md"
-assert_pass "qa: valid block (committed fixture)"
-
-mk qa-no-block.md <<'EOF'
-Ran the tests, everything passed, but no result block was emitted.
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: MISSING block" "missing QA_RESULT block"
-
-run_raw "$V_QA" "$GARBAGE"
-assert_pass "qa: malformed (non-JSON) payload -> ok:true"
-
-mk qa-malformed.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  files_created: [a.spec.ts
-  tests_generated: 1
-  tests_passed: 1
-  coverage_estimate: 0.5
-  summary: broken flow array
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: malformed BLOCK body -> explicit parse failure" "could not be parsed"
-
-mk qa-missing-key.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 5
-  coverage_estimate: 0.6
-  summary: tests_passed is absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: MISSING required key (tests_passed) [rule 2]" "missing the tests_passed field"
-
-mk qa-null-key.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 5
-  tests_passed:
-  coverage_estimate: 0.6
-  summary: tests_passed is EXPLICITLY null
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: EXPLICIT-NULL required key (tests_passed:) [rule 2]" "must be an integer"
-
-mk qa-sv.md <<'EOF'
-QA_RESULT:
-  schema_version: 2
-  status: passed
-  tests_generated: 0
-  tests_passed: 0
-  summary: wrong schema version
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: schema_version != 1 [rule 1]" "must be the integer 1"
-
-mk qa-no-summary.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: skipped
-  tests_generated: 0
-  tests_passed: 0
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: MISSING summary [rule 3]" "(rule 3)"
-
-mk qa-no-coverage.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 12
-  tests_passed: 12
-  summary: 12 tests run but coverage_estimate is absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: CROSS-FIELD tests_generated>0 without coverage_estimate [rule 4]" \
-  "coverage_estimate must be present"
-
-mk qa-null-coverage.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 12
-  tests_passed: 12
-  coverage_estimate:
-  summary: coverage_estimate is present but EXPLICITLY null
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: EXPLICIT-NULL coverage_estimate with tests run [rule 4]" "present but null"
-
-mk qa-zero-tests.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: plan_created
-  tests_generated: 0
-  tests_passed: 0
-  summary: plan-only session, no tests run, so no coverage_estimate is required
-EOF
-run_v "$V_QA" "$F"
-assert_pass "qa: tests_generated=0 does not require coverage_estimate [rule 4]"
-
-mk qa-bad-status.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: green
-  tests_generated: 0
-  tests_passed: 0
-  summary: out-of-enum status
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: out-of-enum status [rule 5]" "(rule 5)"
-
-for st in passed failed partial skipped needs_human plan_created all_scopes_completed; do
-  mk qa-status.md <<EOF
-QA_RESULT:
-  schema_version: 1
-  status: $st
-  tests_generated: 0
-  tests_passed: 0
-  summary: enum probe for $st
-EOF
-  run_v "$V_QA" "$F"
-  assert_pass "qa: status '$st' accepted [rule 5]"
-done
-
-# --- FINDING 7 (second validator): the SPURIOUS-REJECT half of the defect ----
-# Worker showed the fail-OPEN half. Here is the other half on a different
-# schema: QA's status IS enum-checked, so a polluted `passed  # all green`
-# tripped rule 5 and REJECTED a conforming block. Both halves come from the one
-# parser defect, which is why the fix is in the parser and not in any validator.
-mk qa-c7-comment.md <<'EOF'
-QA_RESULT:
-  schema_version: 1  # v1
-  status: passed  # all green
-  tests_generated: 4  # four scenarios
-  tests_passed: 4
-  coverage_estimate: 0.82  # rough
-  summary: "a conforming block that annotates itself, including a # in quotes"
-EOF
-run_v "$V_QA" "$F"
-assert_pass "qa: [FALSIFIES] trailing comments no longer cause a spurious reject"
-
-mk qa-c7-control.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed#green
-  tests_generated: 0
-  tests_passed: 0
-  summary: a '#' with no preceding whitespace is part of the value, so this is out-of-enum
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: [CONTROL] a '#' with no preceding whitespace is NOT a comment [rule 5]" \
-  "(rule 5)"
-
-# A NEGATIVE count is an integer (as_int accepts a leading '-'), so the
-# non-integer reason above cannot catch it; rule 2's `value < 0` branch is the
-# only guard, and this case is what makes deleting that branch visible.
-mk qa-negative-count.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 4
-  tests_passed: -1
-  coverage_estimate: 0.8
-  summary: tests_passed is a negative integer
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: NEGATIVE count (tests_passed: -1) [rule 2]" "tests_passed must be a non-negative integer"
-
-# ── E2. qa-executor validator — the VERIFY_RESULT branch (`--verify` mode) ──
-# RULE SOURCE: docs/RESULT_SCHEMAS.md §VERIFY_RESULT. Same hook command as §E;
-# the §E cases above are UNCHANGED — this block only adds the second schema.
-# The precedence rule is the load-bearing case: QA_RESULT wins whenever it is
-# PRESENT, so a payload carrying both blocks with VERIFY_RESULT LAST must still
-# be judged by the five QA_RESULT rules (a "last block wins" locator would
-# invert that — it is exactly what find_last_named_block does, so the
-# validator must not use it here).
-echo "== E2. validate-qa-result.py — VERIFY_RESULT branch (6 rules + precedence) =="
-
-mk vr-valid.md <<'EOF'
-## VERIFY_RESULT
-- schema_version: 1
-- run_id: verify-20260914T100000Z-01-login
-- run_dir: .supervisor/verify/verify-20260914T100000Z-01-login
-- ticket_path: .supervisor/requirements/example/01-login.md
-- status: completed
-- counts: {pass: 2, fail: 0, blocked: 0, not_verifiable: 1, total: 3}
-- artifacts_dir: .supervisor/verify/verify-20260914T100000Z-01-login/artifacts
-- summary: three ACs walked, two observed PASS, one not observable through the UI
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: valid block (bullet form, flow-mapping counts)"
-
-mk vr-valid-yaml.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-01-login
-  run_dir: .supervisor/verify/verify-20260914T100000Z-01-login
-  status: aborted
-  counts:
-    pass: 0
-    fail: 0
-    blocked: 3
-    not_verifiable: 0
-    total: 3
-  summary: env start failed; every AC recorded BLOCKED and the run was aborted
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: valid block (YAML form, block-mapping counts, status aborted) [rule V4]"
-
-mk vr-bad-status.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: passed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: a QA_RESULT status on a VERIFY_RESULT block
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: out-of-enum status (passed is QA_RESULT's enum, not this one) [rule V4]" "(rule V4)"
-
-mk vr-no-run-id.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: run_id is absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: MISSING run_id [rule V2]" "missing the run_id field"
-
-mk vr-null-run-id.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id:
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: run_id is EXPLICITLY null — a different reason from absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: EXPLICIT-NULL run_id [rule V2]" "must be a non-empty string"
-
-mk vr-no-run-dir.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: run_dir is absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: MISSING run_dir [rule V2]" "missing the run_dir field"
-
-mk vr-sv.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 2
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: wrong schema version
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: schema_version != 1 [rule V1]" "(rule V1)"
-
-mk vr-no-summary.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: MISSING summary [rule V3]" "(rule V3)"
-
-mk vr-non-int.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: two, fail: 0, blocked: 0, not_verifiable: 0, total: 2}
-  summary: a non-integer count
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: NON-INTEGER count (pass: two) [rule V5]" "counts.pass must be an integer"
-
-mk vr-missing-count.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, total: 1}
-  summary: not_verifiable is absent from counts
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: counts missing not_verifiable [rule V5]" "counts is missing not_verifiable"
-
-mk vr-counts-scalar.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: 3
-  summary: counts is a scalar, not a mapping
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: counts not a mapping [rule V5]" "counts must be a mapping"
-
-mk vr-total-mismatch.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 2, fail: 0, blocked: 0, not_verifiable: 1, total: 4}
-  summary: a hand-edited total — the row verify-run.sh finish printed would have said 3
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: CROSS-FIELD total != pass+fail+blocked+not_verifiable [rule V6]" "(rule V6)"
-
-# A NEGATIVE count parses as an integer, so rule V5's integer check passes it
-# and rule V6 is satisfied by construction (2+0-1+0 == 1): the ONLY defect is
-# the sign, and only the `value < 0` branch can report it.
-mk vr-negative-count.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 2, fail: 0, blocked: -1, not_verifiable: 0, total: 1}
-  summary: blocked is a negative integer; total is consistent with it so V6 stays quiet
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: NEGATIVE count (blocked: -1) [rule V5]" "counts.blocked must be a non-negative integer"
-
-mk vr-neither.md <<'EOF'
-Walked the app, everything looked fine, forgot to emit a block.
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: NEITHER block present -> the existing missing-QA_RESULT reason, unchanged" \
-  "missing QA_RESULT block"
-
-# --- precedence: QA_RESULT wins whenever PRESENT, even when VERIFY_RESULT is LAST ---
-# The VERIFY_RESULT block below is fully valid on its own; the QA_RESULT above
-# it is INVALID (rule 4). If the validator judged "whichever block is last",
-# this would pass. It must fail, by a QA_RESULT rule.
-mk vr-both-qa-first.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 12
-  tests_passed: 12
-  summary: 12 tests run but coverage_estimate is absent
-
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: a valid VERIFY_RESULT that must NOT be the one judged
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [PRECEDENCE] both blocks, VERIFY_RESULT last -> QA_RESULT rules applied (its rule 4 fires)" \
-  "coverage_estimate must be present"
-
-# ...and the positive half: a VALID QA_RESULT beside an INVALID VERIFY_RESULT
-# (total mismatch) passes — the VERIFY_RESULT block is ignored entirely.
-mk vr-both-qa-valid.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 4
-  tests_passed: 4
-  coverage_estimate: 0.8
-  summary: a conforming QA_RESULT
-
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260914T100000Z-x
-  run_dir: .supervisor/verify/verify-20260914T100000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 9}
-  summary: an INVALID VERIFY_RESULT (total mismatch) that is ignored because QA_RESULT is present
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: [PRECEDENCE] valid QA_RESULT beside an invalid VERIFY_RESULT -> ok:true (VERIFY_RESULT ignored)"
-
-# The validator must locate blocks BY NAME. A locator that returns whichever
-# block is LAST (find_last_named_block, or load_block with a name tuple) would
-# have judged the VERIFY_RESULT in the two payloads above. Pin the mechanism:
-if grep -qE 'find_last_named_block\(|load_block\([[:space:]]*\(' "$V_QA"; then
-  no "verify: validate-qa-result.py must not use find_last_named_block / a load_block name tuple (they return the LAST block, inverting the precedence rule)"
-else
-  ok "verify: validate-qa-result.py locates each block by name (no last-block-wins locator)"
-fi
-
-# --- item 04 (auth pause/resume): `paused` status + `pause_reason` pairing (rule V7) ---
-# RULE SOURCE: docs/RESULT_SCHEMAS.md §VERIFY_RESULT, hook rule V7. Absent and
-# explicit-null are the SAME state for pause_reason (the classification
-# null/absent convention), so a pre-item-04 emitter that never sends the key
-# (every §E2 case ABOVE this point) keeps validating unchanged — proven by the
-# fact none of them were touched to add the field.
-mk vr-paused-needs-auth.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260915T090000Z-01-login
-  run_dir: .supervisor/verify/verify-20260915T090000Z-01-login
-  status: paused
-  pause_reason: needs_auth
-  counts: {pass: 0, fail: 0, blocked: 0, not_verifiable: 0, total: 0}
-  summary: paused before authoring any spec — the target requires a session and none was found
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: [ITEM-04] valid paused status with pause_reason needs_auth [rule V4, V7]"
-
-mk vr-paused-session-expired.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260915T090000Z-01-login
-  run_dir: .supervisor/verify/verify-20260915T090000Z-01-login
-  status: paused
-  pause_reason: session_expired
-  counts: {pass: 1, fail: 0, blocked: 2, not_verifiable: 0, total: 3}
-  summary: AC2's session died mid-walk; AC2 and AC3 were forced BLOCKED and the run paused
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: [ITEM-04] valid paused status with pause_reason session_expired [rule V4, V7]"
-
-mk vr-paused-null-reason.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260915T090000Z-x
-  run_dir: .supervisor/verify/verify-20260915T090000Z-x
-  status: paused
-  pause_reason:
-  counts: {pass: 0, fail: 0, blocked: 0, not_verifiable: 0, total: 0}
-  summary: paused but pause_reason is EXPLICITLY null
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [ITEM-04] status paused with NULL pause_reason [rule V7]" \
-  "pause_reason must be non-null when status is paused"
-
-mk vr-paused-unknown-reason.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260915T090000Z-x
-  run_dir: .supervisor/verify/verify-20260915T090000Z-x
-  status: paused
-  pause_reason: bogus_reason
-  counts: {pass: 0, fail: 0, blocked: 0, not_verifiable: 0, total: 0}
-  summary: paused with an unrecognized pause_reason string
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [ITEM-04] status paused with an UNRECOGNIZED pause_reason [rule V7]" \
-  "pause_reason must be one of [needs_auth, session_expired]"
-
-mk vr-completed-nonnull-reason.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260915T090000Z-x
-  run_dir: .supervisor/verify/verify-20260915T090000Z-x
-  status: completed
-  pause_reason: needs_auth
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: a completed run carrying a leftover non-null pause_reason
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [ITEM-04] status completed with a NON-NULL pause_reason [rule V7]" \
-  "pause_reason must be null when status is"
-
-mk vr-completed-no-reason-key.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260915T090000Z-x
-  run_dir: .supervisor/verify/verify-20260915T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: a completed run with pause_reason OMITTED entirely (pre-item-04 shape)
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: [ITEM-04] status completed with pause_reason ABSENT (backward-compatible, same as null) [rule V7]"
-
-# --- token-economy 07 (spec-replay, subtask 1): spec_sources — OPTIONAL, additive, no
-# schema_version bump (rule V8, the V7 precedent) ---
-mk vr-spec-sources-absent.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  summary: spec_sources OMITTED entirely (pre-item emitter shape)
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: [token-economy 07] spec_sources ABSENT validates unchanged [rule V8]"
-
-mk vr-spec-sources-valid.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  spec_sources: {replayed: 2, authored: 1, rederived: 1}
-  summary: three non-negative ints
-EOF
-run_v "$V_QA" "$F"
-assert_pass "verify: [token-economy 07] spec_sources with three non-negative ints validates [rule V8]"
-
-mk vr-spec-sources-string.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  spec_sources: {replayed: three, authored: 1, rederived: 0}
-  summary: replayed is a non-integer string, not a count
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [token-economy 07] spec_sources.replayed is a non-integer string [rule V8]" \
-  "spec_sources.replayed must be an integer"
-
-mk vr-spec-sources-negative.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  spec_sources: {replayed: 2, authored: -1, rederived: 0}
-  summary: authored is negative
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [token-economy 07] spec_sources.authored is a NEGATIVE integer [rule V8]" \
-  "spec_sources.authored must be a non-negative integer"
-
-mk vr-spec-sources-missing-key.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  spec_sources: {replayed: 2, authored: 1}
-  summary: rederived is absent from spec_sources
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [token-economy 07] spec_sources missing rederived [rule V8]" \
-  "spec_sources is missing rederived"
-
-mk vr-spec-sources-extra-key.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  spec_sources: {replayed: 2, authored: 1, rederived: 0, bogus: 9}
-  summary: an unknown extra key on spec_sources
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [token-economy 07] spec_sources carries an EXTRA unknown key [rule V8]" \
-  "spec_sources carries unknown key(s)"
-
-mk vr-spec-sources-scalar.md <<'EOF'
-VERIFY_RESULT:
-  schema_version: 1
-  run_id: verify-20260926T090000Z-x
-  run_dir: .supervisor/verify/verify-20260926T090000Z-x
-  status: completed
-  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
-  spec_sources: 3
-  summary: spec_sources is a scalar, not a mapping
-EOF
-run_v "$V_QA" "$F"
-assert_fail "verify: [token-economy 07] spec_sources not a mapping [rule V8]" \
-  "spec_sources must be a mapping"
-
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
 echo "== F. validate-plan-review-result.py — 8 rules =="
 
@@ -3702,7 +3108,7 @@ for v in $ALL_PY; do
     no "exit $rc on empty stdin: $(basename "$v")"
   fi
 done
-for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN; do
   printf '{"last_assistant_message": 12345}' | ( cd "$SANDBOX" && python3 "$v" ) >/dev/null 2>&1
   rc=$?
   if [ "$rc" = "0" ]; then
@@ -3747,7 +3153,7 @@ mkdir -p "$NOMOD" "$BADMOD"
 # A module that exists but does not compile (SyntaxError at import time).
 printf 'def broken(:\n' > "$BADMOD/result_block_parser.py"
 
-for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN; do
   base="$(basename "$v")"
   cp "$v" "$NOMOD/$base"
   cp "$v" "$BADMOD/$base"
@@ -4426,7 +3832,7 @@ except Exception as e:
 }
 
 # (a) block: the discriminating probe (no block at all) must produce the block shape.
-for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN; do
   run_v "$v" "$K_PROBE"
   k_exact_block "$(basename "$v"): missing block -> {decision: block, reason: …} and NO ok key"
 done
@@ -4441,8 +3847,6 @@ run_v "$V_EXECUTE" "$FIXDIR/execute-result-valid.md"
 k_exact_pass "validate-execute-result.py: valid block -> exactly {}"
 run_v "$V_SUPERVISOR" "$FIXDIR/supervisor-valid.md"
 k_exact_pass "validate-supervisor-result.py: valid block -> exactly {}"
-run_v "$V_QA" "$FIXDIR/qa-result-valid.md"
-k_exact_pass "validate-qa-result.py: valid block -> exactly {}"
 run_v "$V_PLAN" "$FIXDIR/plan-review-valid.md"
 k_exact_pass "validate-plan-review-result.py: valid block -> exactly {}"
 
@@ -4544,9 +3948,7 @@ assert_fail "L5 worker: handback only in the PARENT transcript_path -> not used"
 run_hb "$V_WORKER" loomwright:loomwright:worker "$HB_WORKER_BAD" "$WORKER_RECAP" --cwd "$SANDBOX_JWT" --extra-handback "$FIXDIR/worker-valid-bullet.md"
 assert_fail "L6 worker: earlier valid + LAST invalid handback -> the last one is validated" "missing required field(s)"
 
-# L7-L10 the other validators resolve through the same seam.
-run_hb "$V_QA" loomwright:loomwright:qa-executor "$FIXDIR/qa-result-valid.md" "QA done. I sent back the QA_RESULT block."
-assert_pass "L7 qa-executor: block only in SubagentHandback -> PASS"
+# L8-L10 the other validators resolve through the same seam.
 run_hb "$V_SUPERVISOR" loomwright:loomwright:supervisor-runner "$FIXDIR/supervisor-valid.md" "Run finished. SUPERVISOR_RESULT sent."
 assert_pass "L8 supervisor-runner: block only in SubagentHandback -> PASS"
 run_hb "$V_PLAN" loomwright:loomwright:plan-reviewer "$FIXDIR/plan-review-valid.md" "Review sent back as PLAN_REVIEW_RESULT."
@@ -4568,7 +3970,7 @@ cases = [
     (R.has_result_block("I sent back the WORKER_RESULT block.", "WORKER_RESULT"), False),
     (R.has_result_block("x\n## WORKER_RESULT\n- status: completed\n", "WORKER_RESULT"), True),
     (R.has_result_block("x\nCODE_REVIEW_RESULT:\n  decision: PASS\n"), True),
-    (R.has_result_block("x\n## WORKER_RESULT\n- status: completed\n", "QA_RESULT"), False),
+    (R.has_result_block("x\n## WORKER_RESULT\n- status: completed\n", "CODE_REVIEW_RESULT"), False),
     (R.resolve_payload_text({"agent_transcript_path": "/nonexistent/x.jsonl",
                              "last_assistant_message": "recap"}), "recap"),
     (R.resolve_payload_text([]), ""),

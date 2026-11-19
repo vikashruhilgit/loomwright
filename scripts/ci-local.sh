@@ -620,7 +620,7 @@ fi
 # ci.yml does not already name, then the loomwright suite (the same two globs run-self-tests.sh
 # uses with no arguments — test-ci-local.sh pins that they match). A `bash loomwright/scripts/<x>.sh
 # --check` line is a gate too (the capability-contract staleness check); other `bash loomwright/…`
-# lines in ci.yml (the suite runner, the playwright pin, the fitness report) are not, which is why
+# lines in ci.yml (the suite runner, the fitness report) are not, which is why
 # only the `--check` form is matched. --------------------------------------------------------------
 gates=()
 while IFS= read -r g; do gates+=("$g"); done < <(
