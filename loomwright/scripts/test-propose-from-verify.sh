@@ -110,6 +110,9 @@ has_line "- interpretation: The cart total shows 4 items after adding one" && ok
 has_line '- expected: equals "4"' && ok "cites the expected value as op + value" || no "expected op/value not cited"
 has_line "- failed step: 1 (type: read)" && ok "cites failed_step 1 with ITS step's type (read), looked up by .step, not array position (goto)" \
   || no "failed step not cited by .step lookup: $(grep -F 'failed step' "${F:-/dev/null}")"
+has_line "Criterion $C_FAIL failed: The cart total shows 4 items after adding one" && ok "the ## Problem line carries the interpretation" || no "## Problem line does not carry the interpretation"
+has_line "- [ ] Criterion $C_FAIL passes on a fresh run of the same plan: The cart total shows 4 items after adding one" \
+  && ok "the ## Suggested acceptance item carries the interpretation" || no "## Suggested acceptance item does not carry the interpretation"
 has_line "- run: $RUN_ID" && ok "cites the run id (the run folder's basename)" || no "run id not cited"
 has_line "- plan_sha256: $PLAN_SHA" && ok "cites plan_sha256" || no "plan_sha256 not cited"
 for sec in '## Depends on' '## Touches' '## Problem' '## Evidence' '## Suggested acceptance' '## Status: proposed'; do
@@ -178,6 +181,22 @@ grep -qxF -- '- expected: none' "$MIX_F" 2>/dev/null && grep -qxF -- '- failed s
   && grep -qxF -- '- interpretation: none' "$MIX_F" 2>/dev/null \
   && ok "a FAIL with null expected / failed_step / interpretation cites 'none' for each" \
   || no "null fields not rendered as none: $(grep -E '^- (expected|failed step|interpretation):' "$MIX_F" 2>/dev/null | tr '\n' '|')"
+grep -qxF -- "Criterion $C_FAIL failed: none" "$MIX_F" 2>/dev/null \
+  && grep -qxF -- "- [ ] Criterion $C_FAIL passes on a fresh run of the same plan: none" "$MIX_F" 2>/dev/null \
+  && ok "a null interpretation renders 'none' in the ## Problem line and the ## Suggested acceptance item too" \
+  || no "null interpretation not rendered as none in Problem/acceptance: $(grep -E '^(Criterion |- \[ \] Criterion )' "$MIX_F" 2>/dev/null | tr '\n' '|')"
+
+echo "== a failed_step with no matching steps[] entry is cited as such, never as a guessed type =="
+# Selvedge's schema writes one steps[] entry per evidence.jsonl step line; it does not promise the
+# failed step has one. failed_step 5 against steps 0-2 must say so rather than name a type.
+NIS_RD="$(mktmp)/20261119T120000Z-00005e"
+make_verdict "$NIS_RD" "$(jq -nc --argjson f "$(crit FAIL '{"op":"equals","value":"4"}' 5 '"The cart total shows 4 items"' "$FAIL_STEPS")" --arg a "$C_FAIL" '{($a): $f}')"
+NIS_OUT="$(mktmp)/out-nis"
+run_sut "$NIS_RD" "$NIS_OUT"; rc_nis=$?
+NIS_F="$NIS_OUT/verify-$(basename "$NIS_RD")-${C_FAIL}.md"
+[ "$rc_nis" -eq 0 ] && [ "$(count_props "$NIS_OUT")" -eq 1 ] && grep -qxF -- '- failed step: 5 (type: not in steps[])' "$NIS_F" 2>/dev/null \
+  && ok "failed_step 5 with steps 0-2 only => '- failed step: 5 (type: not in steps[])'" \
+  || no "failed_step not in steps[]: rc=$rc_nis, $(grep -F 'failed step' "$NIS_F" 2>/dev/null)"
 NOFAIL_RD="$(mktmp)/20261119T120000Z-00000f"
 make_verdict "$NOFAIL_RD" "$(jq -nc --argjson p "$(crit_pass)" --argjson b "$(crit BLOCKED null null null '[]')" --arg a "$C_PASS1" --arg bb "$C_BLOCKED" '{($a): $p, ($bb): $b}')"
 NOFAIL_OUT="$(mktmp)/out-nofail"
