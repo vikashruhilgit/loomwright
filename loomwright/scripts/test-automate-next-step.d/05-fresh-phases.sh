@@ -10,6 +10,22 @@ if leg_fresh_plan_mapping "$DRIVER"; then ok "F3 (AC7): LAUNCH_PAD_RESULT discar
 else no "F3: $LEG_MSG"; fi
 if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fixes): a stale .supervisor/state.md (older than the Supervisor phase spawn) + phase_died ⇒ the REPORTED session id on the phase=supervisor line (none reported ⇒ no line); a state.md naming the coordinator is not the phase's; an open PR on a FRESH state.md's branch is named on the no-PR line, a stale one's never — nor one the run file already records (exact URL, never a prefix), nor on a gh failure; GNU and BSD stat both read the mtime, garbage fails closed"
 else no "F3b: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_fresh_died_adopt "$DRIVER"; then ok "F3d (phase_died + PR): a Supervisor phase that opened its PR then died is ADOPTED, never re-planned — live: OPEN ⇒ current-set + the owned drain spawn (a bare call re-prints it); MERGED ⇒ SYNC closeout + check-off, no drain; no PR ⇒ the no-PR line, done/stopped, pr: null; --resume on an older driver's run file (the phase left PR <url> open on <branch>, pr: null) ⇒ RECONCILE adopts it: OPEN ⇒ the owned drain, no second picked line; MERGED ⇒ closeout, check-off, PICK moves on"
+else no "F3d: $LEG_MSG"; fi
+adopt_mutant() { # <name> <anchor> <replacement> — each adoption branch is load-bearing: its mutant turns F3d red
+  local m
+  if m="$(build_mutant "adopt-$1" "$2" "$3" 2>"$WORK/adopt.err")"; then
+    LEG_MSG=""
+    if leg_fresh_died_adopt "$m"; then no "F3d-M ($1): the mutant still passes F3d — the pin is vacuous"
+    else ok "F3d-M ($1): the mutant turns F3d red (${LEG_MSG:0:120})"; fi
+  else no "F3d-M ($1): mutant not built: $(cat "$WORK/adopt.err")"; fi
+}
+if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
+  adopt_mutant live-off '      if [ -n "$dpr" ]; then' '      if false; then'
+  adopt_mutant reconcile-off 'if dl="$(ns_died_line_pr)"; then' 'if false; then'
+  adopt_mutant merged-drains 'if [ "$(st adopted_merged)" = true ]; then NEXT=sync; else NEXT=drain; fi' 'NEXT=drain'
+fi
 if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed fresh launch line is rebuilt from the re-printing session's identity — coord-1's re-print byte for byte; coord-2's re-print, the bare re-print after it and the bare --result's Supervisor spawn carry --coordinator-session coord-2 and no owner command (or coord-2's own when it gave one); coord-1 and coord-2 each get ONE phase=driver line, the re-prints none"
 else no "F3c: $LEG_MSG"; fi
 if leg_fresh_checkpoint "$DRIVER"; then ok "F4 (wave 7, L23): a re-pick (--start pick) / --start run of an item whose last RUN checkpointed, its brief still in .supervisor/jobs/in-progress/ ⇒ the Supervisor phase spawn /loomwright:supervisor --continue task: <id> (the line's id, else the brief saved before it), no Launch Pad spawn; no in-progress brief ⇒ the Launch Pad spawn; a newer saved brief after the checkpoint ⇒ that brief"
