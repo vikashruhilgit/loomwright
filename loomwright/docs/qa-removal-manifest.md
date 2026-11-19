@@ -31,7 +31,7 @@ of `loomwright/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
 `scripts/check-doc-currency.sh` verifies. A row a removal PR finds missing, wrong or over-broad is
 changed here in that PR, with the row count below, never worked around.
 
-Row count: 434
+Row count: 441
 
 ## Rows
 
@@ -129,7 +129,11 @@ Row count: 434
 | `README.md` | `STRATEGIST_VERDICT` | re-point | 11b1 | names a QA or verify schema 11b2 deletes |
 | `README.md` | `qa-executor` | re-point | 11b1 | names a removed QA agent |
 | `README.md` | `qa-strategist` | re-point | 11b1 | names a removed QA agent |
+| `loomwright/.claude-plugin/plugin.json` | `"debate-loop"` | re-point | 11b1 | keyword for the removed QA system |
+| `loomwright/.claude-plugin/plugin.json` | `"e2e-testing"` | re-point | 11b1 | keyword for the removed QA system |
 | `loomwright/.claude-plugin/plugin.json` | `"playwright"` | re-point | 11b1 | keyword for the removed QA system |
+| `loomwright/.claude-plugin/plugin.json` | `"risk-based-testing"` | re-point | 11b1 | keyword for the removed QA system |
+| `loomwright/.claude-plugin/plugin.json` | `"test-generation"` | re-point | 11b1 | keyword for the removed QA system |
 | `loomwright/.claude-plugin/plugin.json` | `qa-executor` | re-point | 11b1 | names a removed QA agent |
 | `loomwright/.claude-plugin/plugin.json` | `qa-strategist` | re-point | 11b1 | names a removed QA agent |
 | `loomwright/.claude-plugin/plugin.json` | `red-teaming, QA,` | re-point | 11b1 | description names QA; its agent, command and skill counts drop in the same PR (verified by `check-doc-currency.sh`, not restated here) |
@@ -360,6 +364,7 @@ Row count: 434
 | `loomwright/scripts/test-committed-twin-scrub.sh` | `qa-executor` | re-point | 11b1 | names a removed QA agent |
 | `loomwright/scripts/test-emit-block-parses.sh` | `QA_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/scripts/test-emit-block-parses.sh` | `VERIFY_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
+| `loomwright/scripts/test-harvest-conventions.sh` | `golden_fixture_regen` | re-point | 11b1 | scored a deleted QA agent-memory entry as its worked example |
 | `loomwright/scripts/test-insights.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |
 | `loomwright/scripts/test-no-fixed-sleep-race.sh` | `verify-walkthrough` | re-point | 11b2 | names a removed QA skill or its test |
 | `loomwright/scripts/test-no-pipefail-grep-q.sh` | `verify-run.sh` | re-point | 11b2 | names a QA script 11b2 deletes |
@@ -416,6 +421,7 @@ Row count: 434
 | `docs/evidence/dismissed-followups-06a-scripts.md` | — | keep | 11b1 | evidence record (history) |
 | `docs/evidence/dismissed-followups-06b-docs.md` | — | keep | 11b1 | evidence record (history) |
 | `docs/evidence/pa18b-right-size-check.md` | — | keep | 11b1 | evidence record (history) |
+| `docs/evidence/qa-split-11b1-removal.md` | — | keep | 11b1 | evidence record (history by design) |
 | `docs/evidence/review-gate-rounds.md` | — | keep | 11b1 | evidence record (history) |
 | `loomwright/agents/execute-manager.md` | `outputs_verified gate` | keep | 11b1 | home of the `outputs_verified` gate (the per-subtask gate); not QA |
 | `loomwright/agents/launch-pad.md` | `qa-executor:` | keep | 11b1 | keeps `qa-executor:` bullets when stripping `cmd:` bullets; kept until Phase 3 item 09 or D18 |
@@ -434,6 +440,7 @@ Row count: 434
 | `loomwright/docs/qa-removal-manifest.md` | — | keep | 11b1 | this manifest: the reviewed list 11b1, 11b2 and 12 are checked against |
 | `loomwright/docs/rationale/automate-loop.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/rationale/launch-pad-autonomous.md` | — | keep | 11b1 | rationale doc (history by design) |
+| `loomwright/docs/rationale/qa-split.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/rationale/subagents.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/result-schemas/ground-truth-json.md` | `qa-executor:` | keep | 11b1 | schema of the kept `qa-executor:` kind; kept until Phase 3 item 09 or D18 |
 | `loomwright/docs/result-schemas/schema-versioning.md` | `cmd\|corpus-task\|qa-executor` | keep | 11b1 | the GROUND_TRUTH_JSON entry's kind enum names the kept `qa-executor` kind; kept until Phase 3 item 09 or D18 |

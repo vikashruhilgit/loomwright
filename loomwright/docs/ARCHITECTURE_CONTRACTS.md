@@ -26,10 +26,8 @@
 | Product Owner | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
 | Orchestrator | no | no (control case — no `memory:`, so no grant; see `disallowedTools` section) | yes | no | no | no | inherit |
 | Red Team Reviewer | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
-| QA Strategist | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
 | Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
 | Rubric Grader | no | no | yes (read-only git only) | yes (rubric scoring) | no | no | haiku |
-| QA Executor | yes | yes | yes (+ LSP) | no | yes | no | inherit |
 | review-pr-runner | yes (code-reviewer + general-purpose fix worker) | yes (fix worker pushes the PR branch) | yes (`gh`/`git`) | yes (via code-reviewer) | no | no | inherit |
 
 > **review-pr-runner is NEVER `Task`-spawned (AC9).** It must run only as the **main agent of its own session** (`claude --agent loomwright:review-pr-runner`, launched fresh from the plain-`/supervisor` completion tail) or **inline on the main thread** via `/review-pr <pr-url>`. It spawns its own children (`code-reviewer` for review, `general-purpose` for the bounded fix); the rule was written when subagents could not nest. Claude Code now allows nesting three layers deep by default (§"Subagent nesting"), so the rule is retained pending owner review; see agnostic-phase1/06. In the `/autonomous` EVALUATE sense, the review-heal *loop body* runs as a Task step that performs review-and-fix inline — it does NOT `Task`-spawn the `-runner` agent. Canonical contract: `skills/review-heal/SKILL.md`.
@@ -39,18 +37,18 @@
 These are **defense-in-depth** restrictions for accidental misuse, NOT security boundaries against adversarial scenarios.
 
 **Since `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md` (unified `tools:` superset across
-all 14 agents), every agent below carries a `tools:` allowlist that is byte-identical across the
+all agents), every agent below carries a `tools:` allowlist that is byte-identical across the
 plugin (`Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch`). Each
 agent's per-row `disallowedTools` below is derived as `superset − observed effective toolset`, NOT
-`superset − previously-declared tools` — four agents (Launch Pad, Product Owner, QA Strategist, Red
-Team Reviewer) deliberately omit `Write`/`Edit` from their denylist because the harness's
+`superset − previously-declared tools` — Launch Pad, Product Owner and Red Team Reviewer
+deliberately omit `Write`/`Edit` from their denylist because the harness's
 `memory: project` grant gave them that capability effectively even though their prior declared
 `tools:` never listed it; blocking it there would have removed a capability they actually have
 today, not merely tidied a list.
 
 > ⚠️ **PROVISIONAL — this row-set carries the weakest evidence in the table, and the hedge belongs
-> here too.** The four `memory: project` rows below that leave `Write`/`Edit` **unblocked**
-> (`launch-pad`, `product-owner`, `qa-strategist`, `red-team-reviewer`) rest on an **environment
+> here too.** The `memory: project` rows below that leave `Write`/`Edit` **unblocked**
+> (`launch-pad`, `product-owner`, `red-team-reviewer`) rest on an **environment
 > observation, not a CI-verifiable fact** — see `POINTER_AUDIT.md` §"The effective-toolset model, and
 > the evidence for it" for the 14-row table and its method. `shared-agent-prefix.md` and
 > `POINTER_AUDIT.md` both hedge this; **this table previously did not, and that inconsistency was the
@@ -72,8 +70,6 @@ today, not merely tidied a list.
 | Orchestrator | Write, Edit, Task, TaskOutput, LSP, WebSearch, WebFetch | Read-only planner; no `memory:` declared, so no Write/Edit grant — the control case that shows the grant is tied to `memory: project`, not to plugin agents generally |
 | Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash, TaskOutput, LSP, WebSearch, WebFetch | Read-only; no mutation via any path; keeps its pre-existing 5-item denylist |
 | Product Owner | Task, TaskOutput, LSP | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
-| QA Executor | TaskOutput, WebSearch, WebFetch | Already declared `Write`/`Edit`/`Task`/`LSP` directly; only the newly-allowlisted items need blocking |
-| QA Strategist | Task, TaskOutput, LSP, WebSearch, WebFetch | Keeps its pre-existing `Task` block; **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
 | Red Team Reviewer | Task, TaskOutput, LSP | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
 | review-pr-runner | Write, Edit, TaskOutput, LSP, WebSearch, WebFetch | Non-memory; delegates edits to its `Task`-spawned `general-purpose` fix worker rather than writing itself |
 | Rubric Grader | Write, Edit, NotebookEdit, Task, TaskOutput, LSP, WebSearch, WebFetch | Read-only Phase 4.5 grader; advisory only — must never mutate the diff it scores or spawn sub-agents; keeps its pre-existing 4-item denylist |
@@ -83,7 +79,7 @@ today, not merely tidied a list.
 **Enforcement-model downgrade — recorded, not shipped silently (accepted for consistency and
 canonical ordering, cost stated below).** Both this doc and `AGENT_GUIDELINES.md` describe
 `disallowedTools` as defense-in-depth, NOT a security boundary — the `tools:` allowlist was meant to
-be the real restriction. Unifying `tools:` to one superset across all 14 agents moves the allowlist
+be the real restriction. Unifying `tools:` to one superset across all agents moves the allowlist
 half of enforcement to uniform-by-construction and leaves the denylist carrying the *entire*
 restriction for every agent, not just the six that already relied on it. The honest scope split:
 
@@ -113,17 +109,18 @@ restriction for every agent, not just the six that already relied on it. The hon
   moves from allowlist to denylist here; the other five (`context-keeper`, `plan-reviewer`,
   `qa-strategist`, `rubric-grader`, `worker`) already denied it explicitly. The per-agent table above
   is the check: a row omits one of these five exactly when that agent already declared it before this
-  change.
+  change. The counts are as of that change; `qa-executor` and `qa-strategist` have since been removed
+  from the plugin, so the table no longer carries their rows.
 
 ---
 
 ## Agent Invariants
 
-> Relocated from `CLAUDE.md` §"The 14 Agent Roles" in the v15.21.0 CLAUDE.md diet (content moved,
+> Relocated from `CLAUDE.md` §"The Agent Roles" in the v15.21.0 CLAUDE.md diet (content moved,
 > never deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is
 > now the authoritative home for the full per-agent invariants, the `/autonomous` orchestration
 > shell, the Shared Agent Contract, and the Parallel Execution Model; `CLAUDE.md` keeps only a
-> compact 14-row name/type/one-line-purpose list plus a pointer here.
+> compact name/type/one-line-purpose list plus a pointer here.
 
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
@@ -133,8 +130,6 @@ restriction for every agent, not just the six that already relied on it. The hon
 | Orchestrator | user-facing | user | Reads CLAUDE.md (+ Beads when active) → EPIC / TASK with skill references. Defaults to one task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); **no paired review subtask is generated at any threshold (Fix 7, v15.18.0)** — the deterministic `outputs_verified` gate plus tests/lint is the per-task gate throughout, and Phase 4.5's integrated review is the sole LLM gate — see `agents/orchestrator.md` §"Review Gate Policy". **Beads-optional:** a `## Persistence Mode` block branches on `beads_active` (probe `test -d .beads && bd --version`); when absent, skips all `bd` and writes the task tree to `.supervisor/requirements/{slug}-plan.md` — the no-per-subtask-review policy applies in both modes. Detection logic already lived in the shared `context-setup` skill; this wires output to it (matching Code Reviewer's long-standing Beads-optional pattern) |
 | Code Reviewer | user-facing | user | LSP, read-only mode, schema_v3 (adds `drift` category, severity caps via hook). **Auto-expands to consistency audit** when diff touches `agents/`, `commands/`, `skills/`, `docs/`, or plugin metadata |
 | Red Team Reviewer | user-facing | user | 6 attack vectors; persistent memory of past audits |
-| QA Strategist | user-facing | user | Three modes (Strategy / Gate Audit / Post-Execution Audit); spawned twice (gate audit Phase 11, results audit Phase 13) |
-| QA Executor | user-facing | user | Multi-phase Level 1 protocol (phases 1–13, non-monotonic order), `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/110/60 budget (default/scoped/plan) with 60/80/92% zones |
 | Review-PR (`review-pr-runner`) | user-facing | user / Supervisor completion-tail / autonomous EVALUATE | `/review-pr <pr-url>` standalone review→fix→re-review loop against an existing PR; resolves PR-URL → head branch, spawns `code-reviewer` + `general-purpose` fix worker; **never auto-merges**; emits `REVIEW_HEAL_RESULT`. NEVER Task-spawned (subagents-cannot-spawn-subagents) — run inline via `/review-pr` or as `claude --agent …:review-pr-runner`. Authority is the `review-heal` skill. |
 | Execute Manager | internal | Supervisor (Phase 3, Parallel Path — inline or runner) | Owns poll loop in isolated context, 60 tool-call budget; re-verifies each worker's `provides` ON DISK via `scripts/verify-provides.sh` (+1 Bash per subtask) — disk wins over the worker's self-report; runs `scripts/run-pin-mutations.sh` beside it (+1 Bash; a `not_held` earns one re-spawn, then is recorded and carried to Phase 4.5) |
 | Context-Keeper | internal | Supervisor / Execute Manager | **Sole agent writer** of the state file — `## Session` is seeded once by `initialize` and projected thereafter by `scripts/build-state.sh`; no Supervisor path (inline or runner) writes it directly (`agents/supervisor.md`, `agents/context-keeper.md`); haiku model, batch updates, atomic writes |
@@ -186,8 +181,6 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | Worker | ~6k tokens | Focused implementation |
 | Code Reviewer | ~4k tokens | Read-only analysis |
 | Context-Keeper | ~200 tokens | Atomic state ops, < 50 token responses |
-| QA Executor | ~8k tokens | Discovery + generation + execution |
-| QA Strategist | ~3k tokens | Risk classification |
 | Launch Pad | ~5-7k tokens | Discovery + analysis + brief assembly + plan review (~5k typical, ~7k worst-case with 3 review cycles) |
 | Product Owner | ~4k tokens | Domain analysis + story writing |
 | Orchestrator | ~3k tokens | Task decomposition |
@@ -213,7 +206,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 - **Location:** Per-agent SubagentStop hooks (hook execution layer)
 - **Reference:** `docs/RESULT_SCHEMAS.md`
 - **Per-agent hooks:** Worker, Execute Manager (SubagentStop in agent frontmatter), Code Reviewer (Stop in agent frontmatter)
-- **Cross-cutting hooks:** Code Reviewer, QA Executor, Plan Reviewer (SubagentStop in `hooks.json`)
+- **Cross-cutting hooks:** Code Reviewer, Plan Reviewer (SubagentStop in `hooks.json`)
 - **Dual-hook note:** Code Reviewer intentionally has both a per-agent `Stop` hook (validates CODE_REVIEW_RESULT block exists before finishing — completeness gate) AND a cross-cutting `SubagentStop` hook (validates output schema after completion — format gate). These are complementary: Stop catches incomplete reviews, SubagentStop validates structure.
 - **Never duplicated** in Supervisor or plugin runtime
 
@@ -232,7 +225,6 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | `.supervisor/history/` | Supervisor (create) | Read-only after creation |
 | `.supervisor/worker-summaries/` | Worker (inline mode) | Execute Manager (read) |
 | `.worker-summary.md` (in worktree) | Worker (parallel mode) | Execute Manager (read) |
-| `.qa-summary.md` | QA Executor (write) | QA Strategist (read in audit mode) |
 | `.supervisor/twin/` | `scripts/write-system-contract.sh` (sole writer) | Readers via `scripts/read-system-contract.sh`; Context-Keeper is OUT of this path |
 
 ---
@@ -383,8 +375,6 @@ session-local state, not committed). Self-tests live in `scripts/test-system-con
 | Product Owner | 40 | Return partial stories |
 | Orchestrator | 40 | Return partial task plan |
 | Red Team Reviewer | 60 | Return partial audit |
-| QA Strategist | 40 | Return partial risk classification |
-| QA Executor | 80 | Return partial QA_RESULT |
 | review-pr-runner | 60 | Emit REVIEW_HEAL_RESULT with `decision: ESCALATED` (loop incomplete → escalate, never merge) |
 
 ### Standalone review-and-heal loop budget
@@ -582,7 +572,6 @@ All result schemas include a `schema_version` field. Current versions: CODE_REVI
 |--------|--------|--------|
 | Task pass rate | ≥90% | WORKER_RESULT status=completed |
 | First-pass review rate | ≥80% | CODE_REVIEW_RESULT decision=PASS |
-| QA coverage | ≥70% routes | QA_RESULT coverage_estimate |
 | Worker retry rate | ≤10% | Logs (retry count / total spawns) |
 | Merge success rate | ≥95% | Supervisor FINALIZE outcomes |
 
@@ -609,8 +598,6 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 12462 | 11382¹ | 0 |
 | `product-owner`     | 19533 | 17757¹ | 3 |
-| `qa-executor`       | 53332 | 48483¹ | 5 |
-| `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
 | `review-pr`         | 30226 | 27478¹ | 2 |
 | `rubric-grader`     | 2486  | 2260¹ | 0 |
@@ -732,14 +719,9 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `monitoring-observability` | 2092 | 1901 |
 | `mvp-scoping` | 1850 | 1681 |
 | `pattern-detector` | 853 | 775 |
-| `playwright-e2e` | 9017 | 8197 |
 | `pr-postmortem` | 7836 | 7124 |
 | `preflight-sync` | 5790 | 5263 |
 | `product-discovery` | 2059 | 1871 |
-| `qa-gates` | 7238 | 6580 |
-| `qa-orchestration` | 2076 | 1887 |
-| `qa-strategy` | 5989 | 5444 |
-| `qa-test-patterns` | 12183 | 11075 |
 | `quality-checklist` | 4262 | 3874 |
 | `review-heal` | 24186 | 21987 |
 | `rules` | 18926 | 17205 |
@@ -751,7 +733,6 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
 | `user-story-writing` | 6381 | 5801 |
-| `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
 ### Command size ceilings
@@ -776,15 +757,12 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `pr-postmortem` | 2215 | 2013 |
 | `product-owner` | 12779 | 11617 |
 | `propose` | 6018 | 5471 |
-| `qa-executor` | 1337 | 1215 |
-| `qa-strategist` | 4411 | 4010 |
 | `red-team-reviewer` | 2046 | 1860 |
 | `review-pr` | 2574 | 2340 |
 | `rules` | 9081 | 8255 |
 | `setup` | 31199 | 28362 |
 | `supervisor` | 11348 | 10316 |
 | `telemetry` | 5328 | 4843 |
-| `verify` | 6276 | 5705 |
 
 ---
 
@@ -792,7 +770,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 
 **Platform fact** ([sub-agents docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12): a subagent can spawn subagents of its own, up to three layers below the main conversation by default. `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` changes the limit (`1` turns nesting off), and at the limit the host withholds the Agent (`Task`) tool, so the subagent there does its work itself. Version history on the same page: v2.1.172–v2.1.216 nested up to five layers with no setting, v2.1.217–v2.1.218 defaulted the limit to one, and v2.1.219 raised it to three. Older prose in this repo said subagents cannot spawn subagents. That was true of the releases it was written against; the page lists no nesting before v2.1.172. The same page says the host removes the ask tool from every subagent, even when its `tools` field lists it.
 
-**Where the repo relies on nesting** (all within the default limit): inline `/supervisor` → `execute-manager` → `worker` on the Parallel Path, two layers, also under `/autonomous`, which runs Supervisor inline, and under `/automate`, whose Supervisor phase runs it inline in its own phase session (or in the coordinator under `--inline-phases`); the `/autonomous` EVALUATE review-heal Task step → `code-reviewer` / fix worker, two layers; `/qa-executor` → `qa-executor` → `qa-strategist`, two layers.
+**Where the repo relies on nesting** (all within the default limit): inline `/supervisor` → `execute-manager` → `worker` on the Parallel Path, two layers, also under `/autonomous`, which runs Supervisor inline, and under `/automate`, whose Supervisor phase runs it inline in its own phase session (or in the coordinator under `--inline-phases`); the `/autonomous` EVALUATE review-heal Task step → `code-reviewer` / fix worker, two layers.
 
 **What the inline-only rules rest on now.** Running a workflow as a subagent instead of on the main thread costs two things. It loses the ask tool, so every question gate takes its can't-ask branch (§"Question-gate inventory" below). And each delegation layer uses one layer of depth, so under a lowered limit (or on v2.1.217–v2.1.218) the workflow loses the Agent tool and aborts with "Task/Agent tool unavailable". That is why `/supervisor`, `/launch-pad`, `/autonomous` and the `/automate` coordinator stay inline, never a subagent. **`/automate` does not run every phase in the coordinator's context** (automate-speed/09): by default each phase of a Queue item — Launch Pad (the brief), Supervisor (implement + Phase 4.5) and the owned `/review-pr --until-mergeable` drain — runs as its own fresh headless print-mode session, launched by `automate-lanes.sh phase-launch` in the run's checkout. The workflow stays inline *inside its phase session*: it is that session's main thread, so its Task descendants keep the nesting depth above and its question gates keep the ask tool, which the relay hook defers to the coordinator (context HR in §"Question-gate inventory"). The coordinator reads its inputs and results from disk (the run file and the phase's result sidecar), never the phase's workflow bodies. `--inline-phases` keeps every phase inline in the coordinator, as before. Two rules have no reason other than the old premise: `review-pr-runner` is never `Task`-spawned (AC9), and `/pr-postmortem` is a detached process rather than a nested `Task`. `/review-pr` has no question gate, so its inline rule has no other reason either. All three are retained pending owner review; see agnostic-phase1/06, a proposed requirement (`.supervisor/requirements/proposed/`, gitignored, so a clone may not have it) filed to re-justify or retire them.
 
@@ -800,7 +778,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 
 Every question gate in `agents/`, `commands/` and `skills/` and what it does when nobody can answer it. Two things stop an answer. The run is non-interactive (an explicit flag, or a headless print-mode session). Or the gate's prose executes inside a subagent: the host removes the ask tool from every subagent's tool set, even when its `tools:` list names it. Each changed gate decides it cannot ask from the explicit flag and from spawn-contract knowledge ("I am a subagent / the ask tool is absent"), never from a stdin-TTY probe alone, because that probe false-positives inside the host's Bash tool. An existing TTY / `$CI` probe stays as an additional signal. The authoritative hit list is `grep -rn` for the ask tool's name over those three directories. Every hit is either a row below or listed under the gate it describes. Interactive options are unchanged everywhere. Each gate's stable code, its exact labels, its tier — whether a stamped or owner-set policy may answer it inside a `--parallel` lane, or the `auto` tier answers it without asking — live in `docs/LANE_GATES.md` (authority: `scripts/lane-policy.sh catalog`), not here.
 
-**Contexts** come from real spawn sites, not agent names: **MI** = main thread, interactive · **MN** = main thread, `--non-interactive` / `--non-interactive-fallback` · **SA** = subagent · **HP** = headless print-mode (`-p`) session · **HR** = headless phase session with relay: an `/automate` phase session (`phase-launch`, automate-speed/09) is print-mode, but its relay hook records an ask-tool call under the phase dir and defers the session; the coordinator re-asks it verbatim (ONE ask, the recorded header, text and labels) and `phase-answer` resumes the same session with the owner's answer. The coordinator never answers a phase question itself. A gate in HR asks like MI. When nobody can answer, it takes its named can't-ask status unchanged: a non-interactive run launches the phase with `--non-interactive` (MN inside the session), and a coordinator whose ask tool is unavailable reports the gate's named status instead of answering (the driver's `then`), so the deferred phase is never answered on the owner's behalf. With no relay at all, PICK parks `phase_relay_unavailable` before any phase starts. The drain phase (`/review-pr`) has no question gate of its own. `/autonomous` never runs in HR, because fresh phases replace it with the driver's own Launch Pad and Supervisor spawns. Launch Pad, Supervisor and Product Owner have no plugin Task spawn site; they run inline, or as their own session via the `--agent` runner, so they reach SA only by host auto-delegation. That is why their can't-ask rule also covers SA. `/autonomous` and the `/automate` coordinator are inline-only and never SA. `qa-executor` and Execute Manager are always SA.
+**Contexts** come from real spawn sites, not agent names: **MI** = main thread, interactive · **MN** = main thread, `--non-interactive` / `--non-interactive-fallback` · **SA** = subagent · **HP** = headless print-mode (`-p`) session · **HR** = headless phase session with relay: an `/automate` phase session (`phase-launch`, automate-speed/09) is print-mode, but its relay hook records an ask-tool call under the phase dir and defers the session; the coordinator re-asks it verbatim (ONE ask, the recorded header, text and labels) and `phase-answer` resumes the same session with the owner's answer. The coordinator never answers a phase question itself. A gate in HR asks like MI. When nobody can answer, it takes its named can't-ask status unchanged: a non-interactive run launches the phase with `--non-interactive` (MN inside the session), and a coordinator whose ask tool is unavailable reports the gate's named status instead of answering (the driver's `then`), so the deferred phase is never answered on the owner's behalf. With no relay at all, PICK parks `phase_relay_unavailable` before any phase starts. The drain phase (`/review-pr`) has no question gate of its own. `/autonomous` never runs in HR, because fresh phases replace it with the driver's own Launch Pad and Supervisor spawns. Launch Pad, Supervisor and Product Owner have no plugin Task spawn site; they run inline, or as their own session via the `--agent` runner, so they reach SA only by host auto-delegation. That is why their can't-ask rule also covers SA. `/autonomous` and the `/automate` coordinator are inline-only and never SA. Execute Manager is always SA.
 
 **Three tiers, and the `auto` tier.** The catalog's `policy` column has three tiers: `allowed` (a stamped project or owner-set wave policy may answer it inside a lane), `auto` (answered without asking by `scripts/gate-auto.sh decide` with the row's one `!` label, unless an escalation trigger fires) and `human-only` (answered by nothing). Which gates are `auto` is the catalog's column, never a list here (`docs/LANE_GATES.md` §"The `auto` tier"). **`LP-SAVE-NOTE` left `human-only` by owner decision**, on the evidence that its recommended save was taken every time it was asked. It moved to `auto` only, so `lane-policy.sh`'s `_LP_POLICY_EXEMPT` still keeps every policy from answering it. The triggers are all deterministic reads, never a model's confidence: `off`, `not_auto`, `label`, `destructive`, `severity` (an issue MEDIUM or higher) and `high_risk` (`classify-risk.sh` true **or null**). The helper is consulted only where the gate could ask: MI, and HR inside the phase session itself, before its ask reaches the relay (so the coordinator still never answers a phase question). `AUT-RESUME` is decided by the driver (its ask's `auto_answer`) and applied only by a coordinator that could ask. **Every can't-ask branch below is unchanged:** MN, SA and HP never consult the helper, and a coordinator without the ask tool still answers `{"cant_ask": true}`. Each decision leaves one `## Progress` record, `auto-answered <code>: <label> — <reason>` or `auto-escalated <code>: <trigger>` (none for `off`), and `gate-auto.sh list <runfile>` prints the run's auto-answers at every park and at its end. Off switch: `--no-auto-gates` (`/automate`, `/launch-pad`) or `.supervisor/config.json` `{"auto_gates": false}`, persisted as `## Run Config` `- auto_gates: off`.
 
@@ -836,16 +814,13 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/automate` dismissed-findings decision | automate-loop §6 "Dismissed-findings decision step" | as above | asks nothing; `pending_decisions: <n>` | unchanged. Also never asked, in an interactive run, when a sequential READY park's `park-ask-gate` prints `refuse — <reason>` (park not written, no merge-watch marker for the PR, `## Current` naming another item or PR, an unreadable run file; automate-speed/01): the drafts stay undecided with `pending_decisions: <n>` and the next PICK records them follow-up |
 | `/automate` READY-park validation waiver (`AUT-WAIVE`, human-only) | `scripts/automate-next-step.sh` step `validation` (automate-loop §6 step 4 GATE); §14 "Terminal park" (a lane relays it to the owner) | MI; MN; HP | new gate (af36-remainder/01) | not asked; the item stays escalated, escalation_cause: validation_unrun |
 | `/automate --parallel` wave-policy ask | automate-loop §14 "The per-wave loop" step 4, "Policy answers" | MI only (the coordinator, at wave planning) | new gate (parallel-automate/21) | not asked and no `wave-set`: no wave policy, so only a stamped project policy can answer a routine lane question; everything else is relayed to the owner |
-| qa-executor VERIFY sign-in | `agents/qa-executor.md` invocation notes; `skills/verify-walkthrough/SKILL.md` credential rule | SA only (Task-spawned by `/qa-executor`, `/verify`) | `status: paused`, `pause_reason: needs_auth` / `session_expired` | unchanged |
-| qa-executor URL fallback (found by the spawn-site audit; prose names no tool) | `agents/qa-executor.md` Phase 3 DETECT URL | SA only | undefined ("Ask user for URL") | `status: needs_human`, `error: "base_url_unresolved: {what was tried}"` (QA_RESULT, returned to `/qa-executor`) |
-| `/verify` queue ambiguous resume | `commands/verify.md` queue mode; `skills/verify-walkthrough/SKILL.md` §10 | MI; MN (`--non-interactive-fallback`) | `pause_reason: resume_ambiguous` | unchanged |
 | `/setup` offers and confirms (the memory module's learning-store consent ask and its `migrate` protect-waiver ask included) | `commands/setup.md`; `skills/setup/SKILL.md`; `docs/command-parts/setup/memory.md` | MI only (main-thread command) | writes nothing without an Accept (the consent ask records nothing, so nothing is published; with no answer to the waiver ask nothing is waived and the migration stops at `protect`) | unchanged |
 | `/telemetry` enable / import offer | `commands/telemetry.md` | MI only | writes nothing without an Accept (never auto-imports) | unchanged |
 | `/dreaming` per-item gate | `commands/dreaming.md` | MI only | writes nothing without an Accept; pushes nothing without a Pre-push confirmation (per item for the rules PR, one per-run question for the memory PR) | unchanged |
 | `/backlog --verify` per-item stamp (`BL-VERIFY`, `BL-CONFLICT`, human-only) | `commands/backlog.md` §"`--verify` — owner-gated verify and stamp" steps 1 and 4 | MI; HP (a headless print-mode session); SA (the prose run inside a subagent) | new gate (parallel-automate/18a) | not asked: lists every proposal, stamps and publishes nothing, first line `verify_requires_owner: <n> item(s) need the owner's answer — nothing stamped` |
 | `/janitor` act pick (`JAN-ACT`, human-only; also the second confirmation before a force-unlock) | `commands/janitor.md` §"What it does" steps 2–4 | MI; HP (a headless print-mode session); SA (the prose run inside a subagent) | new gate | not asked: report only, nothing acted on (`janitor: report only — nothing acted on`), exit 0; `janitor-report.sh act` itself refuses without `--confirm`, under `--report` or with `CI` set |
 
-**Grouped description hits (no gate of their own):** the `--non-interactive` parameter rows in `agents/supervisor.md` and `commands/supervisor.md` belong to the Supervisor rows. The "what runs inline" lists, the flow diagram and the PLAN / EXECUTE forwarding notes in `commands/autonomous.md` and `skills/autonomous-loop/SKILL.md` belong to the Launch Pad and Supervisor rows. The note that `/verify` never asks (`commands/verify.md`) belongs to the qa-executor sign-in row. The notification hook that fires on any ask (`commands/setup.md` notifications section, `commands/agent-help.md` hooks table) is not a gate; it fires only when a gate actually asks.
+**Grouped description hits (no gate of their own):** the `--non-interactive` parameter rows in `agents/supervisor.md` and `commands/supervisor.md` belong to the Supervisor rows. The "what runs inline" lists, the flow diagram and the PLAN / EXECUTE forwarding notes in `commands/autonomous.md` and `skills/autonomous-loop/SKILL.md` belong to the Launch Pad and Supervisor rows. The notification hook that fires on any ask (`commands/setup.md` notifications section, `commands/agent-help.md` hooks table) is not a gate; it fires only when a gate actually asks.
 
 ## Failure Escalation Summary
 
@@ -857,7 +832,6 @@ See `docs/FAILURE_ESCALATION.md` for full paths.
 | Execute Manager | 1 (fresh spawn) | Supervisor → Human |
 | Code Reviewer (FAIL) | 3 | Supervisor → Human |
 | Code Reviewer (NEEDS_HUMAN) | 0; 1 fix round first when other at-floor findings sit beside the `needs_human` issue(s) | Supervisor → Human (3x = halt) |
-| QA Executor | 0 | Partial result (non-blocking) |
 | Supervisor | 0 | Human (checkpoint + exit) |
 | Context-Keeper | 1 | Degraded mode |
 | Plan Reviewer | 0 | Returns result to Launch Pad |
@@ -892,9 +866,7 @@ Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager app
 | launch-pad | inherit | inherit (out of v1 scope) |
 | product-owner | inherit | inherit (judgment) |
 | plan-reviewer | inherit | inherit (gating) |
-| qa-strategist | inherit | inherit (gating) |
 | red-team-reviewer | inherit | inherit (adversarial creativity; as multi-voter VOTER see the phase45-multi-voter-verification row) |
-| qa-executor | inherit | future — not spawned by `/supervisor`; deferred to v2 when `/qa-executor --cheap` ships |
 
 The `phase45-multi-voter-verification` stage exists only when `--multi-voter-heal` is ON (authority: `skills/self-heal-advisory/multi-voter.md` §Multi-voter verification, Read only under that flag); when NOT in `--cheap`, Phase 4.5 verification spawns should route at the strongest available session tier — `model: inherit` stays the default everywhere, and no model IDs are hardcoded (Fable-class models are only available when the session itself runs on them).
 
@@ -915,9 +887,8 @@ Default model routing for plugin-invoked **async analysis** spawns — backward-
 |---|---|---|---|
 | `/dreaming` Phase 2 | code-reviewer (REFLECTION mode — read-only log analysis) | **sonnet** (spawn-time Task `model` param) | `/dreaming --full-model` → `inherit` |
 | `/dreaming` Phase 2 | red-team-reviewer (REFLECTION mode — read-only log analysis) | **sonnet** (spawn-time Task `model` param) | `/dreaming --full-model` → `inherit` |
-| `/dreaming` Phase 2 | qa-executor (REFLECTION mode — read-only log analysis) | **sonnet** (spawn-time Task `model` param) | `/dreaming --full-model` → `inherit` |
 
-**Scope guard — reflection-mode rows only:** these rows apply EXCLUSIVELY to the `/dreaming` reflection spawns (backward log analysis that proposes, never gates). They do **not** downgrade code-reviewer in its forward diff-review/gating role, red-team-reviewer as an adversarial auditor or multi-voter VOTER, or qa-executor in forward test execution — those keep the `--cheap` table above as their only routing surface. rubric-grader is already Haiku by frontmatter and needs no row.
+**Scope guard — reflection-mode rows only:** these rows apply EXCLUSIVELY to the `/dreaming` reflection spawns (backward log analysis that proposes, never gates). They do **not** downgrade code-reviewer in its forward diff-review/gating role, or red-team-reviewer as an adversarial auditor or multi-voter VOTER — those keep the `--cheap` table above as their only routing surface. rubric-grader is already Haiku by frontmatter and needs no row.
 
 **Surfaces verified to spawn NO models today (recorded, no rows):** `/pr-postmortem` is an inline main-thread workflow (script-gathered evidence, no Task spawns) and `/insights` is script-driven (`build-insights.sh`) — neither makes a model spawn, so neither gets a routing row. Re-audit if either ever gains a Task spawn. Batch-API routing remains a documented roadmap note only (`docs/POINTER_AUDIT.md` §Roadmap) — no code path exists on the subscription runtime.
 
@@ -1009,7 +980,7 @@ Makes single-run-per-repo **structural**, not merely documented (`automate-loop/
 >
 > **Naming convention differs from every other agent table here, deliberately.** The `Agent`
 > column carries the frontmatter identifier (`launch-pad-runner`, `supervisor-runner`,
-> `review-pr-runner`), not the display name used by CLAUDE.md §"The 14 Agent Roles" and
+> `review-pr-runner`), not the display name used by CLAUDE.md §"The Agent Roles" and
 > `README.md` (`Launch Pad`, `Supervisor`, `Review-PR`). Cross-reference by dropping the
 > `-runner` suffix. A display-name column would need a hand-maintained map keyed on the agent
 > set — the exact thing whose drift this table was generated to end.
@@ -1024,8 +995,6 @@ Makes single-run-per-repo **structural**, not merely documented (`automate-loop/
 | orchestrator | Medium Purple | `#9370DB` |
 | plan-reviewer | Medium Turquoise | `#48D1CC` |
 | product-owner | Dark Orange | `#FF8C00` |
-| qa-executor | Orange Red | `#FF4500` |
-| qa-strategist | Tomato | `#FF6347` |
 | red-team-reviewer | Crimson | `#DC143C` |
 | review-pr-runner | Dark Turquoise | `#00CED1` |
 | rubric-grader | Yellow Green | `#9ACD32` |
@@ -1042,7 +1011,7 @@ The `effort:` frontmatter field on each agent maps to an adaptive thinking tier.
 | Tier | Agents | Rationale |
 |------|--------|-----------|
 | `xhigh` | red-team-reviewer | Adversarial deep analysis with persistent memory across audits |
-| `high` | code-reviewer, launch-pad, worker, qa-executor, qa-strategist, plan-reviewer | Implementation, exhaustive analysis, or cross-file validation |
+| `high` | code-reviewer, launch-pad, worker, plan-reviewer | Implementation, exhaustive analysis, or cross-file validation |
 | `medium` | supervisor, execute-manager, orchestrator | Pure orchestration / coordination |
 | omitted | context-keeper, product-owner | Haiku model (context-keeper) or no thinking budget needed (product-owner) |
 

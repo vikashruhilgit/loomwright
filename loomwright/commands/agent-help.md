@@ -20,7 +20,6 @@ Shows all available agent commands and quick usage examples.
 
 - `readiness.md` — `/launch-pad`, `/supervisor`.
 - `build.md` — `/product-owner`, `/orchestrator`, `/code-reviewer`, `/commit`, `/red-team-reviewer`.
-- `qa.md` — `/qa-strategist`, `/qa-executor`, `/verify`.
 - `knowledge.md` — `/dreaming`, `/capability-check`, `/insights`, `/obsidian`, `/handoff`, `/propose`.
 - `ops.md` — `/telemetry`, `/rules`, `/pr-postmortem`, `/autonomous`, `/backlog`, `/janitor`.
 - `more.md` — `/setup`, `/review-pr`, the QA Workflow Diagram.
@@ -35,7 +34,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) for your development workflow:
+The Loomwright plugin provides **agent roles** (user-facing + internal) for your development workflow:
 
 **Which command?** (condensed — full table in `README.md` / `.claude-plugin/README.md`)
 
@@ -140,19 +139,6 @@ See [../docs/command-parts/agent-help/build.md](../docs/command-parts/agent-help
 
 See [../docs/command-parts/agent-help/build.md](../docs/command-parts/agent-help/build.md).
 <!-- split:end ../docs/command-parts/agent-help/build.md -->
-<!-- split:begin ../docs/command-parts/agent-help/qa.md -->
-### 5️⃣ /qa-strategist — Risk-Based QA Strategy
-
-See [../docs/command-parts/agent-help/qa.md](../docs/command-parts/agent-help/qa.md).
-
-### 6️⃣ /qa-executor — Automated QA Testing
-
-See [../docs/command-parts/agent-help/qa.md](../docs/command-parts/agent-help/qa.md).
-
-### 🔎 /verify — Walk a ticket through the running app
-
-See [../docs/command-parts/agent-help/qa.md](../docs/command-parts/agent-help/qa.md).
-<!-- split:end ../docs/command-parts/agent-help/qa.md -->
 <!-- split:begin ../docs/command-parts/agent-help/knowledge.md -->
 ### 💤 /dreaming — Reflect on Past Sessions (Read-Only Until You Accept)
 

@@ -112,5 +112,5 @@ The historical claim that Memory Tool is "ephemeral" or "in-conversation only" i
 - Tool type identifier: `memory_20250818`
 - SDK helpers: `BetaAbstractMemoryTool` (Python), `betaMemoryTool` (TypeScript)
 - Plugin file-based memory: `CLAUDE.md` §"Persistent Memory"
-- Six agents using file-based memory: Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor
+- Agents using file-based memory: the ones whose frontmatter declares `memory: project` (`loomwright/agents/*.md`)
 - Compaction deferral context: `loomwright/docs/SPIKES/compaction.md`

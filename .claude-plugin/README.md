@@ -1,12 +1,12 @@
 # Loomwright Plugin for Claude Code
 
-A Claude Code plugin with 14 agent roles (9 user-facing + 5 internal), 42 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, standalone PR review-and-heal (`/review-pr`), and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
+A Claude Code plugin with user-facing and internal agent roles, focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and standalone PR review-and-heal (`/review-pr`). v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
 
 ## Overview
 
 The Loomwright Plugin includes:
 
-- **Continuous autonomous mode (v14, stacked PRs)** — The `/autonomous` slash command (`loomwright/commands/autonomous.md`), governed by the `autonomous-loop` skill (`loomwright/skills/autonomous-loop/SKILL.md`), is an inline main-thread workflow that chains Launch Pad → Supervisor. **Default mode is multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch`. Pass `--single-iteration` for v13's run-once command chaining, or `--no-stacked-branches` for the v13 branch-from-`main` cadence. The multi-iteration EVALUATE phase reads `SUPERVISOR_RESULT` and re-plans on exactly two signals: (1) `status: completed` + `rubric_score N/M` with N<M (loop pauses for a rubric-gate AskUserQuestion — merge-and-continue verified via `gh pr view` / `git merge-base --is-ancestor`, stop-here, or force-continue-anyway); (2) `status: failed` + `inter_subtask_gap` on this iteration's brief, detected by anchor-by-filename (`.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` found in any of three iteration-scoped sources: the failed brief's contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary`; `.supervisor/state.md` is intentionally NOT consulted because pre-rewrite stale content could false-positive). The loop **never auto-picks** on adjudication — Supervisor's existing 4-option `AskUserQuestion` (per `FAILURE_ESCALATION.md`) surfaces in-session as it does today. Since the v13 baseline, v14.0.0 made multi-iteration the default with stacked PRs, and v14.1.0–v14.2.2 added the notification surface (desktop banners + ntfy/webhook; `Notification` / `PreToolUse[AskUserQuestion]` / `SessionStart` hooks), the `LAUNCH_PAD_RESULT` schema + validator (retiring the fragile `ls`-diff brief detection), and crash/compact session-resume. Counts: **42 skills, 48 hooks**.
+- **Continuous autonomous mode (v14, stacked PRs)** — The `/autonomous` slash command (`loomwright/commands/autonomous.md`), governed by the `autonomous-loop` skill (`loomwright/skills/autonomous-loop/SKILL.md`), is an inline main-thread workflow that chains Launch Pad → Supervisor. **Default mode is multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch`. Pass `--single-iteration` for v13's run-once command chaining, or `--no-stacked-branches` for the v13 branch-from-`main` cadence. The multi-iteration EVALUATE phase reads `SUPERVISOR_RESULT` and re-plans on exactly two signals: (1) `status: completed` + `rubric_score N/M` with N<M (loop pauses for a rubric-gate AskUserQuestion — merge-and-continue verified via `gh pr view` / `git merge-base --is-ancestor`, stop-here, or force-continue-anyway); (2) `status: failed` + `inter_subtask_gap` on this iteration's brief, detected by anchor-by-filename (`.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` found in any of three iteration-scoped sources: the failed brief's contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary`; `.supervisor/state.md` is intentionally NOT consulted because pre-rewrite stale content could false-positive). The loop **never auto-picks** on adjudication — Supervisor's existing 4-option `AskUserQuestion` (per `FAILURE_ESCALATION.md`) surfaces in-session as it does today. Since the v13 baseline, v14.0.0 made multi-iteration the default with stacked PRs, and v14.1.0–v14.2.2 added the notification surface (desktop banners + ntfy/webhook; `Notification` / `PreToolUse[AskUserQuestion]` / `SessionStart` hooks), the `LAUNCH_PAD_RESULT` schema + validator (retiring the fragile `ls`-diff brief detection), and crash/compact session-resume.
 
 - **Previous capabilities increment (v12.2.0, preserved)** — (1) **Agent Teams graduation:** `loomwright/skills/agent-teams/SKILL.md` now ships per-pattern Recommended Use Cases plus a 3-of-6 graduation matrix (research/exploration, competing hypotheses, cross-layer changes graduate to *recommended*; sequential tasks, same-file edits, high-write-contention scenarios remain experimental — keep using Supervisor v4 + worktrees there). (2) **Outcomes Rubric:** every Supervisor run ends with a Haiku-graded rubric; `rubric_score` is an optional additive field in `SUPERVISOR_RESULT` (`"N/M" | null`; schema_version stays 1), owned by `loomwright/agents/supervisor.md`; the supervisor SubagentStop hook validates the format only when present and never rejects for presence or absence. (3) **`/dreaming` slash command:** read-only post-hoc reflection on completed sessions — does not write code, agent memory, or `CLAUDE.md`; persistence requires explicit user follow-up. (4) **Opt-in webhook hook:** a new SubagentStop `type: command` entry in `loomwright/hooks/hooks.json` invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` to POST structured agent results to a user-configured endpoint (disabled by default, fail-closed on errors, never blocks the agent).
 
@@ -14,7 +14,7 @@ The Loomwright Plugin includes:
 
 - **Reliability primitives (v12.0.0, preserved)** — Inter-subtask output contracts via a `provides` / `requires` schema (planned by Launch Pad, validated by Plan Reviewer, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across the 10 execution-shaped agents (`xhigh` / `high` / `medium`; haiku-locked context-keeper and discovery-only product-owner intentionally exempt), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `loomwright/docs/ARCHITECTURE_CONTRACTS.md` (Effort Tiers) and `loomwright/docs/RESULT_SCHEMAS.md` (provides/requires schema, WORKER_RESULT v2).
 
-- **Opt-in GitHub Issues telemetry (v11.2.0, preserved)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `loomwright/docs/TELEMETRY.md` for the full design.
+- **Opt-in GitHub Issues telemetry (v11.2.0, preserved)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `loomwright/docs/TELEMETRY.md` for the full design.
 
 - **"Inline ≠ stop orchestrating" loophole closed (v11.1.2, preserved)** — The v11.1.1 main-thread guard accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to both slash commands, an inline-execution critical rule in `loomwright/agents/supervisor.md`, and a Phase 4.5 completion-tail runtime invariant that emits `status: failed` (and leaves the job in `in-progress/`) if `code-reviewer` was not invoked and `--skip-self-heal` was not explicitly passed.
 
@@ -27,7 +27,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Phase 4.5 self-heal** — Supervisor runs a holistic Code Reviewer pass on the integrated feature branch and auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3), eliminating the manual review-and-fix cycle per feature
 - **Beads-optional Code Reviewer** — auto-detects `.beads/` + `bd` CLI; when absent, `CODE_REVIEW_RESULT` is the sole decision channel
 
-### User-Facing Agents (9)
+### User-Facing Agents
 
 - **Launch Pad** (`/launch-pad`) — Prepare goals for autonomous Supervisor execution
 - **Supervisor** (`/supervisor`) — Autonomous parallel workflow orchestrator with git worktrees
@@ -36,14 +36,14 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
 - **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
 - **Review-PR** (`/review-pr <pr-url>`) — Standalone bounded review→fix→re-review loop against an existing PR; never auto-merges
-- **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
-- **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
+
+> `/qa-strategist`, `/qa-executor` and `/verify` were removed — install Selvedge (`/plugin install selvedge@atelier`, then `selvedge install-cli`) and use `/selvedge:verify`; see [`loomwright/docs/rationale/qa-split.md`](../loomwright/docs/rationale/qa-split.md).
 
 ### Orchestration Shells (slash commands, not agents)
 
 - **`/autonomous` (v14)** — Chains Launch Pad → Supervisor in a default multi-iteration loop (cap 10, default 3) with stacked PRs; re-plans on two `SUPERVISOR_RESULT` signals (rubric N<M; failed + inter_subtask_gap). `--single-iteration` reverts to v13 run-once. Inline main-thread workflow — does not register a new agent.
 
-### Internal Agents (5)
+### Internal Agents
 
 
 - **Execute Manager** — Owns Phase 3 worker lifecycle (no per-subtask reviewer — spawned by Supervisor)
@@ -52,14 +52,14 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
 - **Rubric Grader** (shipped in v12.2.0; the "Internal Agents (4) → (5)" count update is a v13.0.0 doc-consistency fix — not a new v13 agent) — Read-only Haiku scorer for the optional Outcomes Rubric (spawned by Supervisor in Phase 4.5 when the brief contains `## Outcomes Rubric` and `heal_decision == PASS`; advisory only — never blocks the PR)
 
-### 42 Skills
+### Skills
 
 Skills are loaded on-demand to keep context small:
 
 - **Core:** Commits, Context7 lookups, Quality checklist, Pattern detection, Claude.md validation
 - **Workflow:** Supervisor readiness, Async orchestration, State management, Context summarization, Workflow management, Agent teams
 - **Product:** Brainstorming, Product discovery, MVP scoping, User story writing, Domain knowledge
-- **QA:** QA strategy, QA orchestration, QA test patterns, QA gates, Playwright E2E, Unit testing
+- **Testing:** Unit testing
 - **DevOps:** CI/CD, Monitoring/Observability, Error handling
 - **UI:** Frontend UI (design system, accessibility, responsive)
 
@@ -274,36 +274,6 @@ Adversarial audit — find what breaks in production.
 
 ---
 
-### /qa-strategist [target] [--audit .qa-summary.md]
-
-Plan risk-based test strategy or audit QA Executor results.
-
-```bash
-/qa-strategist src/                           # Strategy mode
-/qa-strategist --audit .qa-summary.md         # Audit mode
-/qa-strategist --focus auth                   # Focus area
-```
-
-**Output:** Risk classification, coverage targets, STRATEGIST_VERDICT
-
----
-
-### /qa-executor [--url http://...] [--rounds 1|2|3]
-
-Discover app structure, generate Playwright tests, find gaps, execute.
-
-```bash
-/qa-executor                                          # Auto-detect
-/qa-executor --url http://localhost:3000               # Explicit URL
-/qa-executor --url http://localhost:3000 --skip-strategy
-```
-
-**Requires:** `playwright.config.ts` and running application
-
-**Output:** Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT
-
----
-
 ### /commit
 
 Create conventional commits with Beads linking.
@@ -409,16 +379,6 @@ bd claim BD-XX                # Start task
 bd close BD-XX                # Complete, next unblocks
 ```
 
-### QA Automation
-
-```
-/qa-strategist src/                    # Risk-based strategy
-    |
-/qa-executor --url http://localhost:3000  # Generate + run tests
-    |
-/qa-strategist --audit .qa-summary.md    # Audit results
-```
-
 ---
 
 ## Project Structure
@@ -437,18 +397,18 @@ loomwright/                            # Marketplace wrapper repo
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
     │   └── plugin.json                      # Plugin manifest
-    ├── agents/                              # Agent prompts (14 roles)
+    ├── agents/                              # Agent prompts (one per role)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md
-    │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md
+    │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md
     ├── commands/                            # Slash commands — excerpt; full list: loomwright/commands/
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
-    │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md, verify.md
+    │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md
     │   ├── telemetry.md, dreaming.md, autonomous.md, automate.md, capability-check.md, insights.md, obsidian.md, pr-postmortem.md
     │   └── setup.md, agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 48 quality gate hooks (centralized)
-    ├── skills/                              # 42 focused skill modules
+    │   └── hooks.json                       # quality gate hooks (centralized; count: see hooks.json)
+    ├── skills/                              # focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
     └── docs/
@@ -504,13 +464,11 @@ Agents with `memory: project` build knowledge across sessions:
 | Code Reviewer | Review patterns, recurring issues, conventions |
 | Red Team Reviewer | Past vulnerabilities, attack patterns |
 | Product Owner | Domain context, terminology, preferences |
-| QA Strategist | Risk patterns, which routes break |
-| QA Executor | Flaky patterns, common failures |
 
 ### Quality Gate Hooks
 
-48 hooks centralized in `hooks.json` validate agent output and surface notifications:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer — **6 `type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-code-review-result.py`, `validate-supervisor-result.py`, `validate-qa-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; five converted from prompt hooks in v15.17.0, Code Reviewer's after the 2026-09-27 probe showed its prompt model never saw the block it judged) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher + **10 `type: command` lane emitters** (`emit-token-ledger.sh`, v15.60.0) on `context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-strategist`, `red-team-reviewer`, `review-pr-runner` and `rubric-grader` — so every agent this plugin ships records a lane, because an agent with no emitter can never record an event
+Hooks centralized in `hooks.json` validate agent output and surface notifications:
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, Plan Reviewer — **`type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-code-review-result.py`, `validate-supervisor-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; converted from prompt hooks in v15.17.0, Code Reviewer's after the 2026-09-27 probe showed its prompt model never saw the block it judged) + `type: command` telemetry hooks on Code Reviewer and Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher + **`type: command` lane emitters** (`emit-token-ledger.sh`, v15.60.0) on `context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `red-team-reviewer`, `review-pr-runner` and `rubric-grader` — so every agent this plugin ships records a lane, because an agent with no emitter can never record an event
 - **PreToolUse / PostToolUse (AskUserQuestion):** on the ask (PreToolUse), desktop banner + paused-event webhook (v14.1.0); on the answer (PostToolUse), an answered-event lifecycle row via `emit-lifecycle.sh answered` — one `agent_lifecycle`/`state:working`/`reason:answered` line carrying the question's `tool_use_id`, so `phase-timing.sh` pairs each ask with its answer; one row per id, fail-safe, always exits 0
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0) + per-project OpenTelemetry resource-attribute labeling via `set-otel-resource-attrs.sh` — telemetry-gated, fail-safe (v14.47.0)
@@ -578,7 +536,7 @@ No. Agents suggest changes. You decide whether to apply them. Exception: Supervi
 
 Yes. The plugin works on any language (JavaScript, TypeScript, Python, Go, Rust, Java, etc). Customize patterns in CLAUDE.md.
 
-### Do I need all 8 user-facing agents?
+### Do I need all the user-facing agents?
 
 No. Use what helps:
 - **Just need to plan?** `/orchestrator`
@@ -586,7 +544,7 @@ No. Use what helps:
 - **Need full automation?** `/launch-pad` then `/supervisor`
 - **Need requirements?** `/product-owner`
 - **Need security audit?** `/red-team-reviewer`
-- **Need QA tests?** `/qa-executor`
+- **Need acceptance-criteria verification?** `/selvedge:verify` (Selvedge plugin)
 
 ### Do agents need internet?
 

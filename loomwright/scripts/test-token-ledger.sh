@@ -1406,13 +1406,13 @@ fi
 
 echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two =="
 # Case 21 fires TWO invocations because that was the fan-out when it was written. Registering a
-# lane emitter for every agent this plugin ships takes the matchers that run THIS script from 3
-# to 13 — and an UNTYPED payload matches all of them at once, because a matcher only
+# lane emitter for every agent this plugin ships widened the matchers that run THIS script well
+# past two — and an UNTYPED payload matches all of them at once, because a matcher only
 # discriminates when the payload carries an `agent_type`. The `loomwright:worker` matcher joined
 # them (parallel-automate/24 fix-now: worker spend was never ledgered), so one untyped completion
-# now fans out to FOURTEEN concurrent invocations of this script against one file — every agent
+# now fans out to TWELVE concurrent invocations of this script against one file — every agent
 # this plugin ships; case 26 pins that coverage against hooks.json.
-# FAN_N is 15 rather than 14 on purpose: one more than production can produce, because headroom
+# FAN_N is 15 rather than 12 on purpose: three more than production can produce, because headroom
 # above the real figure is the safe direction for a control and an under-count is not. The dedupe is supposed to
 # collapse them to a single line; at two invocations that was never in doubt, at fifteen the
 # bounded lock wait (20 x 50ms) is a real budget that could be exhausted, and every invocation

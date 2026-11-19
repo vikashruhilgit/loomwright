@@ -20,7 +20,7 @@
 #   follows automatically. The table is the full standard list (147 entries + `RebeccaPurple`),
 #   NOT a subset keyed to today's agent set: a subset would silently return the no-name fallback
 #   for every colour a future agent picks. test-gen-color-legend.sh pins both branches — a hex
-#   that is not a CSS name renders the em-dash fallback, and a CSS name from OUTSIDE the 14 in
+#   that is not a CSS name renders the em-dash fallback, and a CSS name from OUTSIDE the set in
 #   use (`#FA8072` -> Salmon) must still resolve.
 #
 # SENTINELS: the table is written between

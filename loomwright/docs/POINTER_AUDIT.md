@@ -95,7 +95,7 @@ byte-identical their `.md` openings are. A shared leading block across agent pro
 smaller prompt inventory**, and it must be framed as exactly that.
 
 **Empirical corroboration (`.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`,
-unified `tools:` superset across all 14 agents):** this requirement unified `tools:` to one
+unified `tools:` superset across all agents):** this requirement unified `tools:` to one
 byte-identical superset line for every agent, which mechanically confirms the prediction above
 rather than clearing the floor. `disallowedTools` is **subtractive** on the effective rendered
 toolset — observed directly via the discriminating control pair `product-owner` (`memory: project`

@@ -72,7 +72,6 @@ mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":pr
 h={"hooks":{"SubagentStop":[
   mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations","not_verified","no_changes","self_review"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
-  mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts","pause_reason"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","heal_first_decision","heal_new_findings","error","summary","ground_truth","contract_conformance","benchmark_result","risk_classification","heal_dismissed"]),
   mk("plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
   mk("code-reviewer",["schema_version","decision","summary","severity","category","review_mode","audit_focus","trigger_paths_detected","scope_expanded","files_checked"]),
@@ -96,10 +95,6 @@ merge_order, summary. EXECUTE_CHECKPOINT: completed_so_far, remaining (status: p
 in_progress entries (status: in_progress), resume_context, reason. status: failed too.
 Adjudication fields (conditional, validated by rule 6/6a): adjudication_required,
 missing_outputs, adjudication_options, adjudication_kind, colliding_lanes.
-EOF
-  cat >"$d/loomwright/agents/qa-executor.md" <<'EOF'
-QA_RESULT fields: schema_version, tests_generated, tests_passed, coverage_estimate, summary.
-VERIFY_RESULT fields (--verify mode): schema_version, run_id, run_dir, counts, summary, pause_reason.
 EOF
   cat >"$d/loomwright/agents/supervisor.md" <<'EOF'
 SUPERVISOR_RESULT: schema_version, status: completed | status: failed | status: checkpoint
@@ -242,8 +237,13 @@ write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fi
   } >"$d/loomwright/$rel"
 }
 
-QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate,run_id,run_dir,counts,pause_reason'
-VALIDATOR_CMD='python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py" || true'
+# The supervisor-runner|supervisor.md|SUPERVISOR_RESULT| MANIFEST row's fields (the command-fallback
+# legs below use it because loomwright:supervisor-runner carries a validator command hook AND the
+# telemetry fan-out in the real hooks.json). SUP_FIELDS_NO_DISMISSED drops the one field the
+# drift / prose legs remove, so each of those legs fails on heal_dismissed alone.
+SUP_FIELDS='schema_version,status,pr_url,heal_loop_ran,heal_iterations,heal_decision,heal_fixable_issues_fixed,heal_remaining_issues,heal_first_decision,heal_new_findings,error,summary,ground_truth,contract_conformance,benchmark_result,risk_classification,heal_dismissed'
+SUP_FIELDS_NO_DISMISSED='schema_version,status,pr_url,heal_loop_ran,heal_iterations,heal_decision,heal_fixable_issues_fixed,heal_remaining_issues,heal_first_decision,heal_new_findings,error,summary,ground_truth,contract_conformance,benchmark_result,risk_classification'
+VALIDATOR_CMD='python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-supervisor-result.py" || true'
 DECOY_CMD='payload=$(cat); printf "%s" "$payload" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh" || true'
 
 TMP="$(mktemp -d)"
@@ -253,12 +253,12 @@ trap 'rm -rf "$TMP"' EXIT
 make_fixture "$TMP/clean"
 check "clean fixture passes" 0 bash "$GUARD" --root "$TMP/clean"
 
-# 2. Missing hook-required field in an agent prompt fails (the qa-executor trap class)
+# 2. Missing hook-required field in an agent prompt fails (the missing-field trap class)
 make_fixture "$TMP/missing-field"
 # BSD sed (macOS) needs -i '' (empty backup suffix); GNU sed rejects the empty
 # arg — try BSD form first, fall back to GNU on failure.
-sed -i '' -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/loomwright/agents/qa-executor.md" 2>/dev/null \
-  || sed -i -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/loomwright/agents/qa-executor.md"
+sed -i '' -e 's/scope_expanded, files_checked/scope_expanded/' "$TMP/missing-field/loomwright/agents/code-reviewer.md" 2>/dev/null \
+  || sed -i -e 's/scope_expanded, files_checked/scope_expanded/' "$TMP/missing-field/loomwright/agents/code-reviewer.md"
 check "missing hook-required field fails" 1 bash "$GUARD" --root "$TMP/missing-field"
 
 # 3. Out-of-enum status literal fails (the `status: paused` class)
@@ -288,8 +288,8 @@ python3 - "$TMP/pin-drift/loomwright/hooks/hooks.json" <<'PY'
 import json,sys
 p=sys.argv[1]; h=json.load(open(p))
 for e in h["hooks"]["SubagentStop"]:
-    if "qa-executor" in e["matcher"]:
-        e["hooks"][0]["prompt"]=e["hooks"][0]["prompt"].replace(", coverage_estimate","")
+    if "code-reviewer" in e["matcher"]:
+        e["hooks"][0]["prompt"]=e["hooks"][0]["prompt"].replace(", files_checked","")
 json.dump(h,open(p,"w"))
 PY
 check "hooks.json pin-drift fails" 1 bash "$GUARD" --root "$TMP/pin-drift"
@@ -305,30 +305,30 @@ check "hooks.json pin-drift fails" 1 bash "$GUARD" --root "$TMP/pin-drift"
 #    sibling command entry is present, mirroring the real post-conversion
 #    matchers that also carry telemetry / progress-event hooks.
 make_fixture "$TMP/cmd-fallback-ok"
-write_validator "$TMP/cmd-fallback-ok" scripts/validate-qa-result.py "$QA_FIELDS"
-write_decoy "$TMP/cmd-fallback-ok" scripts/send-telemetry-core.sh "$QA_FIELDS"
-set_command_hooks "$TMP/cmd-fallback-ok" qa-executor "$VALIDATOR_CMD" "$DECOY_CMD"
+write_validator "$TMP/cmd-fallback-ok" scripts/validate-supervisor-result.py "$SUP_FIELDS"
+write_decoy "$TMP/cmd-fallback-ok" scripts/send-telemetry-core.sh "$SUP_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-ok" supervisor-runner "$VALIDATOR_CMD" "$DECOY_CMD"
 check "command-fallback resolves the validator source" 0 bash "$GUARD" --root "$TMP/cmd-fallback-ok"
 
-# 7. (a-ii) THE FAIL-OPEN FALSIFICATION (R0b). Same shape, but coverage_estimate
+# 7. (a-ii) THE FAIL-OPEN FALSIFICATION (R0b). Same shape, but heal_dismissed
 #    is dropped from the validator source while the decoy sibling script still
 #    mentions it. An implementation that concatenated every command entry's
 #    source would find the field in send-telemetry-core.sh and PASS — green
 #    while enforcing nothing. Correct selection greps only the validator and
 #    fires pin-drift.
 make_fixture "$TMP/cmd-fallback-drift"
-write_validator "$TMP/cmd-fallback-drift" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts'
-write_decoy "$TMP/cmd-fallback-drift" scripts/send-telemetry-core.sh "$QA_FIELDS"
-set_command_hooks "$TMP/cmd-fallback-drift" qa-executor "$VALIDATOR_CMD" "$DECOY_CMD"
+write_validator "$TMP/cmd-fallback-drift" scripts/validate-supervisor-result.py \
+  "$SUP_FIELDS_NO_DISMISSED"
+write_decoy "$TMP/cmd-fallback-drift" scripts/send-telemetry-core.sh "$SUP_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-drift" supervisor-runner "$VALIDATOR_CMD" "$DECOY_CMD"
 check "command-fallback pin-drift fails despite decoy sibling mentioning the field" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-drift"
 
 # 8. (b) Zero validator command entries — only unrelated scripts. Must ERROR,
 #    not fall through to an unrelated script and not silently pass.
 make_fixture "$TMP/cmd-fallback-none"
-write_decoy "$TMP/cmd-fallback-none" scripts/send-telemetry-core.sh "$QA_FIELDS"
-set_command_hooks "$TMP/cmd-fallback-none" qa-executor "$DECOY_CMD" \
+write_decoy "$TMP/cmd-fallback-none" scripts/send-telemetry-core.sh "$SUP_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-none" supervisor-runner "$DECOY_CMD" \
   'bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh" || true'
 check "no validator command entry errors (not silently passes)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-none"
@@ -336,10 +336,10 @@ check "no validator command entry errors (not silently passes)" 1 \
 # 9. (c) Two validator-matching command entries — ambiguous rule source. Must
 #    ERROR rather than pick one by hook ordering that nothing asserts.
 make_fixture "$TMP/cmd-fallback-two"
-write_validator "$TMP/cmd-fallback-two" scripts/validate-qa-result.py "$QA_FIELDS"
-write_validator "$TMP/cmd-fallback-two" scripts/validate-qa2-result.py "$QA_FIELDS"
-set_command_hooks "$TMP/cmd-fallback-two" qa-executor "$VALIDATOR_CMD" \
-  'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa2-result.py" || true'
+write_validator "$TMP/cmd-fallback-two" scripts/validate-supervisor-result.py "$SUP_FIELDS"
+write_validator "$TMP/cmd-fallback-two" scripts/validate-supervisor2-result.py "$SUP_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-two" supervisor-runner "$VALIDATOR_CMD" \
+  'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-supervisor2-result.py" || true'
 check "two validator command entries error (ambiguous rule source)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-two"
 
@@ -353,9 +353,9 @@ check "two validator command entries error (ambiguous rule source)" 1 \
 
 # 10. Field named ONLY in the MODULE docstring → pin-drift, not a pass.
 make_fixture "$TMP/cmd-fallback-prose-module"
-write_prose_validator "$TMP/cmd-fallback-prose-module" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate module
-set_command_hooks "$TMP/cmd-fallback-prose-module" qa-executor "$VALIDATOR_CMD"
+write_prose_validator "$TMP/cmd-fallback-prose-module" scripts/validate-supervisor-result.py \
+  "$SUP_FIELDS_NO_DISMISSED" heal_dismissed module
+set_command_hooks "$TMP/cmd-fallback-prose-module" supervisor-runner "$VALIDATOR_CMD"
 check "field named only in the module docstring fails (prose is not a check)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-module"
 
@@ -368,9 +368,9 @@ check "field named only in the module docstring fails (prose is not a check)" 1 
 #     module-docstring-only strip, so without it the two implementations are
 #     indistinguishable to this suite.
 make_fixture "$TMP/cmd-fallback-prose-fn"
-write_prose_validator "$TMP/cmd-fallback-prose-fn" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate function
-set_command_hooks "$TMP/cmd-fallback-prose-fn" qa-executor "$VALIDATOR_CMD"
+write_prose_validator "$TMP/cmd-fallback-prose-fn" scripts/validate-supervisor-result.py \
+  "$SUP_FIELDS_NO_DISMISSED" heal_dismissed function
+set_command_hooks "$TMP/cmd-fallback-prose-fn" supervisor-runner "$VALIDATOR_CMD"
 check "field named only in a function docstring fails (module-only strip is not enough)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-fn"
 
@@ -384,9 +384,9 @@ check "field named only in a function docstring fails (module-only strip is not 
 #     strip is added. (Case 14 is what forces that strip to be tokenize-based
 #     rather than line-based — this case alone does not distinguish them.)
 make_fixture "$TMP/cmd-fallback-prose-comment"
-write_prose_validator "$TMP/cmd-fallback-prose-comment" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate comment
-set_command_hooks "$TMP/cmd-fallback-prose-comment" qa-executor "$VALIDATOR_CMD"
+write_prose_validator "$TMP/cmd-fallback-prose-comment" scripts/validate-supervisor-result.py \
+  "$SUP_FIELDS_NO_DISMISSED" heal_dismissed comment
+set_command_hooks "$TMP/cmd-fallback-prose-comment" supervisor-runner "$VALIDATOR_CMD"
 check "field named only in a # comment fails (docstring strip alone is not enough)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-comment"
 
@@ -398,9 +398,9 @@ check "field named only in a # comment fails (docstring strip alone is not enoug
 #     Verified a genuine regression test: this fixture PASSES the shipped
 #     8b09b54 implementation AND passes a comment-strip-only variant of the fix.
 make_fixture "$TMP/cmd-fallback-prose-bare"
-write_prose_validator "$TMP/cmd-fallback-prose-bare" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate bare
-set_command_hooks "$TMP/cmd-fallback-prose-bare" qa-executor "$VALIDATOR_CMD"
+write_prose_validator "$TMP/cmd-fallback-prose-bare" scripts/validate-supervisor-result.py \
+  "$SUP_FIELDS_NO_DISMISSED" heal_dismissed bare
+set_command_hooks "$TMP/cmd-fallback-prose-bare" supervisor-runner "$VALIDATOR_CMD"
 check "field named only in a bare string statement fails (body[0]-only strip is not enough)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-bare"
 
@@ -410,16 +410,16 @@ check "field named only in a bare string statement fails (body[0]-only strip is 
 #     so a naive line-based `#` strip satisfies every one of them — over-
 #     stripping only ever helps a test that wants failure. This case is what
 #     distinguishes the two implementations: `COMMENT_MARKER = "#"` followed by
-#     `KEY = "coverage_estimate"` on the next line, with coverage_estimate
+#     `KEY = "heal_dismissed"` on the next line, with heal_dismissed
 #     appearing NOWHERE else in code. A line-based strip truncates at the `#`
 #     inside the string, corrupting the source it hands to the grep; tokenize
 #     removes only the real trailing comment. Verified: this fixture FAILS
 #     (spurious pin-drift) against a line-based strip and passes against
 #     tokenize. Models validate-launch-pad-result.py's `startswith("#")` literal.
 make_fixture "$TMP/cmd-fallback-hash-in-string"
-write_hashstring_validator "$TMP/cmd-fallback-hash-in-string" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts,pause_reason' coverage_estimate
-set_command_hooks "$TMP/cmd-fallback-hash-in-string" qa-executor "$VALIDATOR_CMD"
+write_hashstring_validator "$TMP/cmd-fallback-hash-in-string" scripts/validate-supervisor-result.py \
+  "$SUP_FIELDS_NO_DISMISSED" heal_dismissed
+set_command_hooks "$TMP/cmd-fallback-hash-in-string" supervisor-runner "$VALIDATOR_CMD"
 check "a \`#\` inside a string literal does not corrupt the source (tokenize, not a line strip)" 0 \
   bash "$GUARD" --root "$TMP/cmd-fallback-hash-in-string"
 

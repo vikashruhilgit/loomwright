@@ -10,7 +10,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**Loomwright** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+**Loomwright** is a Claude Code plugin with agent roles (user-facing + internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and standalone PR review-and-heal. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
 **Version + counts:** authoritative in `plugin.json` (see `Plugin Layout` below for the per-directory breakdown) — **never restated here.** Deliberately version-free: a number written here is a second copy that has to be bumped by hand every release, which is exactly the drift this file warns about elsewhere. Say "the previous release", not a version string; the changelog's top entry is always the current one.
 
@@ -24,9 +24,9 @@ The repo is a **marketplace wrapper** containing sibling plugins — loomwright,
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
 - Plugin manifest: `loomwright/.claude-plugin/plugin.json`
-- Agents: `loomwright/agents/` (14 markdown prompts)
+- Agents: `loomwright/agents/` (one markdown prompt per role)
 - Commands: `loomwright/commands/` (the slash-command entry points, one `.md` each)
-- Skills: `loomwright/skills/` (42 skills, see `SKILLS_INDEX.md`)
+- Skills: `loomwright/skills/` (see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`
 - Sibling plugins: `stackpack/` (18 tech-stack reference skills), `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, pinned to an exact version) and `loomwright-lanes/` (optional `/lanes` pane over `/automate --parallel` lanes — a Claude Code mod that reaches Loomwright only through `lane-status` / `lane-feed` / `lane-answer`; nothing in `loomwright/` depends on it, `scripts/test-lanes-addon.sh`) and `selvedge/` (evidenced PASS/FAIL per acceptance criterion; **releases on its own** — it bumps its own `plugin.json`, marketplace entry and `selvedge/CHANGELOG.md`, never a `changelog.d/` fragment, imports nothing from `loomwright/`, and its own gate `selvedge/tests/run.sh` runs in CI's `static` job) — versions in each plugin's own `plugin.json`
@@ -35,9 +35,9 @@ The repo is a **marketplace wrapper** containing sibling plugins — loomwright,
 
 ---
 
-## The 14 Agent Roles
+## The Agent Roles
 
-Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Agent Contract, and the Parallel Execution Model relocated to `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Agent Invariants" in the v15.21.0 diet (content moved, never deleted). Detailed per-agent purpose and workflow diagrams also live in `README.md` §"The 14 Agents" and the agent prompts (`loomwright/agents/*.md`). Quick name/type/purpose map:
+Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Agent Contract, and the Parallel Execution Model relocated to `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Agent Invariants" in the v15.21.0 diet (content moved, never deleted). Detailed per-agent purpose and workflow diagrams also live in `README.md` §"The Agents" and the agent prompts (`loomwright/agents/*.md`). Quick name/type/purpose map:
 
 | Agent | Type | One-line purpose |
 |---|---|---|
@@ -47,8 +47,6 @@ Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Age
 | Orchestrator | user-facing | Goal → EPIC/TASK decomposition |
 | Code Reviewer | user-facing | Read-only diff/consistency review |
 | Red Team Reviewer | user-facing | Adversarial audit, 6 attack vectors |
-| QA Strategist | user-facing | Risk-based test strategy + audit |
-| QA Executor | user-facing | Discovery, test generation, execution |
 | Review-PR (`review-pr-runner`) | user-facing | Standalone PR review→fix→re-review loop |
 | Execute Manager | internal | Phase 3 poll loop + worker lifecycle |
 | Context-Keeper | internal | Sole state-file writer (parallel path) |

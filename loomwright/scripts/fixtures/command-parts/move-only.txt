@@ -27,7 +27,6 @@ split-time	loomwright/docs/command-parts/dreaming/reference.md	27797c44d0c221c9f
 split-time	loomwright/commands/agent-help.md	381ae224b974eb905a16b67d4d37df216a20863b1b4b1afa5c60e2b5dcafb53c
 split-time	loomwright/docs/command-parts/agent-help/readiness.md	15533f6fa4568a939874d16b733808333b6db7849c2510ad00bc9f2c14401c01
 split-time	loomwright/docs/command-parts/agent-help/build.md	f13a15eadbd44c0686703638c0c3c92b6fd76121f4517aa7b3ea874f57a1dcac
-split-time	loomwright/docs/command-parts/agent-help/qa.md	13272703980f79e741736930d0109ff3aba05e39aab366ac3f3f9e35a63b3550
 split-time	loomwright/docs/command-parts/agent-help/knowledge.md	c7bb5991def8a4c1d265892c76daa6214ff9e82bbdf31f9793b8a8889771ced6
 split-time	loomwright/docs/command-parts/agent-help/ops.md	368e46e5380343272b5b4bb5f66e1360ba10dc754861f7ee1cdcaa66950c033e
 split-time	loomwright/docs/command-parts/agent-help/more.md	2c1830cc8d2e022bac5d9e51504b5766c9d995d6e375b1c93e9149266db14bc4
