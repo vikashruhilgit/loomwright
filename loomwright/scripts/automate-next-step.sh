@@ -150,11 +150,14 @@
 #   run-result  the RUN report: `config-restore` + the `auto_review restored` line — BEFORE any drain
 #               spawn (the suppress window wraps RUN only)
 #   run-record  the `session_id` line, `current-set … --pr --branch` BEFORE the `ran /autonomous → PR`
-#               line (or the pinned no-PR line), the verbatim supervisor-result sidecar + `sidecar-check`
+#               line (or the pinned no-PR line), the verbatim supervisor-result sidecar + `sidecar-check`;
+#               `phase_died` + the dead phase's OPEN (else MERGED) PR (ns_died_pr) ⇒ adopted: `current-set
+#               --status running --pr --branch`, the `(phase_died — adopted: …)` ran line, NO sidecar
 #   rate-limit  the loop's own session log: a main-scope `failed` row (`rate_limit`, or `unknown` + a
 #               `429` hint ⇒ `reason_hint`) after this item's `picked` line ⇒ the rate_limit park;
-#               else the drain (a PR); no PR: a deliberate stop ⇒ the `no_pr_stop` park (ns_no_pr_class), any
-#               other reason ⇒ `{"do":"done","status":"stopped"}`
+#               else the drain (a PR; an adopted MERGED PR ⇒ `sync` instead); no PR: a deliberate
+#               stop ⇒ the `no_pr_stop` park (ns_no_pr_class), any other reason ⇒
+#               `{"do":"done","status":"stopped"}`
 #   drain       the owned-drain spawn — ONE per pass (`drain_already_owned`, exit 2, nothing written)
 #   drain-result the DRAIN report: the pinned start line, the report's free-text lines, the terminal
 #               drain line, `owned_drain_*`, `pending_decisions` after a fix-now re-drain, the verbatim

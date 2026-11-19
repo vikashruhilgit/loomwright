@@ -650,6 +650,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-630 | commands/automate.md | q: Merges ONE item parked `awaiting_merge` after a READY drain through `gate-eval` | `/automate --merge-parked <run_id>` | merge ONE parked item through `gate-eval` (the one merge executor), close it out with its trail, check it off and stop — no drain, no PICK, `## Run Config` unchanged; a park keeps it `awaiting_merge` | deterministic | global | script:automate-next-step.sh merge-parked | test-automate-next-step.sh |
 | AL-631 | skills/automate-loop/SKILL.md | q: `/automate --merge-parked <run_id>` calls `automate-next-step.sh --merge-parked .supervisor/automate --run <run_id> --session-id <sid>` instead | the start is `/automate --merge-parked <run_id>` | call the driver's `--merge-parked` entry instead of the `--resume` start; answer an `ask` on `<run_file> --result`; stop at its `park` / `done` | deterministic | global | script:automate-next-step.sh merge-parked | test-automate-next-step.sh |
 | AL-632 | skills/automate-loop/run-file.md | q: **A gate input a later session needs lives in the run file, never only in the sidecar.** | a later session's gate pass needs an input (the drain's `ready_sha`, `termination_reason`, `drain_result`) | the input is recorded in the run file (`## Current`), never only in `<run_id>.next-step.json`, which every `--resume` wipes | rule | step-scoped | script:automate-next-step.sh drain-result | test-automate-next-step.sh |
+| AL-633 | skills/automate-loop/per-item-loop.md | q: **A Supervisor phase that died after opening its PR is adopted, not stopped.** | a `phase_died` RUN report, and the dead phase's OPEN (else MERGED) PR on the branch of a `.supervisor/state.md` this phase rewrote, not yet recorded in the run file; on `--resume`, an older driver's no-PR `phase_died` line naming `the phase left PR <url> open on <branch>` | `current-set --status running --pr --branch`, the `ran /autonomous → PR <url> (phase_died — adopted: …)` line with no sidecar; OPEN ⇒ the one owned drain, MERGED ⇒ SYNC (`closeout --no-trail`, check-off); RECONCILE writes `adopted PR <url> on <branch>` and reconciles the PR as in-flight; never re-planned; no PR or a failed `gh` read ⇒ the no-PR stop | deterministic | script:automate-next-step.sh run-record | script:automate-next-step.sh rate-limit | test-automate-next-step.sh |
 
 ## Gap list (ordered by risk)
 
@@ -798,8 +799,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 143. AL-607 — story/rationale, no test; why the parallel intake lint is information only
 
 ## Counts
-- rows: 630
-- deterministic: 432
+- rows: 631
+- deterministic: 433
 - judgment: 13
 - rule: 140
 - story: 45
