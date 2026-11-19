@@ -31,7 +31,7 @@ of `loomwright/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
 `scripts/check-doc-currency.sh` verifies. A row a removal PR finds missing, wrong or over-broad is
 changed here in that PR, with the row count below, never worked around.
 
-Row count: 437
+Row count: 441
 
 ## Rows
 
@@ -129,7 +129,11 @@ Row count: 437
 | `README.md` | `STRATEGIST_VERDICT` | re-point | 11b1 | names a QA or verify schema 11b2 deletes |
 | `README.md` | `qa-executor` | re-point | 11b1 | names a removed QA agent |
 | `README.md` | `qa-strategist` | re-point | 11b1 | names a removed QA agent |
+| `loomwright/.claude-plugin/plugin.json` | `"debate-loop"` | re-point | 11b1 | keyword for the removed QA system |
+| `loomwright/.claude-plugin/plugin.json` | `"e2e-testing"` | re-point | 11b1 | keyword for the removed QA system |
 | `loomwright/.claude-plugin/plugin.json` | `"playwright"` | re-point | 11b1 | keyword for the removed QA system |
+| `loomwright/.claude-plugin/plugin.json` | `"risk-based-testing"` | re-point | 11b1 | keyword for the removed QA system |
+| `loomwright/.claude-plugin/plugin.json` | `"test-generation"` | re-point | 11b1 | keyword for the removed QA system |
 | `loomwright/.claude-plugin/plugin.json` | `qa-executor` | re-point | 11b1 | names a removed QA agent |
 | `loomwright/.claude-plugin/plugin.json` | `qa-strategist` | re-point | 11b1 | names a removed QA agent |
 | `loomwright/.claude-plugin/plugin.json` | `red-teaming, QA,` | re-point | 11b1 | description names QA; its agent, command and skill counts drop in the same PR (verified by `check-doc-currency.sh`, not restated here) |

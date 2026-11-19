@@ -120,7 +120,7 @@ restriction for every agent, not just the six that already relied on it. The hon
 > never deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is
 > now the authoritative home for the full per-agent invariants, the `/autonomous` orchestration
 > shell, the Shared Agent Contract, and the Parallel Execution Model; `CLAUDE.md` keeps only a
-> compact 14-row name/type/one-line-purpose list plus a pointer here.
+> compact name/type/one-line-purpose list plus a pointer here.
 
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
