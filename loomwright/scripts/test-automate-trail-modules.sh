@@ -194,6 +194,10 @@ if [ -s "$T/h1" ] && [ ! -s "$T/h1e" ] && [ "$(cat "$T/h1r")" = 0 ] && cmp -s "$
    && [ "$(cat "$T/h1")" = "$(bundle_of "$E" | grep -E '^#   [a-z]' | sed 's/^#   /  /')" ]; then
   ok "this checkout: --help == -h == no-arg ($(wc -l <"$T/h1" | tr -d ' ') lines, exit 0, empty stderr), and it is exactly the bundle's '#   <sub>' lines"
 else no "this checkout's help: rc $(cat "$T/h1r") stderr '$(head -1 "$T/h1e")'; --help/-h/no-arg/bundle disagree"; fi
+( cd "$T/cwd" && bash "$E" no-such-subcommand >"$T/u1" 2>"$T/u1e"; echo $? >"$T/u1r" )
+if [ ! -s "$T/u1" ] && [ "$(cat "$T/u1e")" = "automate-trail: unknown subcommand: no-such-subcommand" ] && [ "$(cat "$T/u1r")" = 0 ]; then
+  ok "this checkout: an unknown subcommand names itself on stderr only (stdout empty, exit 0)"
+else no "this checkout's unknown subcommand: rc $(cat "$T/u1r") stdout '$(head -1 "$T/u1")' stderr '$(head -1 "$T/u1e")'"; fi
 echo "== 3. no glob: a stray module file is never sourced"
 C="$(mk_copy)"
 printf 'echo STRAY_MODULE_SOURCED\n' > "$(dirname "$C")/automate-trail.d/zz-stray.sh"
