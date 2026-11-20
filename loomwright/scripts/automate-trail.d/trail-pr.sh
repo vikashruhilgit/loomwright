@@ -484,33 +484,28 @@ DLIST
 }
 
 # _trail_meta_settle <mode> <rf_rel> <rf_abs> <run_id> — `trail-pr <runfile> --settle` (cwd = root).
-# The done exits append lines AFTER their trail push: the trail line itself (it reports that push),
-# then the process-registry and sweep lines. Without this step the run file on the metadata branch
-# stays exactly those lines behind for good, since no later push lists a finished run. So, as each
-# done exit's LAST step, the run file alone is pushed once more. Its result is printed, never
-# appended, so this push is the file's last write and nothing trails it. Skipped (one line) when
-# branch mode is off or this run's meta-push-failed marker is present: the earlier failure is
-# already loud, and a settle must not paper over paths that push did not send. A failure here is
-# loud through _trail_meta_fail (its Progress line, marker, notify) like any other push. Exit 0.
+# Each done exit's LAST step: the lines appended after its trail push (the trail line, process
+# registry, sweep) would otherwise never reach the branch, so the run file alone is pushed again;
+# the result is printed, never appended. Skipped ONLY with mode off or this run's meta-push-failed
+# marker present (already loud); any other no-push case, a mode reading `unknown` included, is a
+# loud FAILURE through _trail_meta_fail, as in _trail_meta_push. Exit 0.
 _trail_meta_settle() {
   local bm="$1" rf_rel="$2" rf_abs="$3" run_id="$4"
   local mk; mk="$(dirname "$rf_abs")/$run_id.meta-push-failed"
-  case "$bm" in
-    off) echo "trail-pr: settle skipped — branch mode off"; return 0 ;;
-    "on "*) ;;
-    *) echo "trail-pr: settle skipped — mode ${bm}"; return 0 ;;
-  esac
+  [ "$bm" = off ] && { echo "trail-pr: settle skipped — branch mode off"; return 0; }
   [ -e "$mk" ] && { echo "trail-pr: settle skipped — $run_id.meta-push-failed present"; return 0; }
+  case "$bm" in
+    "on "*) ;;
+    *) _trail_meta_fail "$rf_abs" "$mk" "settle: mode ${bm}" ""
+       echo "trail-pr: settle FAILED — mode ${bm}"; return 0 ;;
+  esac
   local branch="${bm#on }" lf out rc=0 why
   lf="$(mktemp "${TMPDIR:-/tmp}/automate-trail-settle.XXXXXX" 2>/dev/null)" || { echo "trail-pr: settle skipped — mktemp failed"; return 0; }
   printf '%s\n' "$rf_rel" > "$lf"
   out="$(bash "${LOOMWRIGHT_META_SYNC_BIN:-$HERE/meta-sync.sh}" push --branch "$branch" --root "$PWD" --paths-from "$lf" --message "chore(supervisor): $run_id trail (settle)" 2>&1)" || rc=$?
   rm -f "$lf"
   if [ "$rc" -eq 0 ]; then
-    case "$out" in
-      *"meta_sync: no_changes"*) echo "trail-pr: settle skipped — meta no_changes" ;;
-      *) echo "trail-pr: settled $branch" ;;
-    esac
+    case "$out" in *"meta_sync: no_changes"*) echo "trail-pr: settle skipped — meta no_changes" ;; *) echo "trail-pr: settled $branch" ;; esac
     return 0
   fi
   why="$(printf '%s\n' "$out" | sed -n 's/^meta_sync: \(scrub .*\)$/\1/p' | head -n1)"

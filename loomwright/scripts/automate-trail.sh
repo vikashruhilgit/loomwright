@@ -85,7 +85,7 @@
 #       non-schema key, canonical `channels_scanned`, `risk_classification`
 #       carries `reasons`) and the same required/allowed check on every nested
 #       object and list item (NESTED below). A file that cannot be checked is a `fail`.
-#   trail-pr <runfile> [--reason <reason>] | trail-pr <runfile> --settle
+#   trail-pr <runfile> [--reason <reason>]
 #       One line: `trail-pr: opened <url>` | `trail-pr: pushed <url>` |
 #       `trail-pr: skipped — <reason>`. --settle (branch mode, a done exit's last
 #       step): `trail-pr: settled <branch>` | `trail-pr: settle skipped — <reason>` |
@@ -110,8 +110,10 @@
 #       PICK, before RUN: drops the trail entries trail-pr staged so the next
 #       item's branch + commit cannot sweep them.
 #   finalize-empty <runfile> [--no-trail]
-#       `finalize-empty: finalized <runfile>` + the trail-pr (+ trail-unstage)
-#       line, or ONE `finalize-empty: skipped — <reason>` line. Finalizes ONLY a
+#       `finalize-empty: finalized <runfile>` + the trail-pr, settle
+#       (`trail-pr --settle`: in branch mode the run file re-pushed alone after
+#       its last line; skipped with --no-trail) (+ trail-unstage) lines, or ONE
+#       `finalize-empty: skipped — <reason>` line. Finalizes ONLY a
 #       paused / awaiting_go / remaining-0 / `## Current` status-done run (the
 #       state closeout leaves after the last check-off); SKILL §4 step 1 runs it
 #       through `automate-helpers.sh resume-glob <dir> --finalize`. In a lane

@@ -642,6 +642,35 @@ leg_registry_line() {
     || { LEG_MSG="silent summary: $(grep -E 'process registry' "$CASE_RF" | tr '\n' ' ') (want ONE pinned skipped line directly before the sweep line)"; return 1; }
   return 0
 }
+# leg_settle_line <driver> — B15b: the done exit's LAST helper call is ONE `trail-pr <runfile> --settle`, made
+# AFTER the sweep line is in the run file (so the push carries every run-end line); its line reaches the
+# driver's stderr as `next-step: <line>` and is never appended to the run file. A spy automate-helpers.sh
+# beside a driver copy records the run file's state at the settle call and answers a fixed line.
+leg_settle_line() {
+  local drv="$1" d="$WORK/settle-spy" e k last
+  rm -rf "$d"; mkdir -p "$d"
+  for e in "$HERE"/*; do
+    case "${e##*/}" in automate-next-step.sh|automate-helpers.sh) ;; *) ln -s "$e" "$d/${e##*/}" ;; esac
+  done
+  cp "$drv" "$d/automate-next-step.sh"
+  cat > "$d/automate-helpers.sh" <<SPY
+#!/usr/bin/env bash
+if [ "\${1:-}" = trail-pr ] && [ "\${3:-}" = --settle ]; then
+  { printf 'settle sweep-lines=%s\n' "\$(grep -c ' sweep (dry run): ' "\$2")"; } >> "$d/settle.log"
+  echo "trail-pr: settled spy-branch"; exit 0
+fi
+exec bash "$HERE/automate-helpers.sh" "\$@"
+SPY
+  : > "$d/settle.log"
+  golden_case termination-queue-resolved "$d/automate-next-step.sh" || { LEG_MSG="termination-queue-resolved (spy): $GC_MSG"; return 1; }
+  [ "$(cat "$d/settle.log")" = "settle sweep-lines=1" ] \
+    || { LEG_MSG="settle calls: '$(tr '\n' '|' < "$d/settle.log")' (want ONE, made after the sweep line)"; return 1; }
+  k=1; last=""; while [ -f "$CASE_DIR/call$k.err" ]; do last="$CASE_DIR/call$k.err"; k=$((k + 1)); done
+  grep -qxF 'next-step: trail-pr: settled spy-branch' "${last:-/dev/null}" \
+    || { LEG_MSG="settle line not on the done call's stderr: $(tr '\n' '|' < "${last:-/dev/null}")"; return 1; }
+  ! grep -q 'settle' "$CASE_RF" || { LEG_MSG="the settle line was appended to the run file"; return 1; }
+  return 0
+}
 # leg_nonint_persist <driver> — B11: B4's refused writer, but the retry carries NO --non-interactive: the
 # persisted flag keeps the AUT-WAIVE gate closed (escalated park, golden run file), never an ask
 leg_nonint_persist() {
