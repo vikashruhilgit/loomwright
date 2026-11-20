@@ -1,6 +1,7 @@
 # Loomwright's surfaces that named the old QA now point at Selvedge, and a test stops the old names coming back
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/954
 
 > Phase 4, item 12 of the approved plan `qa-split/00-plan.md` (rev 2, owner-approved 2026-11-12).
 > Decisions: D1, D4 (Loomwright reads Selvedge's CLI and one JSON file, never imports it), D15b (W4:
@@ -106,3 +107,9 @@ loomwright/skills/self-heal-advisory/completion-tail.md
 loomwright/agents/launch-pad.md
 loomwright/agents/plan-reviewer.md
 changelog.d
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-20T02:05:55Z
+- **Brief:** .supervisor/jobs/done/2026-11-19-qa-split-12-re-point-qa-couplings.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/954
