@@ -214,6 +214,42 @@ INJ_F="$INJ_OUT/verify-$(basename "$INJ_RD")-${C_FAIL}.md"
   && ok "control characters collapse to one space; the draft keeps exactly one ## Status: and one ## Touches heading" \
   || no "interpretation injected a heading: $(grep -n '^## ' "$INJ_F" 2>/dev/null | tr '\n' '|')"
 
+echo "== untrusted run id: a control character in the run folder's name cannot reach the draft or its filename =="
+RID_RD="$(mktmp)/r1"$'\n''## Status: ready'$'\t''x'
+make_verdict "$RID_RD" "$(jq -nc --argjson f "$(crit_fail)" --arg a "$C_FAIL" '{($a): $f}')"
+RID_FLAT='r1 ## Status: ready x'
+# rid_check <label> <script> - runs <script> on the hostile run dir and pins every RUN_ID use.
+rid_check() {
+  rc_out="$(mktmp)/out-rid"
+  run_sut "$RID_RD" "$rc_out" "$2"; rc_rc=$?
+  rc_names="$(find "$rc_out" -maxdepth 1 -type f -name '*.md' 2>/dev/null)"
+  rc_f="$rc_out/verify-${RID_FLAT}-${C_FAIL}.md"
+  [ "$rc_rc" -eq 0 ] && [ -f "$rc_f" ] && [ "$(printf '%s\n' "$rc_names" | awk 'END{print NR}')" = 1 ] \
+    && [ "$(grep -c '^## Status:' "$rc_f")" = 1 ] \
+    && grep -qxF -- "# Proposed: verify FAIL $C_FAIL ($RID_FLAT)" "$rc_f" \
+    && grep -qxF -- "evidence-set: $RID_FLAT/$C_FAIL@plan:$PLAN_SHA" "$rc_f" \
+    && grep -qxF -- "- source: verdict.json of run $RID_FLAT" "$rc_f" \
+    && grep -qxF -- "- run: $RID_FLAT" "$rc_f"
+}
+rid_check real "$SUT" \
+  && ok "run id flattened to one line: one file named verify-'$RID_FLAT'-<cid>.md, one ## Status:, title / evidence-set / source / run lines all flat" \
+  || no "run id reached the draft raw: rc=$rc_rc files=[$(printf '%s' "$rc_names" | tr '\n\t' '|~')] status=$(grep -c '^## Status:' "$rc_f" 2>/dev/null)"
+# MUTATION CONTROL: the derivation reverted to a raw basename must turn the pins above red.
+RID_MUT="$ROOT/pfv-rid-mutant.sh"
+sed 's|^RUN_ID="\$(jq -rn --arg s "\$(basename "\$RUN_DIR_ABS")".*$|RUN_ID="$(basename "$RUN_DIR_ABS")"|' "$SUT" > "$RID_MUT"
+if cmp -s "$SUT" "$RID_MUT"; then
+  no "run-id MUTATION CONTROL: the sed matched nothing - the mutant equals the real script"
+else
+  # The mutant must RUN (exit 0, one draft written) and still fail the pins - a mutant that merely
+  # crashed (e.g. could not source propose-common.sh) would fail them vacuously.
+  export PROPOSE_COMMON_SH="$COMMON"
+  rid_check mutant "$RID_MUT"; rid_mut_ok=$?
+  unset PROPOSE_COMMON_SH
+  [ "$rc_rc" -eq 0 ] && [ -n "$rc_names" ] && [ "$rid_mut_ok" -ne 0 ] \
+    && ok "run-id MUTATION CONTROL: a raw-basename RUN_ID runs (exit 0, a draft written) and fails the pins (newline filename / extra ## Status:)" \
+    || no "run-id MUTATION CONTROL: the raw-basename mutant still passed"
+fi
+
 echo "== AC3: idempotence - a re-run (under a different fixed clock) rewrites the same file byte for byte, no duplicate =="
 cp "$F" "$ROOT/first-run.md" 2>/dev/null
 [ "$(PATH="$CLOCK_FIRST:$PATH" date -u)" != "$(PATH="$CLOCK_RERUN:$PATH" date -u)" ] \

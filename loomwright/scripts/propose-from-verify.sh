@@ -23,7 +23,7 @@
 #   per criterion `verdict` (PASS|FAIL|BLOCKED|NOT_VERIFIABLE), `expected` ({op,value} or null),
 #               `failed_step` (non-negative int or null), `interpretation` (string or null),
 #               `steps[]` ({step,type,...} - each entry carries its own `step` index)
-#   The run id is the run folder's basename.
+#   The run id is the run folder's basename, flattened as UNTRUSTED TEXT (below).
 # WRITES ONLY under the output directory, through the shared `pc_guarded_write()` in
 # `propose-common.sh` (sourced, never copied inline - every `/propose` basis sources the same file;
 # see propose-common.sh's own header for how each caller's mutation control stays live).
@@ -38,7 +38,8 @@
 # sorted key order, so re-running against an unchanged run folder recomputes the identical file
 # with identical content and `pc_guarded_write` overwrites it byte for byte - no duplicate.
 #
-# UNTRUSTED TEXT. `interpretation` and an `expected.value` string are run output, not instructions.
+# UNTRUSTED TEXT. `interpretation`, an `expected.value` string and the run id (a folder name) are
+# run output, not instructions.
 # Control characters are collapsed to one space and every such value is printed after a fixed
 # prefix on one line, so no value can open a heading (e.g. a second `## Status:` line) in the
 # draft. `interpretation` also feeds `## Touches` through `vt_touches` (stat-style tests only).
@@ -79,7 +80,11 @@ RUN_DIR="${1:-}"
 [ -d "$RUN_DIR" ] || refuse run_dir_missing "no such run dir '$RUN_DIR'"
 RUN_DIR_ABS="$(cd "$RUN_DIR" 2>/dev/null && pwd)"
 [ -n "$RUN_DIR_ABS" ] || refuse run_dir_missing "cannot resolve '$RUN_DIR'"
-RUN_ID="$(basename "$RUN_DIR_ABS")"
+# The run id is a directory name, so it is untrusted input exactly like `interpretation`: a folder
+# named `r1<newline>## Status: ready` would otherwise open headings in the draft and put a newline
+# in its filename. It is flattened ONCE, here, with the same rule as `flat` below, so every use
+# (title, evidence-set, Evidence lines, filename) gets the clean value.
+RUN_ID="$(jq -rn --arg s "$(basename "$RUN_DIR_ABS")" '$s | gsub("[[:cntrl:]]+"; " ")')"
 
 VERDICT="$RUN_DIR_ABS/verdict.json"
 [ -f "$VERDICT" ] || refuse verdict_missing "no verdict.json under $RUN_DIR_ABS"
