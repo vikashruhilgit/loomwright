@@ -126,7 +126,9 @@ FTD="$TOP/fetrail"; mkdir -p "$FTD"; cp "$HERE"/*.sh "$HERE"/*.py "$FTD/"; cp -R
 mv "$FTD/automate-helpers.sh" "$FTD/automate-helpers.real.sh"
 cat > "$FTD/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash
-if [ "${1:-}" = trail-pr ]; then
+# `trail-pr <rf> --settle` (finalize-empty's last step, a no-op with branch mode off) is not a
+# trail call: it passes through unlogged, so the counts below stay one per trail push.
+if [ "${1:-}" = trail-pr ] && [ "${3:-}" != --settle ]; then
   { printf 'trail-pr saw: '; grep -m1 '^## Status:' "$2"; } >> "$FE_TRAIL_LOG"
   if [ -n "${FE_TRAIL_FAIL:-}" ]; then echo "trail-pr: skipped — gh pr create failed (stub)"; exit 0; fi
 fi
@@ -203,6 +205,13 @@ sed 's/^/    | /' "$FX/fe.err"
 grep -q "^trail-pr: meta-pushed $BMB" "$FX/fe.err" && ! grep -q '^trail-unstage' "$FX/fe.err" && ok "(F3) trail meta-pushed; no trail-unstage in branch mode" || no "(F3) stderr: $(tr '\n' '|' < "$FX/fe.err")"
 [ "$(count_creates)" = 0 ] && ok "(F3) no gh pr create in branch mode" || no "(F3) a PR was created"
 grep -qxF -- "## Status: done" < <(bm_show "$RF_REL0") && ok "(F3) the metadata branch holds the finalized run file" || no "(F3) branch run file not done"
+# The trail, process-registry and sweep lines are appended AFTER the trail push; the settle
+# push (trail-pr --settle, finalize-empty's last step) must carry them, so the branch copy is
+# the local file byte for byte — before the settle the branch stayed those three lines behind.
+grep -q "^trail-pr: settled $BMB" "$FX/fe.err" && grep -q ' sweep (dry run): ' "$P/$RF_REL" \
+  && cmp -s <(bm_show "$RF_REL0") "$P/$RF_REL" \
+  && ok "(F3) settle: the metadata branch's run file equals the local one, run-end lines included ('trail-pr: settled $BMB')" \
+  || no "(F3) settle: branch copy differs from local: $(diff <(bm_show "$RF_REL0") "$P/$RF_REL" | head -4 | tr '\n' '|') stderr: $(grep 'settle' "$FX/fe.err" | tr '\n' '|')"
 unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
 
 # =============================================================================

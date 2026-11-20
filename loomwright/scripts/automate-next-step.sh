@@ -184,7 +184,8 @@
 #               superseded close-out it goes on to awaiting-go, else to checkoff
 #   checkoff    CHECK OFF + its Progress line
 #   terminate   the two exits: `## Status: done` (trail-pr --reason done + the `process registry:` line
-#               + the dry sweep line) or the limit_reached park; otherwise `{"do":"done","status":"running"}`
+#               + the dry sweep line, then trail-pr --settle: the run file re-pushed alone, its line on
+#               stderr) or the limit_reached park; otherwise `{"do":"done","status":"running"}`
 #               (next PICK)
 #   merge-parked  `--merge-parked`: the refusals (a lane, a `--parallel` parent, `## Current` not
 #               `awaiting_merge` with `owned_drain_result: READY`, no PR — exit 2, nothing written), the run-lock
@@ -3510,6 +3511,11 @@ ns_terminate() {
     ns_progress "$(ns_ts) process registry: ${rg:-proc-registry: summary — skipped: no output}" || return 1
     sw="$(bash "$H" sweep --root "$ROOT" 2>/dev/null | grep '^sweep: summary — ' | tail -n 1)"
     ns_progress "$(ns_ts) sweep (dry run): ${sw:-sweep: summary — skipped: no output}" || return 1
+    # the run file's LAST write is above: in branch mode push it alone once more (trail-pr
+    # --settle), so the metadata branch holds the lines appended after the trail push; its
+    # line goes to stderr, never into the run file (a failure is loud on its own: marker + notify)
+    tl="$(bash "$H" trail-pr "$RF" --settle 2>/dev/null | tail -n 1)"
+    ns_err "${tl:-trail-pr: settle skipped — no output}"
     ns_release
     ns_emit done terminate '{"status":"done","remaining":0}'
     return 0

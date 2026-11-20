@@ -8,6 +8,22 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.7.1 — 2026-11-20
+
+- `selvedge doctor` treats a blank `SELVEDGE_PLANNER` as unset, exactly as `plan` does, so the
+  planner line falls back to `claude` on `PATH` instead of reporting a planner that `plan` would
+  not use. Tests now also pin the browser line when the Playwright library is missing, a Playwright
+  that reports no browser path, and the approvals line with no `selvedge.json`.
+- `selvedge sample-app [--port N]`: before it listens it connects to 127.0.0.1:N and [::1]:N
+  (`localhost` can resolve to either): a connection accepted on either (a server bound to
+  127.0.0.1, to ::1, or to the wildcard, which a bind on 127.0.0.1 alone would sit beside) exits 1
+  naming the port, as does the listen's own EADDRINUSE. In 0.7.0 only the listen's own error was
+  caught.
+- `docs/quick-start-timing.md` records the timed rehearsal on the sample app and a timed run on a
+  real project (Sportify, its own Playwright 1.56.1, fresh `HOME`: 107 s of command time, 3/3
+  criteria PASS), both command time rather than a person reading and typing; the README carries the
+  fixes the rehearsal found.
+
 ## 0.7.0 — 2026-11-18
 
 - `selvedge doctor` checks, one line each, Node >= 18, the Playwright library (found exactly as `run`
@@ -20,17 +36,14 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   `skipped: the other checks need Node` instead of crashing.
 - `selvedge sample-app [--port N]` serves the bundled fixture app (`tests/fixtures/app-server.mjs`)
   on `http://localhost:N` (default 4173) in the foreground until Ctrl-C, with no watchdog, and prints
-  its origin and the `selvedge env init --port N` line. Before it listens it connects to
-  127.0.0.1:N and [::1]:N (`localhost` can resolve to either): a connection accepted on either
-  (a server bound to 127.0.0.1, to ::1, or to the wildcard, which a bind on 127.0.0.1 alone would
-  sit beside) exits 1 naming the port, as does the listen's own EADDRINUSE.
+  its origin and the `selvedge env init --port N` line; a port already in use exits 1 naming it.
   `startAppServer()` takes an optional port; with none it still binds a random one.
 - The README opens with a **Quick start** (install → `install-cli` → a demo folder with Playwright
   → `env init` → `doctor` → `sample-app` → `/selvedge:verify` with three example criteria → the
   verdict table, each command with its expected output) and **Honest limits** (web only, what
   BLOCKED and NOT_VERIFIABLE mean, the secret limit, no accuracy numbers before the Phase 2
-  measurement). `docs/quick-start-timing.md` records the timed rehearsal on the sample app and a
-  timed run on a real project (Sportify, 3/3 PASS), both command time with a fresh `HOME`.
+  measurement). `docs/quick-start-timing.md` records the timed rehearsal and holds the owner's
+  fresh-account run.
 
 ## 0.6.0 — 2026-11-18
 

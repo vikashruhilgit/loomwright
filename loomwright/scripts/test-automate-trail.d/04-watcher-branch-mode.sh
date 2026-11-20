@@ -791,6 +791,22 @@ out="$(bm_trail done)"
 case "$out" in "trail-pr: meta-push FAILED — mode unknown "*) ok "(bm-e) mode unknown ⇒ '$out'" ;; *) no "(bm-e) mode unknown: '$out'" ;; esac
 [ -f "$P/.supervisor/automate/$RUN_ID.meta-push-failed" ] && ok "(bm-e) mode unknown writes the marker" || no "(bm-e) no marker"
 
+# (bm-e2) trail-pr --settle: the mode reads `unknown` at settle time with NO marker yet (it flipped
+# after a good trail push) ⇒ a loud FAILURE like _trail_meta_push's — never a quiet skip, which
+# would leave the run file behind with nothing to show; then, the marker present ⇒ the one skip.
+new_fixture 93; bm_switch
+awk '{print} index($0, "# loomwright-meta-branch: ") == 1 {print "# loomwright-meta-branch: other"}' "$P/.gitignore" > "$P/g" && mv "$P/g" "$P/.gitignore"
+BMS_MK="$P/.supervisor/automate/$RUN_ID.meta-push-failed"
+[ ! -e "$BMS_MK" ] || no "(bm-e2) setup: a marker exists before the settle"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --settle)"
+case "$out" in "trail-pr: settle FAILED — mode unknown "*) true ;; *) false ;; esac \
+  && [ -f "$BMS_MK" ] && grep -qE '^- .*meta-push FAILED: settle: mode unknown ' "$P/$RF_REL0" \
+  && ok "(bm-e2) settle with mode unknown and no marker ⇒ '$out', the marker and the Progress line (loud, not skipped)" \
+  || no "(bm-e2) settle mode unknown: '$out' marker=$([ -f "$BMS_MK" ] && echo yes || echo no)"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --settle)"
+[ "$out" = "trail-pr: settle skipped — $RUN_ID.meta-push-failed present" ] \
+  && ok "(bm-e2) marker present ⇒ the settle is the one sanctioned skip ('$out')" || no "(bm-e2) marker-present settle: '$out'"
+
 # (bm-f) trail-unstage in branch mode ⇒ skipped, index untouched.
 new_fixture 86; bm_switch
 (cd "$P" && git add -f "$RF_REL0" >/dev/null 2>&1)

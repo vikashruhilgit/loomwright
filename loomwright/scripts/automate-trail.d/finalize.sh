@@ -17,7 +17,9 @@
 # termination makes) and its line appended; ONE `<ts> process registry: <summary>`
 # Progress line (`proc-registry.sh summary`, read-only; none ⇒ `proc-registry:
 # summary — skipped: no output` — af/39g), then ONE `<ts> sweep (dry run): <summary>`
-# Progress line (sweep_run, dry — af/39a); branch mode OFF only, `trail-unstage
+# Progress line (sweep_run, dry — af/39a); unless --no-trail, `trail-pr <runfile> --settle`
+# (branch mode: the run file alone pushed once more, so the lines above reach the metadata
+# branch; its line printed, never appended); branch mode OFF only, `trail-unstage
 # <runfile>` (this is usually a FOREIGN run finalized from the current run's RESUME:
 # its staged trail blobs would ride into the current run's next commit and make
 # `_sync_primary` see a dirty index); the lock released in a trap.
@@ -163,6 +165,13 @@ finalize_empty() {
   sw="$( (sweep_run --root "$root") 2>/dev/null | tail -n1)"
   case "$sw" in "sweep: summary — "*) ;; *) sw="sweep: summary — skipped: no output" ;; esac
   bash "$HLP" progress-append "$rf_rel" "$ts sweep (dry run): $sw" >/dev/null 2>&1
+  # The run file's LAST write is above: in branch mode, push it alone once more so the
+  # metadata branch holds the trail, registry and sweep lines too (trail-pr --settle — its
+  # line is printed, never appended). --no-trail publishes nothing, so it settles nothing.
+  if [ "$no_trail" -eq 0 ]; then
+    l="$(bash "$HLP" trail-pr "$rf_abs" --settle 2>/dev/null | tail -n1)"
+    echo "${l:-trail-pr: settle skipped — no output}"
+  fi
   if [ "$(_branch_mode "$root")" = "off" ]; then
     l="$(bash "$HLP" trail-unstage "$rf_abs" 2>/dev/null | tail -n1)"
     echo "${l:-trail-unstage: skipped — no output}"

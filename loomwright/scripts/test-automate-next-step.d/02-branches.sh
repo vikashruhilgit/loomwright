@@ -129,3 +129,16 @@ else no "B14b: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_registry_line "$DRIVER"; then ok "B15: done exit ⇒ ONE '<ts> process registry: <summary>' line directly before the sweep line; a silent proc-registry.sh summary ⇒ 'proc-registry: summary — skipped: no output'"
 else no "B15: $LEG_MSG"; fi
+# B15b — the done exit's settle push: ONE `trail-pr --settle`, after the sweep line, its line on stderr only
+LEG_MSG=""
+if leg_settle_line "$DRIVER"; then ok "B15b: done exit ⇒ ONE 'trail-pr <runfile> --settle' after the sweep line; its line on stderr ('next-step: trail-pr: settled …'), never in the run file"
+else no "B15b: $LEG_MSG"; fi
+# B15b MUTATION CONTROL: a driver copy with the settle call deleted must turn the leg red
+B15B_MUT="$WORK/b15b-mutant.sh"
+grep -vF 'trail-pr "$RF" --settle' "$DRIVER" > "$B15B_MUT"
+if cmp -s "$DRIVER" "$B15B_MUT"; then no "B15b mutation control: the settle call line was not found — inconclusive"
+else
+  LEG_MSG=""
+  if ! leg_settle_line "$B15B_MUT"; then ok "B15b mutation control: the settle call deleted ⇒ the leg fails ($LEG_MSG)"
+  else no "B15b mutation control: the leg passed with the settle call deleted"; fi
+fi
