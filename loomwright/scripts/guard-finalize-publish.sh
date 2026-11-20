@@ -857,7 +857,9 @@ cmd_has_publish "$CMD" 0 || allow
 # Where: each publish's own checkout (its toplevel) and that repo's main worktree, so a run whose
 # checkout is a linked worktree or a lane is found. A publish outside any checkout, or into another
 # repository with no pending spawn, is not this gate's. An unknown target is judged at BASE_DIR and
-# has no branch to match: denied (fail CLOSED).
+# has no branch to match: denied (fail CLOSED). When BASE_DIR is not a checkout either, the unknown
+# target is judged at the main worktree ($ROOT, with $PROJ): any spawn pending there (SPAWN_PENDING)
+# denies it. Only a KNOWN directory outside any checkout is skipped (nothing to publish there).
 # KNOWN LIMITS: the same tripwire limits as the header's (a publish the walk cannot see); state.md is
 # agent-written, so a session that rewrites it by hand with a new id and its own branch passes — this
 # gate catches skipping the spawn, not forging its evidence; a commit is not gated (it publishes nothing).
@@ -867,7 +869,13 @@ run_spawn_gate() {
     d="$pd"; unk=0
     if [ "$d" = "$UNK" ] || [ ! -d "$d" ]; then d="$BASE_DIR"; unk=1; fi
     top="$(git -C "$d" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
-    [ -n "$top" ] || continue
+    if [ -z "$top" ]; then
+      # an unknown target with no checkout to judge it at falls back to the main worktree's (and the
+      # project dir's) pending spawn — step (ii)'s SPAWN_PENDING: denied, never skipped. A KNOWN
+      # directory outside any checkout has nothing to publish: not this gate's.
+      [ "$unk" = 1 ] && [ "$SPAWN_PENDING" = 1 ] && deny "automate_run_unrun: an /automate run spawn is pending in this project ($ROOT / $PROJ) and this publish's target is unknown (the session's directory '${BASE_DIR:-none}' is not a git checkout and the command's directory cannot be resolved). Run the spawn's invocation — Launch Pad, then the Supervisor publishes through FINALIZE — or answer the driver with --result; never publish the item by hand"
+      continue
+    fi
     roots="$top"
     if [ "$HELPER_OK" = 1 ]; then
       main="$(loom_main_root "$d" 2>/dev/null)"

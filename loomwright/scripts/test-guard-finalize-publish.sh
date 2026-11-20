@@ -811,6 +811,17 @@ run_guard "$R937" "cd $R937O && git push origin main"
 expect "#937: pending spawn here, push from another repository -> allowed" 0
 run_guard "$R937" "git status"
 expect "#937: pending spawn, a non-publish command -> allowed" 0
+# fail CLOSED on an UNKNOWN target: the session's cwd is not a git checkout (BASE_DIR resolves no
+# toplevel), the publish's directory is behind a substitution -> judged at the main worktree, which
+# has the pending spawn -> denied. A KNOWN non-git directory stays allowed (nothing to publish there).
+payload_cwd() { jq -n -c --arg c "$1" --arg w "$2" '{session_id:"cc-uuid-1", hook_event_name:"PreToolUse", tool_name:"Bash", cwd:$w, tool_input:{command:$c}}'; }
+NG937="$(mktemp -d "$TMP/nongit.XXXXXX")"
+P937="$(payload_cwd 'cd "$(mktemp -d)" && git push -u origin feature/cheer-sh' "$NG937")"
+OUT="$(CLAUDE_PROJECT_DIR="$R937C" "$REALBASH" "$GUARD" 2>/dev/null <<<"$P937")"; RC=$?
+expect "#937: pending spawn, unknown publish target from a non-git cwd -> denied (fail closed)" 2 "automate_run_unrun"
+P937="$(payload_cwd "cd $NG937 && git push -u origin feature/cheer-sh" "$NG937")"
+OUT="$(CLAUDE_PROJECT_DIR="$R937C" "$REALBASH" "$GUARD" 2>/dev/null <<<"$P937")"; RC=$?
+expect "#937: pending spawn, a publish in a KNOWN non-git directory -> allowed (nothing to publish)" 0
 # fail CLOSED: a pending spawn and no jq -> denied, never a silent allow
 P937="$(payload "git push -u origin feature/cheer-sh")"
 OUT="$(CLAUDE_PROJECT_DIR="$R937C" PATH="/nonexistent" "$REALBASH" "$GUARD" 2>/dev/null <<<"$P937")"; RC=$?

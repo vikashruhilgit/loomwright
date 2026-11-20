@@ -787,9 +787,9 @@ leg_run_order() {
 }
 # leg_run_spawn_floor <driver> — #937: the /autonomous run spawn records, in the sidecar the publish guard reads,
 # that it waits on run-result and which Supervisor session state.md named when it was printed (the stale one);
-# with no state.md the floor is empty
+# with no state.md the floor is empty, and a --continue spawn records an empty floor whatever state.md names
 leg_run_spawn_floor() {
-  local drv="$1" sc
+  local drv="$1" sc tid=2026-10-14-af39b
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
   printf '# State\n\n## Session\n- **session_id:** stale-attempt-1\n- branch: feature/old\n- status: running\n' > "$CASE_ROOT/.supervisor/state.md"
   ns_call "$drv" --start run --session-id s-run
@@ -803,6 +803,18 @@ leg_run_spawn_floor() {
   sc="$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json"
   [ "$NC_RC" = 0 ] && jq -e '.next == "run-result" and .run_spawn_state_sid == ""' "$sc" >/dev/null 2>&1 \
     || { LEG_MSG="no state.md: exit $NC_RC, sidecar $(jq -c '{next, run_spawn_state_sid}' "$sc" 2>/dev/null)"; return 1; }
+  # a --continue spawn (the item's last RUN checkpointed, its brief still in progress: leg_fresh_checkpoint's
+  # shape) resumes the session state.md already names, so it records NO floor, even with a session named there
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch 3"; return 1; }
+  printf '# State\n\n## Session\n- **session_id:** checkpointed-sess-1\n- branch: feature/run\n- status: checkpoint\n' > "$CASE_ROOT/.supervisor/state.md"
+  { printf -- '- 2026-10-14T09:20:00Z launch-pad saved .supervisor/jobs/pending/%s.md\n' "$tid"
+    printf -- '- 2026-10-14T11:00:01Z ran /autonomous — no PR: checkpoint (Supervisor checkpointed; resume with /supervisor --continue task: %s)\n' "$tid"; } >> "$CASE_RF"
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/in-progress" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/in-progress/$tid.md"
+  ns_call "$drv" --start run --session-id s-run
+  sc="$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg i "/loomwright:supervisor --continue task: $tid" '.do == "spawn" and .step == "run" and (.invocation | startswith($i))' >/dev/null 2>&1 \
+    && jq -e '.next == "run-result" and .run_spawn_state_sid == ""' "$sc" >/dev/null 2>&1 \
+    || { LEG_MSG="--continue spawn: exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}, sidecar $(jq -c '{next, run_spawn_state_sid}' "$sc" 2>/dev/null)"; return 1; }
   return 0
 }
 # leg_drain_once <driver> — AC2: another owned-drain spawn for the same pass ⇒ exit 2 drain_already_owned,

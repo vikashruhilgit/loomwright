@@ -3,7 +3,7 @@ LEG_MSG=""
 if leg_run_order "$DRIVER"; then ok "R1 (AC5): suppressed before the /autonomous spawn; restored byte-for-byte (backup deleted, original read backup-first) before the owned-drain spawn"
 else no "R1 (AC5): $LEG_MSG"; fi
 LEG_MSG=""
-if leg_run_spawn_floor "$DRIVER"; then ok "R1b (#937): the run spawn's sidecar waits on run-result and records state.md's session at the spawn (bold form read); none ⇒ empty floor"
+if leg_run_spawn_floor "$DRIVER"; then ok "R1b (#937): the run spawn's sidecar waits on run-result and records state.md's session at the spawn (bold form read); none, or a --continue spawn, ⇒ empty floor"
 else no "R1b (#937): $LEG_MSG"; fi
 LEG_MSG=""
 if leg_drain_once "$DRIVER"; then ok "R2 (AC2): another owned-drain spawn for the pass ⇒ exit 2 drain_already_owned, nothing written (pending, after the report, sidecar gone)"
