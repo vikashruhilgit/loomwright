@@ -22,6 +22,10 @@
 #     the same evidence-gated candidate list (the gitignore drop skipped), and on failure appends
 #     one `meta-push FAILED:` Progress line, notifies, and writes the gitignored
 #     `<run_id>.meta-push-failed` marker; `trail-unstage` and closeout's re-stage are skipped.
+#     `trail-pr <runfile> --settle` pushes ONLY the run file, as each done exit's last step, so
+#     the lines appended after the trail push (the trail line, process registry, sweep) reach
+#     the branch; it prints its one line and never appends, so nothing trails it. Skipped with
+#     branch mode off or the run's meta-push-failed marker present.
 #     Mode off ⇒ everything below is unchanged.
 #   * `trail-unstage` only drops this run's trail-path index entries
 #     (`git restore --staged -- <path>`); working copies are never touched.
@@ -81,9 +85,11 @@
 #       non-schema key, canonical `channels_scanned`, `risk_classification`
 #       carries `reasons`) and the same required/allowed check on every nested
 #       object and list item (NESTED below). A file that cannot be checked is a `fail`.
-#   trail-pr <runfile> [--reason <reason>]
+#   trail-pr <runfile> [--reason <reason>] | trail-pr <runfile> --settle
 #       One line: `trail-pr: opened <url>` | `trail-pr: pushed <url>` |
-#       `trail-pr: skipped — <reason>`. Sidecars that fail `sidecar-check` are
+#       `trail-pr: skipped — <reason>`. --settle (branch mode, a done exit's last
+#       step): `trail-pr: settled <branch>` | `trail-pr: settle skipped — <reason>` |
+#       `trail-pr: settle FAILED — <reason>`. Sidecars that fail `sidecar-check` are
 #       excluded and named INSIDE that same line (`; excluded <path> — <reason>`),
 #       and so is a done-stamped requirement / done brief whose PR is not merged
 #       (`; excluded <path> — pr not merged`, _evidence_gate),
