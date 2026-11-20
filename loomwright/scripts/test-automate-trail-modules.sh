@@ -156,18 +156,18 @@ if [ -n "$REPO" ] && git -C "$REPO" cat-file -e "$BASE:$BASE_PATH" 2>/dev/null \
   HAVE_BASE=1
 fi
 # help_equal <entry> — 0 iff <entry> and the base give the same stdout, stderr and exit for every
-# probe (and print something); the first differing probe is left in $HE_MSG.
+# probe (and print something). Every probe runs; EACH differing one is named in $HE_MSG, so a
+# regression that breaks several probes is diagnosed in one red run, as the per-probe check was.
 help_equal() {
   local a brc nrc; HE_MSG=""
   for a in --help -h "" no-such-subcommand; do
     ( cd "$T/cwd" && bash "$T/basedir/automate-trail.sh" $a >"$T/bo" 2>"$T/be" ); brc=$?
     ( cd "$T/cwd" && bash "$1" $a >"$T/no" 2>"$T/ne" ); nrc=$?
     if ! { [ "$brc" = "$nrc" ] && cmp -s "$T/bo" "$T/no" && cmp -s "$T/be" "$T/ne" && { [ -s "$T/no" ] || [ -s "$T/ne" ]; }; }; then
-      HE_MSG="'${a:-<no-arg>}': rc $brc vs $nrc; stdout $(wc -l <"$T/bo" | tr -d ' ') vs $(wc -l <"$T/no" | tr -d ' ') lines; first diff: $(diff "$T/bo" "$T/no" | sed -n 2p)"
-      return 1
+      HE_MSG="${HE_MSG:+$HE_MSG; }'${a:-<no-arg>}': rc $brc vs $nrc, stdout $(wc -l <"$T/bo" | tr -d ' ') vs $(wc -l <"$T/no" | tr -d ' ') lines, first diff: $(diff "$T/bo" "$T/no" | sed -n 2p)"
     fi
   done
-  return 0
+  [ -z "$HE_MSG" ]
 }
 if [ "$HAVE_BASE" = 0 ]; then
   skp "base blob $BASE:$BASE_PATH not in this clone (shallow checkout?) — the split-equality legs are not run"
