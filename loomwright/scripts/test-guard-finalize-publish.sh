@@ -743,6 +743,88 @@ else
     || no "mutation control (regex): fixed-regex detector allowed only $missed/${#GLOBAL_DENY_CASES[@]} — a case does not exercise the walk"
 fi
 
+echo "== #937: an /automate run spawn that has not run -> no publish around it =="
+# spawn_pending <repo> <floor sid> [next] — the driver's sidecar as it stands after it printed the
+# `/autonomous run` spawn: waiting on run-result, with the state.md session id seen at the spawn (the floor)
+spawn_pending() {
+  mkdir -p "$1/.supervisor/automate"
+  jq -n -S --arg f "$2" --arg n "${3:-run-result}" '{next: $n, item: ".supervisor/requirements/t.md", run_spawn_state_sid: $f}' \
+    > "$1/.supervisor/automate/automate-t-001.next-step.json"
+}
+# fresh_state <repo> <sid> <branch> <status> — the state.md a Supervisor writes at INIT
+fresh_state() {
+  printf '# State\n\n## Session\n- session_id: %s\n- branch: %s\n- status: %s\n' "$2" "$3" "$4" > "$1/.supervisor/state.md"
+}
+# the 2026-11-17/18 shape: a stale `running` state.md from an earlier attempt names an old branch; the
+# main thread made the item itself on a new branch
+R937="$(new_repo running)"; git -C "$R937" checkout -q -b feature/cheer-sh
+spawn_pending "$R937" "$PSID"
+run_guard "$R937" "git push -u origin feature/cheer-sh"
+expect "#937: push of a hand-made branch while the run spawn is pending (stale running state.md) -> denied" 2 "automate_run_unrun"
+run_guard "$R937" "gh pr create --base main --head feature/cheer-sh --title x --body y"
+expect "#937: one-line gh pr create while the run spawn is pending -> denied" 2 "automate_run_unrun"
+run_guard "$R937" "git push origin $BR"
+expect "#937: a push of the STALE session's own branch while the spawn is pending -> denied (the floor session)" 2 "automate_run_unrun"
+# a finished state.md made the old guard inert at step (ii)
+R937C="$(new_repo done)"; git -C "$R937C" checkout -q -b feature/cheer-sh
+spawn_pending "$R937C" "$PSID"
+run_guard "$R937C" "git push -u origin feature/cheer-sh"
+expect "#937: closed state.md + pending spawn -> push still denied" 2 "automate_run_unrun"
+# no state.md at all: nothing has run
+R937N="$(mktemp -d "$TMP/repo.XXXXXX")"
+( cd "$R937N" && git init -q . && git config user.email t@e.x && git config user.name t \
+    && echo a > a && git add a && git commit -qm init && git checkout -q -b feature/cheer-sh ) >/dev/null 2>&1
+spawn_pending "$R937N" ""
+run_guard "$R937N" "git push -u origin feature/cheer-sh"
+expect "#937: no state.md + pending spawn -> push denied" 2 "automate_run_unrun"
+# the spawn's own Supervisor: a NEW session names the publish's branch
+R937F="$(new_repo done)"; git -C "$R937F" checkout -q -b feature/run-branch
+spawn_pending "$R937F" "$PSID"
+fresh_state "$R937F" "plugsess-0002" "feature/run-branch" "running"
+run_guard "$R937F" "git push -u origin feature/run-branch"
+expect "#937: the spawn's live Supervisor on its own branch -> the FINALIZE gate decides (no marker: denied)" 2 "run FINALIZE point 5 first"
+fresh_state "$R937F" "plugsess-0002" "feature/run-branch" "done"
+run_guard "$R937F" "git push origin feature/run-branch"
+expect "#937: the spawn's Supervisor finished (EVALUATE's drain push) on its branch -> allowed" 0
+run_guard "$R937F" "gh pr create --title t --body b"
+expect "#937: the spawn's finished Supervisor, gh pr create on its branch -> allowed" 0
+git -C "$R937F" checkout -q -b feature/elsewhere
+run_guard "$R937F" "git push origin feature/elsewhere"
+expect "#937: a new session exists but the publish is on another branch -> denied" 2 "automate_run_unrun"
+git -C "$R937F" checkout -q feature/run-branch
+# a --continue spawn records no floor: the resumed (same) session on its own branch passes the gate
+R937K="$(new_repo checkpoint)"
+spawn_pending "$R937K" ""
+settle_children "$R937K"; write_marker "$R937K"
+run_guard "$R937K" "git push origin $BR"
+expect "#937: --continue spawn (no floor), the resumed session's branch with a settled marker -> allowed" 0
+# the spawn answered: the driver no longer waits on run-result -> back to the old rules
+R937A="$(new_repo done)"; git -C "$R937A" checkout -q -b feature/cheer-sh
+spawn_pending "$R937A" "$PSID" "run-record"
+run_guard "$R937A" "git push -u origin feature/cheer-sh"
+expect "#937: the spawn already answered (next != run-result) -> allowed as before" 0
+# a publish into ANOTHER repository is not this run's
+R937O="$(mktemp -d "$TMP/other.XXXXXX")"
+( cd "$R937O" && git init -q . && git config user.email t@e.x && git config user.name t \
+    && echo a > a && git add a && git commit -qm init ) >/dev/null 2>&1
+run_guard "$R937" "cd $R937O && git push origin main"
+expect "#937: pending spawn here, push from another repository -> allowed" 0
+run_guard "$R937" "git status"
+expect "#937: pending spawn, a non-publish command -> allowed" 0
+# fail CLOSED: a pending spawn and no jq -> denied, never a silent allow
+P937="$(payload "git push -u origin feature/cheer-sh")"
+OUT="$(CLAUDE_PROJECT_DIR="$R937C" PATH="/nonexistent" "$REALBASH" "$GUARD" 2>/dev/null <<<"$P937")"; RC=$?
+expect "#937: pending spawn + no jq -> denied guard_unavailable" 2 "guard_unavailable"
+# (m) mutation control: without the gate's call the 23r shape is allowed again
+MUT937="$TMP/guard-no-937.sh"
+sed 's/^run_spawn_gate$/: mutated-out run_spawn_gate/' "$GUARD" > "$MUT937"
+if cmp -s "$MUT937" "$GUARD"; then no "mutation control (#937): the run_spawn_gate call was not found"
+else
+  run_guard "$R937C" "git push -u origin feature/cheer-sh" cc-uuid-1 "$MUT937"
+  [ "$RC" = 0 ] && ok "mutation control (#937): without the gate, the closed-state.md bypass is allowed again" \
+    || no "mutation control (#937): mutant still denies (rc=$RC) — the case does not exercise the gate"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

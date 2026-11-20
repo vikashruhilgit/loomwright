@@ -69,7 +69,9 @@
 # GUARD EVALUATION ORDER (cheap-first; no jq and no fork on the inert path):
 #   (i)   raw payload contains neither `push` nor `create`         -> allow
 #   (ii)  no `.supervisor/state.md`, no session_id, or status not running|checkpoint
-#         (canonical `- status:` or bold `- **status:**`)          -> allow (non-Supervisor / finished)
+#         (canonical `- status:` or bold `- **status:**`), AND no `/automate` run spawn pending
+#         (a `.supervisor/automate/*.next-step.json` waiting on run-result, #937)
+#                                                                  -> allow (non-Supervisor / finished)
 #   (iii) jq missing / payload unparseable                         -> deny guard_unavailable
 #   (iv)  no `git push` / `gh pr create` simple command anywhere in the command string -> allow.
 #         Backslash-newlines are joined; segments are cut on && || ; | & ( ) backticks and newlines
@@ -84,6 +86,9 @@
 #         ksh -c <string>` and `eval <words>` are unwrapped (nesting depth <= 3).
 #         The walk also records the directory each publish runs in (payload `cwd`, then `cd` /
 #         `pushd` / `git -C`; `( … )` restores it; anything it cannot resolve is unknown = in scope).
+#   (iv-b) run-spawn gate (#937): a pending `/autonomous run` spawn -> every publish in its run's
+#         checkout is denied `automate_run_unrun` unless a session other than the spawn's floor names
+#         the publish's branch (the spawn's own Supervisor); then no live run -> allow
 #   (v)   session join (below): names which session is publishing, for the deny reason only
 #   (vi)  scope: every publish runs outside the run's checkout — not a git checkout, another repo,
 #         a DETACHED linked worktree (the review-drain sibling), or a branch other than state.md's
@@ -498,9 +503,19 @@ esac
 # (ii) not a live Supervisor run of this repo -> allow (no jq). Host mode with an unloadable resolver
 # cannot tell, so it is never "not live": it falls through and every publish is denied after (iv).
 resolve_root
-HOST_UNRESOLVED=0
+HOST_UNRESOLVED=0; LIVE=0
+# an `/automate` run spawn that has not been answered (#937) keeps the guard on even with no live run:
+# a stale, finished or absent state.md must not make a publish around the spawn free. Builtin glob +
+# a builtin read per sidecar; no external program on this path (none may be on PATH).
+SPAWN_PENDING=0
+for _sc in "$ROOT"/.supervisor/automate/*.next-step.json "$PROJ"/.supervisor/automate/*.next-step.json; do
+  [ -f "$_sc" ] || continue
+  _c=""; IFS= read -r -d '' _c < "$_sc" || true
+  case "$_c" in *'"next": "run-result"'*|*'"next":"run-result"'*) SPAWN_PENDING=1; break ;; esac
+done
 if [ "$HOST_ON" = 1 ] && { [ "$HOST_HELPER_OK" != 1 ] || [ "$GATE_UNRESOLVED" = 1 ]; }; then HOST_UNRESOLVED=1
-else read_live_session || allow; fi
+elif read_live_session; then LIVE=1
+elif [ "$SPAWN_PENDING" != 1 ]; then allow; fi
 
 # (iii)
 command -v jq >/dev/null 2>&1 || deny "guard_unavailable: jq missing"
@@ -829,6 +844,73 @@ cmd_has_publish "$CMD" 0 || allow
 # a quoted `(` / `)` anywhere: the directory walk is not trusted -> an unknown target, in scope
 [ "$PAREN_UNSURE" = 1 ] && PUB_DIRS[${#PUB_DIRS[@]}]="$UNK"
 [ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
+
+# (iv-b) THE RUN-SPAWN GATE (#937). While an `/automate` driver waits on the report of its
+# `/autonomous run` spawn (its sidecar's `next` is `run-result`), a publish in that run's checkout must
+# come from the Supervisor the spawn starts: a session OTHER than the one state.md named when the spawn
+# was printed (the sidecar's `run_spawn_state_sid`, the floor) that names the publish's branch. Anything
+# else — the main thread making the item itself on a new branch, a stale attempt's branch, a closed or
+# absent state.md — is refused `automate_run_unrun`, whichever session issues it. A --continue spawn
+# records an empty floor (it resumes the session already there), so its own branch passes. The
+# spawn's live Supervisor then meets the FINALIZE gate below exactly as before; a finished one (the
+# inner /autonomous EVALUATE drain) is allowed.
+# Where: each publish's own checkout (its toplevel) and that repo's main worktree, so a run whose
+# checkout is a linked worktree or a lane is found. A publish outside any checkout, or into another
+# repository with no pending spawn, is not this gate's. An unknown target is judged at BASE_DIR and
+# has no branch to match: denied (fail CLOSED).
+# KNOWN LIMITS: the same tripwire limits as the header's (a publish the walk cannot see); state.md is
+# agent-written, so a session that rewrites it by hand with a new id and its own branch passes — this
+# gate catches skipping the spawn, not forging its evidence; a commit is not gated (it publishes nothing).
+run_spawn_gate() {
+  local pd d unk top main roots r sc floor sid sbr br item rid ks ki kst kb st_files sf ok
+  for pd in "${PUB_DIRS[@]}"; do
+    d="$pd"; unk=0
+    if [ "$d" = "$UNK" ] || [ ! -d "$d" ]; then d="$BASE_DIR"; unk=1; fi
+    top="$(git -C "$d" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
+    [ -n "$top" ] || continue
+    roots="$top"
+    if [ "$HELPER_OK" = 1 ]; then
+      main="$(loom_main_root "$d" 2>/dev/null)"
+      [ -n "$main" ] && [ "$main" != "$top" ] && roots="$roots$NL$main"
+    fi
+    br="$(git -C "$d" branch --show-current 2>/dev/null)"
+    while IFS= read -r r; do
+      [ -n "$r" ] || continue
+      for sc in "$r"/.supervisor/automate/*.next-step.json; do
+        [ -f "$sc" ] || continue
+        [ "$(jq -r '.next // empty' "$sc" 2>/dev/null)" = "run-result" ] || continue
+        floor="$(jq -r '.run_spawn_state_sid // empty' "$sc" 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+        item="$(jq -r '.item // empty' "$sc" 2>/dev/null)"
+        rid="${sc##*/}"; rid="${rid%.next-step.json}"
+        # the spawn's Supervisor may have written the repo seed or (host mode) the gate-dir copy
+        st_files="$r/.supervisor/state.md"
+        if [ "$HOST_ON" = 1 ] && [ "$HOST_HELPER_OK" = 1 ]; then
+          sf="$(lw_state_md_read "$r" 2>/dev/null)"
+          [ -n "$sf" ] && [ "$sf" != "$st_files" ] && st_files="$st_files$NL$sf"
+        fi
+        ok=0; sid=""; sbr=""
+        ks="$STATE_MD"; ki="$SESSION_ID"; kst="$SESSION_STATUS"; kb="$SESSION_BRANCH"
+        while IFS= read -r sf; do
+          [ -n "$sf" ] && [ -f "$sf" ] || continue
+          STATE_MD="$sf"; SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
+          read_session_block >/dev/null 2>&1 || true
+          sid="$SESSION_ID"; sbr="$SESSION_BRANCH"
+          [ "$unk" = 0 ] && [ -n "$sid" ] && [ "$sid" != "$floor" ] && [ -n "$br" ] && [ "$br" = "$sbr" ] && { ok=1; break; }
+        done <<EOF
+$st_files
+EOF
+        STATE_MD="$ks"; SESSION_ID="$ki"; SESSION_STATUS="$kst"; SESSION_BRANCH="$kb"
+        [ "$ok" = 1 ] && continue
+        deny "automate_run_unrun: run $rid is waiting on its /autonomous run spawn${item:+ for $item}, and this publish is not that spawn's Supervisor's (publish branch '${br:-unknown}'; state.md names session '${sid:-none}' on '${sbr:-none}'; the session seen at the spawn was '${floor:-none}'). Run the spawn's invocation — Launch Pad, then the Supervisor publishes through FINALIZE — or answer the driver with --result; never publish the item by hand"
+      done
+    done <<EOF
+$roots
+EOF
+  done
+  return 0
+}
+run_spawn_gate
+[ "$LIVE" = 1 ] || allow
 
 # (v) session join — names WHO is publishing, for the deny reason only; it never allows (owner
 # decision 2026-11-12: a publish that runs in the run's own checkout on the run's own branch is the
