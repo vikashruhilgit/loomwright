@@ -2327,6 +2327,17 @@ ns_run() {
     ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running /autonomous --single-iteration" || return 1
   fi
   st_set item "$ITEM"; st_set pr "$PR"
+  # THE PUBLISH FLOOR (#937): the Supervisor session .supervisor/state.md names when this spawn is printed is NOT
+  # the one the spawn starts (a stale `running` state.md from an earlier attempt, or a finished run). While the
+  # sidecar waits on run-result, guard-finalize-publish.sh refuses a push / PR in this checkout unless a session
+  # other than this one names the publish's branch: the spawn has to have run. A --continue spawn resumes the
+  # session already named there, so it records no floor. Read format-tolerantly (`- **session_id:** x`), as the
+  # guard reads it.
+  if [ -n "$cont" ]; then st_set run_spawn_state_sid ""
+  else
+    st_set run_spawn_state_sid "$(sed 's/\*\*//g' "$ROOT/.supervisor/state.md" 2>/dev/null \
+      | sed -n 's/^- [Ss]ession_id:[[:space:]]*//p' | head -n 1 | tr -cd 'A-Za-z0-9_-')"
+  fi
   if [ -n "$brief" ]; then
     # the Supervisor phase: /autonomous EXECUTE's /supervisor call with its forward set (--non-interactive,
     # --cheap, --max-tokens), in its own session; the result block lands in the run's supervisor sidecar
