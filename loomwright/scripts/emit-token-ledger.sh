@@ -787,7 +787,7 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # CONFIRMED, not assumed. hooks.json registers emit-token-ledger.sh under one SubagentStop
 # matcher per agent this plugin ships (that file is the authority for the count; a number
 # restated here is the copy that went stale last time). THE MEASUREMENTS BELOW
-# WERE TAKEN WHEN THERE WERE THREE (code-reviewer, qa-executor, supervisor-runner), before
+# WERE TAKEN WHEN THERE WERE THREE (code-reviewer, a since-removed QA agent, supervisor-runner), before
 # v15.60.0, and are kept because they are what established the mechanism; the ratios they
 # report do NOT describe the current topology and must not be read as though they do. What
 # carries forward unchanged is the mechanism, not the arithmetic. They are

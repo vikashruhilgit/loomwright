@@ -359,7 +359,7 @@ while IFS= read -r p; do
   assert_committable "$p"
 done <<'EOF'
 .claude/agent-memory/loomwright-loomwright-code-reviewer/MEMORY.md
-.claude/agent-memory/loomwright-loomwright-qa-executor/MEMORY.md
+.claude/agent-memory/loomwright-loomwright-launch-pad/MEMORY.md
 .claude/agent-memory/loomwright-loomwright-red-team-reviewer/MEMORY.md
 .supervisor/memory/LESSONS.md
 .supervisor/memory/PROJECT_MEMORY.md

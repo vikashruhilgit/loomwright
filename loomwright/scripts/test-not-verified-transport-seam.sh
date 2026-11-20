@@ -2,10 +2,9 @@
 # test-not-verified-transport-seam.sh — static wiring test for the `not_verified` transport chain
 # (harness-port/04): worker -> Context-Keeper's `record_worker_result` -> `state.md`'s `## Worker
 # Results` -> the FINALIZE PR body's optional `## Not verified` section AND the done brief's own
-# `## Not verified` section -> `verify-run.sh acs`'s `not_verified` key (covered separately, with
-# real script fixtures, by test-verify-walkthrough.sh's (NV-*) arms).
+# `## Not verified` section (the job's durable record).
 #
-# Every surface asserted here EXCEPT verify-run.sh is MARKDOWN — prompt text an agent executes — so
+# Every surface asserted here is MARKDOWN — prompt text an agent executes — so
 # there is nothing to run; a grep is the only thing that can hold the wiring. Modelled on
 # test-deviations-advisory-seam.sh: pass/fail counters, ok()/no() DEFINED here (test-suite-helpers-
 # defined.sh scans every suite), a "RESULT: N passed, M failed" tail, exit 1 on any failure, paths
@@ -32,7 +31,7 @@
 #   (f) skills/self-heal-advisory/completion-tail.md step 2 (the step that appends `## Outcome` to the BRIEF,
 #       NOT step 2.5, the separate REQUIREMENT close-out step) appends the same `## Not verified`
 #       section to the brief, on both the PASS/loop-skipped and ESCALATED outcomes, omitted when
-#       empty, and states it (not the PR body) is what `/verify` reads.
+#       empty, and states the done brief's copy is the durable record (the PR body's is human-only).
 #   (g) docs/RESULT_SCHEMAS.md's §EXECUTE_RESULT blockquote states `not_verified` is NOT an
 #       EXECUTE_RESULT field and reaches state.md via Context-Keeper, mirroring the `out_of_lane`
 #       blockquote already there.
@@ -176,8 +175,8 @@ case "$step2_sec" in
   *) no "(f) step 2 does not state the omitted-entirely rule" ;;
 esac
 case "$step2_sec" in
-  *'/verify'*'acs <ticket>'*'the PR body'*'is for the human only'*) ok "(f) step 2 states /verify reads the brief, the PR body is human-only" ;;
-  *) no "(f) step 2 does not distinguish /verify's brief-read from the human-only PR body" ;;
+  *'done brief'*'durable record'*'the PR body'*'is for the human only'*) ok "(f) step 2 states the done brief keeps the durable record, the PR body is human-only" ;;
+  *) no "(f) step 2 does not distinguish the done brief's durable record from the human-only PR body" ;;
 esac
 
 # ---- (g) RESULT_SCHEMAS.md §EXECUTE_RESULT blockquote ------------------------------------------

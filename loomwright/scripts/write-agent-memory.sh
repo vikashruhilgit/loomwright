@@ -672,7 +672,7 @@ compose="$work/compose"
 # also missing from the directory. The invariant it establishes is N files / N-1 pointers —
 # MEMORY.md does not index itself.
 #
-# The existing H1 title line is PRESERVED so a store's human title ("# QA Executor Memory —
+# The existing H1 title line is PRESERVED so a store's human title ("# Code Reviewer Memory —
 # loomwright") survives a rebuild. Everything below it is regenerated; see the OWNERSHIP note in
 # this file's header. Written via a temp file inside the store dir + atomic `mv`, so a MEMORY.md is
 # never observed half-rebuilt.

@@ -1,7 +1,7 @@
 # Failure Escalation Rules
 
 > Defines failure paths for all agents. Without defined escalation, agents can loop infinitely or silently fail.
-> Referenced by: Supervisor, Execute Manager, Worker, Code Reviewer, QA Strategist, QA Executor.
+> Referenced by: Supervisor, Execute Manager, Worker, Code Reviewer.
 
 ---
 
@@ -92,46 +92,6 @@ Code Reviewer returns NEEDS_HUMAN with nothing else to fix (or after that one fi
 - Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
 - A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/multi-voter.md` §"Delay-vs-decide")
 - A routed fix edit step (`docs/PROVIDER_ROUTING.md` §"Write seats") that tampers with git (`write_git_tampered`) exits the heal loop at once: `heal_decision: ESCALATED`, `SUPERVISOR_RESULT` `status: failed`, `error: "write_seat_tampered"`, brief → `failed/`. Any other routed failure falls back to a Claude fix (`fallback_to_default`) or takes the fix-task crash path (`strict`) — `skills/self-heal-advisory/escalation.md` §"Routed fix edit failure"
-
----
-
-## QA Executor Failure
-
-```
-QA Executor fails (crash, timeout, or Playwright errors)
-    ↓
-Reports partial QA_RESULT with status=failed or status=partial
-    ↓
-Skips debate loop (no Strategist audit on failed runs)
-    ↓
-Strategist audit (if run independently later) flags gaps
-```
-
-**Rules:**
-- QA Executor always emits QA_RESULT, even on failure
-- Partial results include whatever tests were generated/run before failure
-- No retry — QA is non-blocking for Supervisor workflow
-- If Strategist is run independently later, it can audit partial results
-
----
-
-## QA Strategist Failure
-
-```
-QA Strategist fails (analysis error, incomplete classification)
-    ↓
-Returns partial risk classification with available data
-    ↓
-Non-blocking for QA Executor (Executor uses default risk levels)
-    ↓
-No retry needed — read-only agent with no side effects
-```
-
-**Rules:**
-- QA Strategist is read-only — no retries needed, no side effects on failure
-- Partial classifications are still usable (incomplete beats absent)
-- If Strategist fails before QA Executor runs, Executor proceeds with default HIGH/MEDIUM/LOW risk levels
-- If Strategist fails during audit mode, Executor results remain valid without verdict
 
 ---
 
@@ -433,8 +393,6 @@ Plan Reviewer returns NEEDS_HUMAN
 | Execute Manager | Dependency merge conflict | 0 (never) | Supervisor → User manual resolution |
 | Code Reviewer | FAIL decision | 3 (fix + re-review) | Supervisor → Human |
 | Code Reviewer | NEEDS_HUMAN | 0 (immediate); 1 fix round first when other at-floor findings sit beside the `needs_human` issue(s) | Supervisor → Human (3x = halt) |
-| QA Executor | Test failure | 0 | Partial result (non-blocking) |
-| QA Strategist | Analysis failure | 0 | Partial classification (non-blocking) |
 | Supervisor | Budget/conflict | 0 | Human (checkpoint + exit) |
 | Context-Keeper | State error | 1 | Degraded mode |
 | Launch Pad | Env blocker | 0 | User fixes manually |

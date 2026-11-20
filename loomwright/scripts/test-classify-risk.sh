@@ -127,13 +127,15 @@ mk_branch base-rj-notelink 'mkdir -p .agent && printf "{\"schema_version\":1,\"p
 mk_from base-rj-ok rj-drop 'printf "{\"schema_version\":1,\"paths\":[],\"content\":[\"stripe\"]}\n" > .agent/risk.json && printf "y\n" > billing/x.txt'
 mk_from base-rj-ok rj-keep 'printf "y\n" > billing/x.txt'
 # Trusted-root fixtures: base-tr carries the root-only files so heads can edit / delete / rename them.
-mk_branch base-tr 'printf "rules v1\n" > CLAUDE.md && printf "{\"mcpServers\":{}}\n" > .mcp.json && mkdir -p .agent/rules && printf "{\"r\":1}\n" > .agent/rules/process.json && printf "{\"v\":1}\n" > .agent/verify.json'
+mk_branch base-tr 'printf "rules v1\n" > CLAUDE.md && printf "{\"mcpServers\":{}}\n" > .mcp.json && mkdir -p .agent/rules && printf "{\"r\":1}\n" > .agent/rules/process.json && printf "{\"v\":1}\n" > .agent/verify.json && printf "{\"v\":1}\n" > selvedge.json'
 mk_from base-tr tr-claude-edit  'printf "rules v2\n" >> CLAUDE.md'
 mk_from base-tr tr-rules-del    'git rm -q .agent/rules/process.json'
 mk_from base-tr tr-claude-mv    'mkdir -p docs && git mv CLAUDE.md docs/CLAUDE.md'
 mk_from base-tr tr-mcp-mv       'mkdir -p config && git mv .mcp.json config/mcp.json'
 mk_from base-tr tr-verify-edit  'printf "{\"v\":2}\n" > .agent/verify.json'
 mk_from base-tr tr-verify-del   'git rm -q .agent/verify.json'
+mk_from base-tr tr-selvedge-edit 'printf "{\"v\":2}\n" > selvedge.json'
+mk_from base-tr tr-selvedge-del  'git rm -q selvedge.json'
 mk_branch tr-claude-new    'printf "rules v1\n" > CLAUDE.md'
 mk_branch tr-agents        'printf "rules\n" > AGENTS.md'
 mk_branch tr-mcp           'printf "{\"mcpServers\":{}}\n" > .mcp.json'
@@ -142,18 +144,20 @@ mk_branch tr-claude-dir    "mkdir -p \"\$(dirname $TR_CDIR_FILE)\" && printf '{}
 mk_branch tr-rules         'mkdir -p .agent/rules && printf "{\"r\":1}\n" > .agent/rules/process.json'
 mk_branch tr-riskjson      'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"*\"]}\n" > .agent/risk.json'
 mk_branch tr-verify        'mkdir -p .agent && printf "{\"v\":1}\n" > .agent/verify.json'
+mk_branch tr-selvedge      'printf "{\"v\":1}\n" > selvedge.json'
 mk_branch tr-review        'printf "rules\n" > REVIEW.md'
 mk_branch tr-claude-local  'printf "rules\n" > CLAUDE.local.md'
 mk_branch tr-nested-claude 'mkdir -p sub/dir && printf "rules\n" > sub/dir/CLAUDE.md'
 mk_branch tr-nested-agents 'mkdir -p sub && printf "rules\n" > sub/AGENTS.md'
 mk_branch tr-nested-mcp    'mkdir -p sub && printf "{}\n" > sub/.mcp.json'
 mk_branch tr-nested-verify 'mkdir -p sub/.agent && printf "{}\n" > sub/.agent/verify.json'
+mk_branch tr-nested-selvedge 'mkdir -p sub && printf "{}\n" > sub/selvedge.json'
 # Symlink shapes: the diff names only the link itself (mode 120000), never a path under it.
 mk_branch tr-cdir-symlink  'mkdir -p cfg && printf "{}\n" > cfg/settings.json && ln -s cfg "$(dirname '"$TR_CDIR_FILE"')"'
 mk_branch tr-agent-symlink 'mkdir -p agentcfg/rules && printf "{}\n" > agentcfg/rules/p.json && printf "{}\n" > agentcfg/verify.json && ln -s agentcfg .agent'
 mk_branch tr-rules-symlink 'mkdir -p .agent rulescfg && printf "{}\n" > rulescfg/p.json && ln -s ../rulescfg .agent/rules'
 # Names that merely CONTAIN a trusted-root name (as a substring, or at the wrong depth / boundary).
-mk_branch tr-lookalike     'mkdir -p docs src .agent && for f in docs/claude-md-notes.md src/mcp.json.ts docs/verify.json.md src/.mcp.json.ts docs/old-claude.md .agent/verify.json.md .claude-notes.md .agent/rules-old.json; do printf "x\n" > "$f"; done'
+mk_branch tr-lookalike     'mkdir -p docs src .agent && for f in docs/claude-md-notes.md src/mcp.json.ts docs/verify.json.md src/.mcp.json.ts docs/old-claude.md .agent/verify.json.md .claude-notes.md .agent/rules-old.json selvedge.json.md my-selvedge.json; do printf "x\n" > "$f"; done'
 
 run() {  # run <base> <head> [extra args...] — from ELSEWHERE; sets OUT / ERR / RC
   OUT="$(cd "$ELSEWHERE" && bash "$S" "$@" --root "$R" 2>"$TMP/err")"; RC=$?
@@ -342,7 +346,7 @@ fi
 [ "$(cat $SCHEMAS_ALL_DOC | grep -c '^<!-- risk-table:begin -->$')" -eq 1 ] && ok "E2 exactly ONE committed copy of the table" || no "E2 marker count != 1"
 grep -q '`\*token\*`' "$TMP/table" && grep -q 'changed_lines > 400' "$TMP/table" && grep -q 'changed_files > 15' "$TMP/table" \
   && grep -q '`skills/`' "$TMP/table" && grep -q 'NO `exclude` key' "$TMP/table" \
-  && grep -q '^| trusted-root .*`CLAUDE.md`.*`.agent/verify.json`.*| `trusted-root:` |$' "$TMP/table" \
+  && grep -q '^| trusted-root .*`CLAUDE.md`.*`selvedge.json`.*| `trusted-root:` |$' "$TMP/table" \
   && grep -q 'read from `<base_ref>` only' "$TMP/table" \
   && ok "E3 the table names every branch's data (a/b/c + trusted-root + project from <base_ref>, no exclude)" || no "E3 table content incomplete"
 # The lens and the loop POINT at the table instead of restating the pattern list.
@@ -495,12 +499,23 @@ tr_case "J2b .mcp.json (AC2)"                 main tr-mcp           "trusted-roo
 tr_case "J2c root config-dir settings (AC2)"  main tr-claude-dir    "trusted-root: $TR_CDIR_FILE"
 tr_case "J2d .agent/rules/process.json (AC2)" main tr-rules         "trusted-root: .agent/rules/process.json"
 tr_case "J2e .agent/risk.json (AC2)"          main tr-riskjson      "trusted-root: .agent/risk.json"
-tr_case "J2f .agent/verify.json (AC2)"        main tr-verify        "trusted-root: .agent/verify.json"
+tr_case "J2f selvedge.json (AC2)"             main tr-selvedge      "trusted-root: selvedge.json"
 tr_case "J2g REVIEW.md (AC2)"                 main tr-review        "trusted-root: review.md"
 tr_case "J2h CLAUDE.local.md (AC2)"           main tr-claude-local  "trusted-root: claude.local.md"
-tr_case "J3a .agent/verify.json added (AC3)"  main    tr-verify      "trusted-root: .agent/verify.json"
-tr_case "J3b .agent/verify.json edited (AC3)" base-tr tr-verify-edit "trusted-root: .agent/verify.json"
-tr_case "J3c .agent/verify.json deleted (AC3)" base-tr tr-verify-del "trusted-root: .agent/verify.json"
+tr_case "J3a selvedge.json added (AC3)"   main    tr-selvedge      "trusted-root: selvedge.json"
+tr_case "J3b selvedge.json edited (AC3)"  base-tr tr-selvedge-edit "trusted-root: selvedge.json"
+tr_case "J3c selvedge.json deleted (AC3)" base-tr tr-selvedge-del  "trusted-root: selvedge.json"
+# J3d: the old `.agent/verify.json` path is no longer a trusted root — a diff that only adds, edits
+# or deletes it carries no trusted-root: reason and is not high-risk.
+while read -r vbase vhead vwhat; do
+  run "$vbase" "$vhead"
+  [ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ] \
+    && ok "J3d .agent/verify.json $vwhat alone ⇒ no trusted-root: reason, not high-risk" || no "J3d .agent/verify.json $vwhat still trusted ($OUT)"
+done <<'VCASES'
+main tr-verify added
+base-tr tr-verify-edit edited
+base-tr tr-verify-del deleted
+VCASES
 tr_case "J4a sub/dir/CLAUDE.md, any depth (AC4)" main tr-nested-claude "trusted-root: sub/dir/claude.md"
 tr_case "J4b sub/AGENTS.md, any depth (AC4)"     main tr-nested-agents "trusted-root: sub/agents.md"
 run main tr-nested-mcp
@@ -509,6 +524,9 @@ run main tr-nested-mcp
 run main tr-nested-verify
 [ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ] \
   && ok "J4d sub/.agent/verify.json ⇒ no trusted-root: reason (repo-root only) (AC4)" || no "J4d sub/.agent/verify.json matched ($OUT)"
+run main tr-nested-selvedge
+[ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ] \
+  && ok "J4e sub/selvedge.json ⇒ no trusted-root: reason (selvedge.json is repo-root only) (AC4)" || no "J4e sub/selvedge.json matched ($OUT)"
 tr_case "J5a .agent/rules/process.json deleted (AC5)" base-tr tr-rules-del "trusted-root: .agent/rules/process.json"
 run base-tr tr-claude-mv
 if [ "$(j '.high_risk')" = "true" ] && has_reason "trusted-root: claude.md" && has_reason "trusted-root: docs/claude.md"; then
@@ -530,7 +548,7 @@ run main clean
   && ok "J6 a diff touching no trusted-root and no generic surface stays false (AC10)" || no "J6 clean diff flipped ($OUT)"
 run main tr-lookalike
 if [ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ]; then
-  ok "J7 names that merely contain a trusted-root name (claude-md-notes, mcp.json.ts, .mcp.json.ts, old-claude.md, verify.json.md, .claude-notes.md, rules-old.json) ⇒ no match, never a substring (AC11)"
+  ok "J7 names that merely contain a trusted-root name (claude-md-notes, mcp.json.ts, .mcp.json.ts, old-claude.md, verify.json.md, .claude-notes.md, rules-old.json, selvedge.json.md, my-selvedge.json) ⇒ no match, never a substring (AC11)"
 else
   no "J7 substring look-alike matched ($OUT)"
 fi

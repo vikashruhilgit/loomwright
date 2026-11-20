@@ -154,7 +154,7 @@ ending in `worker` — a worker that left no `subtask_complete` ended without a 
 a plain `ended` for a non-worker reads `false`. **Rejected stops (A5):** a `subagent_stop`-seam `ended`
 row (or one with no `seam`) does NOT settle an id whose LATEST `subtask_complete` is `rejected: true` —
 the validator-blocked firing wrote both rows and the worker is still running; a `task_return` row does
-settle it (the blocking Task has returned). Non-worker validated roles (code-reviewer, qa-executor,
+settle it (the blocking Task has returned). Non-worker validated roles (code-reviewer,
 execute-manager, supervisor-runner, plan-reviewer, launch-pad-runner) whose stop a validator rejects
 are settled by the `ended` row exactly as their `token_ledger` row already settles them — a
 pre-existing gap, accepted, not widened.

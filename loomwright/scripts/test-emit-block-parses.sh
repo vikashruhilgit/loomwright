@@ -106,7 +106,7 @@ fi
 seed
 python3 - "$FIX/t/loomwright/agents" <<'PY'
 import glob, os, re, sys
-blocks = ("WORKER_RESULT", "EXECUTE_RESULT", "EXECUTE_CHECKPOINT", "QA_RESULT", "VERIFY_RESULT",
+blocks = ("WORKER_RESULT", "EXECUTE_RESULT", "EXECUTE_CHECKPOINT",
           "SUPERVISOR_RESULT", "PLAN_REVIEW_RESULT", "CODE_REVIEW_RESULT")
 alt = "|".join(blocks)
 touched = 0

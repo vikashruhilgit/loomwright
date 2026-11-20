@@ -77,7 +77,6 @@ w validate-code-review-result.py -
 w validate-execute-result.py -
 w validate-launch-pad-result.py -
 w validate-plan-review-result.py -
-w validate-qa-result.py -
 w validate-supervisor-result.py -
 w validate-worker-result.py -
 # set-otel-resource-attrs.sh — `jq '.env = (... {OTEL_RESOURCE_ATTRIBUTES:$a})' "$SL" > "$tmp"; mv "$tmp" "$SL"`
@@ -264,7 +263,7 @@ SCHEMA_NAMES="$(cut -d "$US" -f1 "$tmpd/schemas.tsv" | tr '\n' ' ')"
 #              trailing `:` (an emission template);
 #   (verb)     an emission instruction: EMIT / emit / emits / emitting / OUTPUT / Output / output /
 #              outputs, optionally followed by a/an/the/one/its/exactly one and a backtick, then the
-#              block name ("Step 4: EMIT GATE_VERDICT", "ALWAYS emit MISSING_FUNCTIONALITY_REPORT",
+#              block name ("emit a CODE_REVIEW_RESULT", "emits `REVIEW_HEAL_RESULT`",
 #              "Output a WORKER_RESULT ..."). Past-tense `emitted` describes, it does not instruct.
 # A verb hit is NOT always the agent's own emission: a spawn prompt the agent writes for a CHILD, or a
 # session-log event, uses the same words. Each such hit is hand-audited in the NOT_EMITTED table below
@@ -285,16 +284,10 @@ ne launch-pad PLAN_REVIEW_RESULT
 # the session log (.supervisor/logs/<session>.jsonl), not a block in the agent's output.
 ne supervisor session_end
 PRIMARY_RULES='{
-  "EXECUTE_CHECKPOINT,EXECUTE_RESULT": "EXECUTE_RESULT",
-  "MISSING_FUNCTIONALITY_REPORT,QA_RESULT,VERIFY_RESULT": "QA_RESULT",
-  "QA_RESULT,VERIFY_RESULT": "QA_RESULT"
+  "EXECUTE_CHECKPOINT,EXECUTE_RESULT": "EXECUTE_RESULT"
 }'
 # EXECUTE_RESULT: the Execute Manager's FINAL block; EXECUTE_CHECKPOINT is the mid-run resume handoff
 #   (both validated by validate-execute-result.py — docs/result-schemas/execute-checkpoint.md).
-# QA_RESULT: validate-qa-result.py's documented rule — "QA_RESULT wins whenever present"; VERIFY_RESULT
-#   is the --verify mode's block (docs/RESULT_SCHEMAS.md opening paragraph).
-#   MISSING_FUNCTIONALITY_REPORT is emitted BESIDE QA_RESULT (qa-executor.md "STEP 4 — EMIT: ALWAYS
-#   emit MISSING_FUNCTIONALITY_REPORT ... Emit QA_RESULT"), a companion report, never the final block.
 PLUGIN_NAME="$(jq -r '.name // empty' "$MANIFEST")"
 PLUGIN_VERSION="$(jq -r '.version // empty' "$MANIFEST")"
 [ -n "$PLUGIN_NAME" ] && [ -n "$PLUGIN_VERSION" ] || { echo "build-capabilities: plugin.json lacks .name or .version" >&2; exit 1; }

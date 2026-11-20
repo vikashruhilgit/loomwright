@@ -1,90 +1,127 @@
 #!/usr/bin/env bash
-# propose-from-verify.sh - the VERIFY basis of `/propose`: turns the FAIL / issue lines a `/verify`
-# run recorded into CANDIDATE requirement files under `.supervisor/requirements/proposed/`, each
-# citing the evidence line(s) it rests on, for a human to promote or delete.
+# propose-from-verify.sh - the VERIFY basis of `/propose`: turns the FAIL criteria of one Selvedge
+# run folder's `verdict.json` into CANDIDATE requirement files under
+# `.supervisor/requirements/proposed/`, each citing the criterion it rests on, for a human to
+# promote or delete.
 #
-# WHY THIS EXISTS. A real QA lane found 25 blocking bugs on a live app and one (`BUG-NC-001`)
-# stayed unfixed five months later because the finding had no consumer (memory
-# `qa-l1-validated-on-sports-management`). `/verify` already records every fact validated to
-# `.supervisor/verify/<run_id>/evidence.jsonl` (schema `VERIFY_EVIDENCE`, `docs/RESULT_SCHEMAS.md`),
-# but nothing consumed a FAIL. This is the third `/propose` basis (alongside the ledger basis
-# `propose-work.sh` and the domain basis `propose-domain.sh`) and the missing consumer.
+# WHY THIS EXISTS. A verification run that finds a failing acceptance criterion has no consumer
+# unless something turns the FAIL into a piece of work. This is the third `/propose` basis
+# (alongside the ledger basis `propose-work.sh` and the domain basis `propose-domain.sh`) and that
+# consumer.
 #
-# THE CONTRACT (identical to the other two bases, restated in every emitted proposal too):
+# THE CONTRACT (identical to the other bases):
 #   `.supervisor/requirements/proposed/` is deliberately NOT an `/automate --folder` target;
 #   promotion is a human moving a file out of it. IT PROPOSES; IT NEVER QUEUES. Nothing here
 #   enqueues, dispatches, ranks, scores or merges.
 #
-# READS EXACTLY ONE SURFACE: `<run_dir>/evidence.jsonl`. Not `summary.md` (a derived, lossier
-# view), not `acs.json`, not the ticket file itself. WRITES ONLY under the output directory,
-# through the shared `pc_guarded_write()` in `propose-common.sh` (sourced, never copied inline -
-# `propose-work.sh` and `propose-domain.sh` source the same file; see propose-common.sh's own
-# header for how each caller's mutation control stays live against a guard that no longer lives
-# in its own file text).
+# READS EXACTLY ONE SURFACE: `<run_dir>/verdict.json`, as DATA, with `jq` only. Not
+# `criteria.json`, not `plan.json`, not `evidence.jsonl`. This script sources nothing and runs
+# nothing from the verifier that wrote the file (no CLI call, no JavaScript runtime): the only
+# coupling is the file's documented shape at `SUPPORTED_SCHEMA_VERSION` (below). Fields read:
+#   top level   `schema_version` (must equal SUPPORTED_SCHEMA_VERSION), `plan_sha256` (64 hex),
+#               `criteria` (object keyed `c-<12 hex>`)
+#   per criterion `verdict` (PASS|FAIL|BLOCKED|NOT_VERIFIABLE), `expected` ({op,value} or null),
+#               `failed_step` (non-negative int or null), `interpretation` (string or null),
+#               `steps[]` ({step,type,...} - each entry carries its own `step` index)
+#   The run id is the run folder's basename.
+# WRITES ONLY under the output directory, through the shared `pc_guarded_write()` in
+# `propose-common.sh` (sourced, never copied inline - every `/propose` basis sources the same file;
+# see propose-common.sh's own header for how each caller's mutation control stays live).
 #
-# ONE DRAFT PER QUALIFYING LINE:
-#   * a `FAIL` `ac` line whose `classification` is `REAL_BUG` - taking the LATEST line per `ac_id`
-#     (the VERIFY_EVIDENCE schema's own "latest-per-ac_id" rule: a re-verified AC that ended PASS
-#     must not still be drafted from an earlier, superseded FAIL). `DISCOVERY_GAP` /
-#     `ENVIRONMENT_ISSUE` are the RUN's problem, not the app's, and are never drafted - they stay
-#     in the summary only.
-#   * every `issue` line, unconditionally (an `issue` line carries no `classification` at all).
-#   BLOCKED and NOT_VERIFIABLE never produce a draft, at any classification.
+# ONE DRAFT PER FAIL CRITERION. PASS, BLOCKED and NOT_VERIFIABLE never produce a draft: BLOCKED and
+# NOT_VERIFIABLE are the run's problem, not the app's. The failed step is found by its own `step`
+# index (`select(.step == $failed_step)`), never by array position - `steps[]` order is not a
+# promise that position == index.
 #
-# IDEMPOTENT ON (run_id, ac_id) / (run_id, issue ordinal). The filename is DERIVED, not counted:
-# `verify-<run_id>-<ac_id>-<slug>.md` for an AC, `verify-<run_id>-issue-<n>-<slug>.md` for an issue
-# (`<n>` is the issue's 1-based ordinal among issue lines, in file order). Because the filename is
-# a pure function of (run_id, ac_id | issue ordinal, text-derived slug) and `evidence.jsonl` is
-# append-only, re-running this script against an UNCHANGED store recomputes the identical filename
-# with identical content and `pc_guarded_write` simply overwrites it byte-for-byte through the SAME
-# guard every write already goes through - "no duplicates, no second write attempt beyond the
-# guard" (AC3). A re-verified AC (a later `ac` line for the same `ac_id`, resume-after-pause or a
-# retry) changes what gets drafted at all - which is the intended effect of the latest-per-ac_id
-# rule, not a duplicate.
+# IDEMPOTENT ON (run_id, criterion_id). The filename is DERIVED, never counted:
+# `verify-<run_id>-<criterion_id>.md`. The body carries no timestamp and criteria are visited in
+# sorted key order, so re-running against an unchanged run folder recomputes the identical file
+# with identical content and `pc_guarded_write` overwrites it byte for byte - no duplicate.
 #
-# BLAST RADIUS. This script never calls `verify-helpers.sh summary-build` and never touches
-# anything under `<run_dir>/`. The evidence-driven "## Proposals" section of `summary.md` (added to
-# `verify-helpers.sh summary_build` as part of this same change) is computed PURELY from
-# `evidence.jsonl` content - which `FAIL`/`issue` lines qualify - so it already states the correct
-# "N draft(s) expected" / "no draft is expected" fact on every append, with no dependency on this
-# script having run and no need for this script to trigger a rebuild. That keeps this script's own
-# write footprint to EXACTLY the output directory, which is what the self-test's find-diff (AC10)
-# checks.
+# UNTRUSTED TEXT. `interpretation` and an `expected.value` string are run output, not instructions.
+# Control characters are collapsed to one space and every such value is printed after a fixed
+# prefix on one line, so no value can open a heading (e.g. a second `## Status:` line) in the
+# draft. `interpretation` also feeds `## Touches` through `vt_touches` (stat-style tests only).
 #
-# FAIL-SAFE. `set -uo pipefail`, no `set -e`, a `jq` guard that skips rather than fails, `exit 0`
-# ALWAYS - an advisory producer must never break its caller (`/propose --from-verify`).
+# EXIT CONTRACT. A human-invoked `/propose` basis (no hook and no script calls it). `set -uo
+# pipefail`, no `set -e`. The WHOLE `verdict.json` is validated before the first write - including
+# the output directory's `mkdir -p` - so an unusable input leaves nothing behind:
+#   0  the file was usable: every FAIL criterion was drafted (zero FAIL criteria ⇒ zero drafts)
+#   1  the file was usable but at least one draft was refused by `pc_guarded_write` (its reason is
+#      on stderr); the other drafts were still written, each one whole (temp file + `mv -f`)
+#   2  unusable input or environment, NOTHING written, one stderr line naming the case:
+#      jq_missing | run_dir_missing | verdict_missing | verdict_malformed | unknown_schema_version
+#      | propose_common_missing | out_dir_unwritable
 #
 # Usage:  propose-from-verify.sh <run_dir>
 #   env PROPOSE_FROM_VERIFY_OUT_DIR=<path>   where candidates are written
 #                                            (default .supervisor/requirements/proposed)
-# Exit:   0 always.
+# Exit:   0 drafted; 1 a draft write was refused; 2 refused, nothing written.
 
 set -uo pipefail
 
 SELF="propose-from-verify"
+SUPPORTED_SCHEMA_VERSION=1
 say() { echo "$SELF: $1" >&2; }
-
-command -v jq >/dev/null 2>&1 || {
-  say "jq required - skipping, nothing proposed"
-  exit 0
+# refuse <reason> <detail> - the one-line refusal; nothing has been written when it is called.
+# The detail is flattened to one line (a run-dir path may carry a newline) with builtins only, so
+# the jq_missing refusal holds even on a PATH with no external tools at all.
+refuse() {
+  local d="${2//$'\n'/ }"
+  say "$1 - ${d//$'\r'/ }; nothing proposed"
+  exit 2
 }
 
-RUN_DIR="${1:-}"
-if [ -z "$RUN_DIR" ]; then
-  say "usage: propose-from-verify.sh <run_dir> - skipping, nothing proposed"
-  exit 0
-fi
-if [ ! -d "$RUN_DIR" ]; then
-  say "no such run dir '$RUN_DIR' - skipping, nothing proposed"
-  exit 0
-fi
-RUN_DIR_ABS="$(cd "$RUN_DIR" 2>/dev/null && pwd)"
-[ -n "$RUN_DIR_ABS" ] || { say "cannot resolve '$RUN_DIR' - skipping, nothing proposed"; exit 0; }
+command -v jq >/dev/null 2>&1 || refuse jq_missing "jq is required to read verdict.json"
 
-EVIDENCE="$RUN_DIR_ABS/evidence.jsonl"
-if [ ! -f "$EVIDENCE" ]; then
-  say "no evidence.jsonl under $RUN_DIR_ABS - skipping, nothing proposed"
-  exit 0
+RUN_DIR="${1:-}"
+[ -n "$RUN_DIR" ] || refuse run_dir_missing "usage: propose-from-verify.sh <run_dir>"
+[ -d "$RUN_DIR" ] || refuse run_dir_missing "no such run dir '$RUN_DIR'"
+RUN_DIR_ABS="$(cd "$RUN_DIR" 2>/dev/null && pwd)"
+[ -n "$RUN_DIR_ABS" ] || refuse run_dir_missing "cannot resolve '$RUN_DIR'"
+RUN_ID="$(basename "$RUN_DIR_ABS")"
+
+VERDICT="$RUN_DIR_ABS/verdict.json"
+[ -f "$VERDICT" ] || refuse verdict_missing "no verdict.json under $RUN_DIR_ABS"
+
+# Whole-file validation, BEFORE any write. Prints `ok` or `<reason>\t<detail>`. `-s` slurps, so a
+# file holding two JSON values (or none) is refused as malformed rather than half-read. Every field
+# this script reads is required to be PRESENT with the right type - a missing nullable key is not
+# silently read as null.
+VCHECK="$(jq -rs --argjson sv "$SUPPORTED_SCHEMA_VERSION" '
+  def nat: type == "number" and . == floor and . >= 0;
+  def oneof(a): . as $v | any(a[]; . == $v);
+  def bad(m): "verdict_malformed\t" + m;
+  def crit_err:
+    .key as $k | .value as $c
+    | if ($k | test("^c-[0-9a-f]{12}$")) | not then bad("criterion key \($k | tojson) is not c-<12 hex>")
+      elif ($c | type) != "object" then bad("criterion \($k) is not an object")
+      elif ($c | has("verdict")) | not then bad("criterion \($k) has no verdict")
+      elif ($c.verdict | oneof(["PASS", "FAIL", "BLOCKED", "NOT_VERIFIABLE"])) | not then bad("criterion \($k) verdict \($c.verdict | tojson) is not PASS|FAIL|BLOCKED|NOT_VERIFIABLE")
+      elif ($c | has("expected") and has("failed_step") and has("interpretation") and has("steps")) | not then bad("criterion \($k) lacks expected / failed_step / interpretation / steps")
+      elif ($c.expected != null) and (($c.expected | type) != "object"
+             or ($c.expected.op | oneof(["equals", "contains", "matches", "gt", "lt", "changed_from"])) | not
+             or ($c.expected.value | type | oneof(["string", "number", "boolean"])) | not)
+        then bad("criterion \($k) expected is neither null nor {op,value}")
+      elif ($c.failed_step != null) and (($c.failed_step | nat) | not) then bad("criterion \($k) failed_step is neither null nor a non-negative integer")
+      elif ($c.interpretation != null) and (($c.interpretation | type) != "string") then bad("criterion \($k) interpretation is neither null nor a string")
+      elif ($c.steps | type) != "array" then bad("criterion \($k) steps is not an array")
+      elif any($c.steps[]; (type != "object") or ((.step | nat) | not) or ((.type | type) != "string")) then bad("criterion \($k) has a step without an integer step and a string type")
+      else empty end;
+  if length != 1 or (.[0] | type) != "object" then bad("not exactly one JSON object")
+  else .[0]
+    | if has("schema_version") | not then bad("no schema_version")
+      elif .schema_version != $sv then "unknown_schema_version\tschema_version \(.schema_version | tojson), this reader supports \($sv)"
+      elif (.plan_sha256 | type) != "string" or ((.plan_sha256 | test("^[0-9a-f]{64}$")) | not) then bad("plan_sha256 missing or not 64 lowercase hex")
+      elif (.criteria | type) != "object" then bad("criteria missing or not an object")
+      else (first(.criteria | to_entries[] | crit_err) // "ok")
+      end
+  end
+' "$VERDICT" 2>/dev/null)" || VCHECK=""
+TAB="$(printf '\t')"
+[ -n "$VCHECK" ] || VCHECK="verdict_malformed${TAB}not valid JSON"
+if [ "$VCHECK" != "ok" ]; then
+  refuse "${VCHECK%%"$TAB"*}" "${VCHECK#*"$TAB"} in $VERDICT"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
@@ -92,26 +129,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 # header) that lets a mutation control point this script's sourcing at a mutated COPY of
 # propose-common.sh without touching this script's own text. Unset in every real run.
 COMMON="${PROPOSE_COMMON_SH:-$SCRIPT_DIR/propose-common.sh}"
-if [ ! -f "$COMMON" ]; then
-  say "sibling propose-common.sh not found at $COMMON - skipping, nothing proposed"
-  exit 0
-fi
+[ -f "$COMMON" ] || refuse propose_common_missing "sibling propose-common.sh not found at $COMMON"
 # shellcheck disable=SC1090
 . "$COMMON"
 
-OUT_DIR="${PROPOSE_FROM_VERIFY_OUT_DIR:-.supervisor/requirements/proposed}"
-mkdir -p "$OUT_DIR" 2>/dev/null || {
-  say "cannot create $OUT_DIR - skipping, nothing proposed"
-  exit 0
-}
-OUT_DIR_ABS="$(cd "$OUT_DIR" 2>/dev/null && pwd)"
-[ -n "$OUT_DIR_ABS" ] || { say "cannot resolve $OUT_DIR - skipping, nothing proposed"; exit 0; }
-
-RUN_ID="$(basename "$RUN_DIR_ABS")"
-
 # The planner's machine-read sections (parallel-automate/10): every draft carries `## Depends on`
-# (`none`) and `## Touches` — the repo-relative FILE paths its AC / issue text (and reason) names,
-# else `unknown`; lint-clean under `automate-helpers.sh plan-waves --lint`. The text is untrusted
+# (`none`) and `## Touches` — the repo-relative FILE paths its interpretation text names, else
+# `unknown`; lint-clean under `automate-helpers.sh plan-waves --lint`. The text is untrusted
 # evidence: it is only split on characters outside the Touches grammar and each token is passed to
 # stat-style tests under the checkout root (`cd -P` / `[ -L ]` / `[ -f ]`) — never opened, executed
 # or interpolated. A token must contain `/` or `.`, and carry no leading `/`, trailing `/`, `//`, or
@@ -148,103 +172,74 @@ vt_touches() {
       done
 }
 
-# run_start fields - ticket, branch, head_sha. Absent run_start ⇒ empty strings, never fabricated.
-RS_JSON="$(jq -c 'select(.event == "run_start")' "$EVIDENCE" 2>/dev/null | head -1)"
-TICKET_PATH="$(printf '%s' "$RS_JSON" | jq -r '.ticket_path // ""' 2>/dev/null)"
-BRANCH="$(printf '%s' "$RS_JSON" | jq -r '.branch // ""' 2>/dev/null)"
-HEAD_SHA="$(printf '%s' "$RS_JSON" | jq -r '.head_sha // ""' 2>/dev/null)"
-
-# One compact JSON record per qualifying line, each carrying its own 1-based PHYSICAL line number
-# in evidence.jsonl (jq's `to_entries` index + 1 - the file is one JSON object per line, guaranteed
-# by evidence-append's canonicalisation, so this is the same number a human would count with `nl`).
-#
-# Latest-per-ac_id (the VERIFY_EVIDENCE schema's own rule): group ac lines by ac_id, keep the one
-# with the greatest physical index, THEN filter to FAIL/REAL_BUG. issue lines carry no dedup rule -
-# every one is drafted, numbered by its 1-based ordinal among issue lines in file order.
-RECORDS="$(jq -cs '
-    def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
-    (to_entries | map(.value + {_i: .key})) as $L
-    | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $acs
-    | ([$L[] | select(.event == "issue")] | sort_by(._i) | to_entries | map(.value + {_n: (.key + 1)})) as $issues
-    | ([ $acs[] | select(.verdict == "FAIL" and .classification == "REAL_BUG")
-         | {kind: "ac", ac_id: .ac_id, line: (._i + 1), text: .text, reason: (.reason // ""),
-            artifacts: (.artifacts // [])} ]
-       + [ $issues[] | {kind: "issue", n: ._n, line: (._i + 1), text: .text,
-            severity: (.severity // ""), route: (.route // ""), artifacts: (.artifacts // [])} ])
-    | .[]
-  ' "$EVIDENCE" 2>/dev/null)"
+# One compact JSON record per FAIL criterion, in sorted criterion-id order. Every untrusted string
+# is flattened to one line here (control characters -> one space); `expected.value` is rendered
+# with `tojson`, so a string value stays quoted and unambiguous.
+RECORDS="$(jq -c '
+  def flat: gsub("[[:cntrl:]]+"; " ");
+  .plan_sha256 as $plan
+  | .criteria | to_entries | sort_by(.key)[]
+  | select(.value.verdict == "FAIL")
+  | .value.failed_step as $failed_step
+  | {id: .key, plan: $plan,
+     interp: (if .value.interpretation == null then "" else (.value.interpretation | flat) end),
+     expected: (if .value.expected == null then "none"
+                else "\(.value.expected.op) \(.value.expected.value | tojson | flat)" end),
+     fstep: (if $failed_step == null then "none"
+             else ([.value.steps[] | select(.step == $failed_step)] | first) as $s
+               | if $s == null then "\($failed_step) (type: not in steps[])"
+                 else "\($failed_step) (type: \($s.type | flat))" end
+             end)}
+' "$VERDICT" 2>/dev/null)" || refuse verdict_malformed "could not extract the FAIL criteria from $VERDICT"
 
 if [ -z "$RECORDS" ]; then
-  say "no REAL_BUG FAIL and no issue line in $EVIDENCE - nothing to propose (BLOCKED / NOT_VERIFIABLE / DISCOVERY_GAP / ENVIRONMENT_ISSUE are the run's problem, not the app's)"
+  say "no FAIL criterion in $VERDICT - nothing to propose (PASS / BLOCKED / NOT_VERIFIABLE are never drafted)"
   exit 0
 fi
 
+OUT_DIR="${PROPOSE_FROM_VERIFY_OUT_DIR:-.supervisor/requirements/proposed}"
+mkdir -p "$OUT_DIR" 2>/dev/null || refuse out_dir_unwritable "cannot create $OUT_DIR"
+OUT_DIR_ABS="$(cd "$OUT_DIR" 2>/dev/null && pwd)"
+[ -n "$OUT_DIR_ABS" ] || refuse out_dir_unwritable "cannot resolve $OUT_DIR"
+
 emitted=0
+refused=0
 while IFS= read -r rec; do
   [ -n "$rec" ] || continue
-  kind="$(printf '%s' "$rec" | jq -r '.kind')"
-  line_no="$(printf '%s' "$rec" | jq -r '.line')"
-  text="$(printf '%s' "$rec" | jq -r '.text')"
-  arts="$(printf '%s' "$rec" | jq -r '.artifacts[]?' 2>/dev/null)"
-  slug="$(pc_slugify "$text")"
-
-  if [ "$kind" = "ac" ]; then
-    ac_id="$(printf '%s' "$rec" | jq -r '.ac_id')"
-    reason="$(printf '%s' "$rec" | jq -r '.reason')"
-    touches="$(vt_touches "$text $reason")"
-    fname="verify-${RUN_ID}-${ac_id}-${slug}.md"
-    {
-      printf '# Proposed: verify FAIL %s (%s)\n\n' "$ac_id" "$RUN_ID"
-      printf 'evidence-set: %s/%s@L%s\n\n' "$RUN_ID" "$ac_id" "$line_no"
+  cid="$(printf '%s' "$rec" | jq -r '.id')"
+  plan="$(printf '%s' "$rec" | jq -r '.plan')"
+  interp="$(printf '%s' "$rec" | jq -r '.interp')"
+  expected="$(printf '%s' "$rec" | jq -r '.expected')"
+  fstep="$(printf '%s' "$rec" | jq -r '.fstep')"
+  touches="$(vt_touches "$interp")"
+  fname="verify-${RUN_ID}-${cid}.md"
+  if {
+      printf '# Proposed: verify FAIL %s (%s)\n\n' "$cid" "$RUN_ID"
+      printf 'evidence-set: %s/%s@plan:%s\n\n' "$RUN_ID" "$cid" "$plan"
       printf '## Depends on\n\nnone\n\n## Touches\n\n%s\n\n' "${touches:-unknown}"
       printf '## Problem\n\n'
-      printf '%s\n\n' "$text"
-      printf 'Observed verdict: FAIL (classification: REAL_BUG)\n'
-      [ -n "$reason" ] && printf 'Reason: %s\n' "$reason"
+      printf 'Criterion %s failed: %s\n\n' "$cid" "${interp:-none}"
+      printf 'Observed verdict: FAIL\n'
       printf '\n## Evidence\n\n'
-      printf -- '- evidence.jsonl line %s (event: ac, ac_id: %s)\n' "$line_no" "$ac_id"
-      if [ -n "$arts" ]; then
-        printf '%s\n' "$arts" | while IFS= read -r a; do [ -n "$a" ] && printf -- '- artifact: %s\n' "$a"; done
-      fi
-      [ -n "$TICKET_PATH" ] && printf -- '- ticket: %s\n' "$TICKET_PATH"
-      [ -n "$BRANCH" ] && printf -- '- branch: %s @ head_sha %s\n' "$BRANCH" "${HEAD_SHA:-unknown}"
-      printf -- '- classification: REAL_BUG\n'
+      printf -- '- source: verdict.json of run %s\n' "$RUN_ID"
+      printf -- '- criterion: %s\n' "$cid"
+      printf -- '- interpretation: %s\n' "${interp:-none}"
+      printf -- '- expected: %s\n' "$expected"
+      printf -- '- failed step: %s\n' "$fstep"
+      printf -- '- run: %s\n' "$RUN_ID"
+      printf -- '- plan_sha256: %s\n' "$plan"
       printf '\n## Suggested acceptance\n\n'
-      printf -- '- [ ] %s\n' "$text"
+      printf -- '- [ ] Criterion %s passes on a fresh run of the same plan: %s\n' "$cid" "${interp:-none}"
       printf '\n## Status: proposed\n'
-    } | pc_guarded_write "$OUT_DIR_ABS" "$SELF" "$fname" \
-      && { emitted=$((emitted + 1)); say "proposed $ac_id -> $OUT_DIR/$fname"; }
+    } | pc_guarded_write "$OUT_DIR_ABS" "$SELF" "$fname"; then
+    emitted=$((emitted + 1)); say "proposed $cid -> $OUT_DIR/$fname"
   else
-    n="$(printf '%s' "$rec" | jq -r '.n')"
-    severity="$(printf '%s' "$rec" | jq -r '.severity')"
-    route="$(printf '%s' "$rec" | jq -r '.route')"
-    touches="$(vt_touches "$text")"
-    fname="verify-${RUN_ID}-issue-${n}-${slug}.md"
-    {
-      printf '# Proposed: verify issue #%s (%s)\n\n' "$n" "$RUN_ID"
-      printf 'evidence-set: %s/issue-%s@L%s\n\n' "$RUN_ID" "$n" "$line_no"
-      printf '## Depends on\n\nnone\n\n## Touches\n\n%s\n\n' "${touches:-unknown}"
-      printf '## Problem\n\n'
-      printf '%s\n\n' "$text"
-      [ -n "$severity" ] && printf 'Severity: %s\n' "$severity"
-      [ -n "$route" ] && printf 'Route: %s\n' "$route"
-      printf '\n## Evidence\n\n'
-      printf -- '- evidence.jsonl line %s (event: issue)\n' "$line_no"
-      if [ -n "$arts" ]; then
-        printf '%s\n' "$arts" | while IFS= read -r a; do [ -n "$a" ] && printf -- '- artifact: %s\n' "$a"; done
-      fi
-      [ -n "$TICKET_PATH" ] && printf -- '- ticket: %s\n' "$TICKET_PATH"
-      [ -n "$BRANCH" ] && printf -- '- branch: %s @ head_sha %s\n' "$BRANCH" "${HEAD_SHA:-unknown}"
-      printf -- '- classification: n/a (issue lines carry no classification)\n'
-      printf '\n## Suggested acceptance\n\n'
-      printf -- '- [ ] Address: %s\n' "$text"
-      printf '\n## Status: proposed\n'
-    } | pc_guarded_write "$OUT_DIR_ABS" "$SELF" "$fname" \
-      && { emitted=$((emitted + 1)); say "proposed issue #$n -> $OUT_DIR/$fname"; }
+    refused=$((refused + 1))
   fi
 done <<EOF
 $RECORDS
 EOF
 
 say "$emitted candidate(s) written to $OUT_DIR - nothing was queued, and nothing will be until a human moves a file out of it"
+[ "$refused" -eq 0 ] || { say "$refused candidate(s) refused by the write guard (reasons above)"; exit 1; }
 exit 0

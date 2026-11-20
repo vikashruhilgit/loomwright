@@ -22,7 +22,7 @@ Shows all available agent commands and quick usage examples.
 - `build.md` — `/product-owner`, `/orchestrator`, `/code-reviewer`, `/commit`, `/red-team-reviewer`.
 - `knowledge.md` — `/dreaming`, `/capability-check`, `/insights`, `/obsidian`, `/handoff`, `/propose`.
 - `ops.md` — `/telemetry`, `/rules`, `/pr-postmortem`, `/autonomous`, `/backlog`, `/janitor`.
-- `more.md` — `/setup`, `/review-pr`, the QA Workflow Diagram.
+- `more.md` — `/setup`, `/review-pr`.
 - `guide.md` — Daily Workflow Example, Common Scenarios, Key Concepts, Tips & Tricks, Files & Directories, Getting Help, Keyboard Shortcuts, Summary.
 
 `/automate` is in this file in full; it has no part.
@@ -74,12 +74,6 @@ The Loomwright plugin provides **agent roles** (user-facing + internal) for your
 **Independent Auditor (1 agent):**
 ```
 4. Attack (Red Team Reviewer)  →  Finds real-world failures before production
-```
-
-**QA Pipeline (2 agents):**
-```
-5. Strategy (QA Strategist)  →  Risk classification + coverage targets
-6. Execute (QA Executor)     →  Discovery → Tests → Debate → QA_RESULT
 ```
 
 **Full Manual Workflow:**
@@ -160,7 +154,7 @@ See [../docs/command-parts/agent-help/knowledge.md](../docs/command-parts/agent-
 
 See [../docs/command-parts/agent-help/knowledge.md](../docs/command-parts/agent-help/knowledge.md).
 
-### 🌱 /propose — Candidate Work Items from the Churn Ledger, a /verify Run, the Feature Scorecard, and the Domain (Read-Only, Propose-Only)
+### 🌱 /propose — Candidate Work Items from the Churn Ledger, a Selvedge Run, the Feature Scorecard, and the Domain (Read-Only, Propose-Only)
 
 See [../docs/command-parts/agent-help/knowledge.md](../docs/command-parts/agent-help/knowledge.md).
 <!-- split:end ../docs/command-parts/agent-help/knowledge.md -->
@@ -238,10 +232,6 @@ See [../docs/command-parts/agent-help/ops.md](../docs/command-parts/agent-help/o
 See [../docs/command-parts/agent-help/more.md](../docs/command-parts/agent-help/more.md).
 
 ### 🩺 /review-pr — Standalone PR Review-and-Heal
-
-See [../docs/command-parts/agent-help/more.md](../docs/command-parts/agent-help/more.md).
-
-### QA Workflow Diagram
 
 See [../docs/command-parts/agent-help/more.md](../docs/command-parts/agent-help/more.md).
 <!-- split:end ../docs/command-parts/agent-help/more.md -->
@@ -403,10 +393,6 @@ See [../docs/command-parts/agent-help/guide.md](../docs/command-parts/agent-help
 See [../docs/command-parts/agent-help/guide.md](../docs/command-parts/agent-help/guide.md).
 
 ### Independent Auditor (Break Safely)
-
-See [../docs/command-parts/agent-help/guide.md](../docs/command-parts/agent-help/guide.md).
-
-### QA Pipeline (Test Automatically)
 
 See [../docs/command-parts/agent-help/guide.md](../docs/command-parts/agent-help/guide.md).
 <!-- split:end ../docs/command-parts/agent-help/guide.md -->

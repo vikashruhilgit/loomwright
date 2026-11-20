@@ -382,7 +382,6 @@ Row count: 441
 | `loomwright/scripts/test-result-validators.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-result-validators.sh` | `verify-run.sh` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-script-event-telemetry.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
-| `loomwright/scripts/test-send-telemetry-core.sh` | `QA_RESULT` | re-point | 12 | names a QA or verify schema 11b2 deletes |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `qa-executor` | re-point | 12 | names a removed QA agent |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
 | `loomwright/scripts/test-telemetry-threads.sh` | `validate-qa-result.py` | re-point | 11b2 | names a QA script 11b2 deletes |
@@ -472,6 +471,7 @@ Row count: 441
 | `loomwright/scripts/test-propose-common.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/test-rule-conformance-seam.sh` | `qa-executor:` | keep | 11b1 | pins the kept `qa-executor:` prefix in a classifier sentence; kept until Phase 3 item 09 or D18 |
 | `loomwright/scripts/test-run-ground-truth.sh` | `qa-executor:` | keep | 11b1 | pins the deferred `qa-executor` branch; kept until Phase 3 item 09 or D18 |
+| `loomwright/scripts/test-send-telemetry-core.sh` | `QA_RESULT` | keep | 11b1 | `no_qa_schema_scored` negative pin feeds the removed name to the core; 12 keeps it |
 | `loomwright/scripts/test-verify-provides.sh` | — | keep | 11b1 | self-test of the `outputs_verified` gate; not QA |
 | `loomwright/scripts/verify-provides.sh` | — | keep | 11b1 | the `outputs_verified` gate; not QA, only its name starts with `verify` (plan section 6, Phase 4) |
 | `loomwright/skills/quality-checklist/` | — | keep | 11b1 | general review checklist, not QA (plan section 6, Phase 4) |

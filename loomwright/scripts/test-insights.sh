@@ -675,14 +675,14 @@ mkdir -p "$TM/.supervisor/logs"
   printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}'
   printf '%s\n' '{not valid json'
   printf '%s\n' '42'
-  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tm","agent_type":"loomwright:qa-executor","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":42}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tm","agent_type":"loomwright:product-owner","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":42}'
   printf '%s\n' '{"event":"token_ledger"'
 } > "$TM/.supervisor/logs/sess-tm.jsonl"
 out="$( cd "$TM" && bash "$BUILD" 2>&1 )"; rc=$?
 tmd="$TM/.supervisor/insights/dashboard.md"
 [ "$rc" -eq 0 ] && ok "build exits 0 despite malformed token_ledger JSONL" || no "build rc != 0 (malformed TE, rc=$rc)"
 grep -qF "**Proxy (\`proxy: true\`):** 1" "$tmd" 2>/dev/null && ok "malformed lines skipped (1 proxy event counted)" || no "malformed skip counts wrong"
-grep -qF "| loomwright:qa-executor | 1 | 42 |" "$tmd" 2>/dev/null && ok "only the good proxy line aggregated" || no "good proxy line lost among malformed"
+grep -qF "| loomwright:product-owner | 1 | 42 |" "$tmd" 2>/dev/null && ok "only the good proxy line aggregated" || no "good proxy line lost among malformed"
 rm -rf "$TM"
 
 echo "== 23. Loop evidence — data path (runs + era bucket, strict clean counting) =="

@@ -5,7 +5,7 @@ The on-disk resume state of `migrate-branch-mode.sh` (the engine behind `/setup 
 of truth; this section restates it for readers and **must not coin keys the script does not write**.
 
 > ⚠️ **This is a plain-text STATE-FILE contract, NOT a hook-validated emitted result block** — same
-> precedent as `AUTOMATE_RUN` and `VERIFY_QUEUE`. No hook enumerates or validates it; the script writes
+> precedent as `AUTOMATE_RUN`. No hook enumerates or validates it; the script writes
 > and re-reads it on every step, and `migrate-branch-mode.sh state` prints it with the next step.
 
 **Format.** Plain `key=value` lines, one key per line, values single-line. **Last write wins**: a key

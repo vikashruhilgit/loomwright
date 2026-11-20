@@ -8,7 +8,7 @@
       "name": "loomwright",
       "source": "./loomwright",
       "description": "Loomwright is a plan-first, multi-agent development system for Claude Code. Launch Pad turns a goal into a reviewed brief; Supervisor executes it autonomously across parallel git worktrees with self-heal; dedicated agents cover code review, red-teaming, and standalone PR review-and-heal. 12 agent roles, 22 slash commands, 36 skills, 45 quality gate hooks. Full history in CHANGELOG.md.",
-      "version": "18.0.0",
+      "version": "18.1.0",
       "author": {
         "name": "vikash ruhil"
       },

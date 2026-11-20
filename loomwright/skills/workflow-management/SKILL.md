@@ -396,7 +396,7 @@ full reviewer subagent. Which to use depends on whether the check is mechanical:
   --main-session`, keyed on the payload's top-level `agent_type`).
 
 > v15.17.0 converted the five mechanical `SubagentStop` prompt validators (worker, execute-manager,
-> supervisor-runner, qa-executor, plan-reviewer) to command scripts. If you are adding a hook whose
+> supervisor-runner, plan-reviewer and a QA validator no longer in the plugin) to command scripts. If you are adding a hook whose
 > rules you could write as `if` statements, write a script — do not spend a model call on it.
 
 ## Alternative Parallel Execution: Agent Teams
