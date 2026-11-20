@@ -1,6 +1,6 @@
 # `/verify` runs inside the delivery loop in shadow
 
-## Status: pending
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12)
 
 Written 2026-11-09 against main `8ec200e` / v17.35.1 (the checkout was on a feature branch; every file cited was read at that main). Part of the `qa-evolution/` set (`00-overview.md`); the owner's standing rule applies — requirements are automated, implementation needs explicit approval.
 

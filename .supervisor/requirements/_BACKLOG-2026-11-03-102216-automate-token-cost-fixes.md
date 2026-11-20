@@ -39,6 +39,5 @@ The `fix_floor: HIGH` trial (`.supervisor/cost-trials/`) has post-trial results,
 shows full-model spawns after these items merge.
 
 ## Checklist
-- [ ] .supervisor/requirements/2026-11-03-102216-cheap-is-honoured-end-to-end-in-automate-runs.md
-- [ ] .supervisor/requirements/2026-11-03-102218-review-drain-honours-cheap.md
+- [ ] .supervisor/requirements/2026-11-05-192936-cheap-honoured-end-to-end.md  # 102216 and 102218 merged here 2026-11-05; run from _BACKLOG-2026-11-05-192934-merge-parked-and-cheap.md
 - [ ] .supervisor/requirements/2026-11-03-102217-stop-asking-about-summary-dismissed-finding-drafts.md

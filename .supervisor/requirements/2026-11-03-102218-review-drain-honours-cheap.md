@@ -1,6 +1,6 @@
 # The /review-pr drain honours --cheap
 
-## Status: pending
+## Status: parked (merged 2026-11-05 into 2026-11-05-192936-cheap-honoured-end-to-end.md as Part B — do not run this file)
 
 **Story: The /review-pr drain honours --cheap** (type: story)
 

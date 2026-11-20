@@ -1,6 +1,6 @@
 # Dismissed follow-ups 04a: Next-step and review-heal drivers, automate-helpers, backlog, token ledger
 
-## Status: pending
+## Status: parked — superseded by `.supervisor/requirements/dismissed-followups/12-bundle-04ab-drivers-and-gate-tooling.md` (owner decision 2026-10-30: 04a + 04b merged into one item; this file is kept as that file's Part source)
 
 > Bundled 2026-10-27 from the `/automate` dismissed-finding drafts in `.supervisor/requirements/proposed/`, all decided
 > **follow-up** by the owner and never acted on (sweep: `00-sweep-classification.md`; prevention: `01-follow-up-decision-becomes-tracked-work.md`).

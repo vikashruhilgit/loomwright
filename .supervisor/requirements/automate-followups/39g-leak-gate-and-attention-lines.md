@@ -199,3 +199,8 @@ take action based on your suggestions". Evidence from the same session's `ps` in
 - **Completed:** 2026-10-24T21:16:02Z
 - **Brief:** .supervisor/jobs/done/2026-10-24-af39g-leak-gate-and-attention-lines.md
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/692
+
+## Status: brief-shipped
+
+Job `.supervisor/jobs/done/2026-10-24-af39g-leak-gate-and-attention-lines.md` completed (reconciled from the job lifecycle, not self-reported).
+Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.

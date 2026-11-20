@@ -1,6 +1,6 @@
 # `/verify` can target a pull request's preview deployment
 
-## Status: pending
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12)
 
 Written 2026-11-09 against main `8ec200e` / v17.35.1. Part of the `qa-evolution/` set (`00-overview.md`); the owner's standing rule applies — requirements are automated, implementation needs explicit approval. **This item has no measured baseline:** no `/verify` run exists anywhere under `~/Documents/work`, no repo there carries `.agent/verify.json`, and the plugin has never read a GitHub deployment. Its evidence is a market-tracker gap row and a limit of story 04, nothing measured.
 

@@ -201,7 +201,7 @@ At dispatch time this checkout carries two unrelated uncommitted artifacts: a mo
 this slice actually creates or edits — never `git add -A`/`git add .` — and verify at FINALIZE that
 neither file entered the commit.
 
-## Status: done (PR #155, merge e44cfa8)
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12) — note: (PR #155, merge e44cfa8) was later discarded by the 2026-08-20 force-push of main
 - **Completed:** 2026-08-20T09:22:47Z
 - **Brief:** (engine-driven; see automate-2026-08-18-124023.md)
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/155

@@ -1,6 +1,6 @@
 # /verify walks mobile acceptance criteria through a device driver
 
-## Status: pending
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12)
 
 Source: owner request of 2026-11-10 ("Yes, add story 09" — electron first, then mobile through a driver seam), written against main `8ec200e` / v17.35.1. Absorbs the archived Batch C drafts D1 (`~/Documents/loomwright-archive/requirements/batchC/2026-10-30-081216-android-device-driver-for-verify-with-emulator-lifecycle-and-doctor.md`) and D2 (`…/2026-10-30-081216-verify-walks-android-acceptance-criteria-on-an-emulator.md`), deferred by the owner on 2026-11-09 (`_BACKLOG-2026-10-30-081216-batch-c-harness-self-improvement-goldfish-review-and-device-verify.md` line 24: "D1/D2 (Android /verify): DEFERRED, owner call; D1/D2 only if a project needs mobile verify"). Sibling of the qa-evolution stories in this folder; depends on `09a-verify-targets-an-electron-app-through-playwright.md`; index in `00-overview.md`.
 

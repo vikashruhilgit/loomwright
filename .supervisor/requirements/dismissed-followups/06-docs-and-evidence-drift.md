@@ -1,6 +1,6 @@
 # Dismissed follow-ups 06: Doc, header and evidence-file drift
 
-## Status: pending
+## Status: parked — superseded by 06a/06b/06c-docs-and-evidence-drift.md (split 2026-10-30: 79 files was over the 30-file right-size limit; F229 dropped as fixed; this file is kept as their source)
 
 > Bundled 2026-10-27 from the `/automate` dismissed-finding drafts in `.supervisor/requirements/proposed/`, all decided
 > **follow-up** by the owner and never acted on (sweep: `00-sweep-classification.md`; prevention: `01-follow-up-decision-becomes-tracked-work.md`).

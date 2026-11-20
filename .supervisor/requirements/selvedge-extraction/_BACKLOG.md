@@ -180,4 +180,4 @@ as one reviewable PR. **Slice 01 is the exception:** it requires an operator to 
 locally and spawn an agent. It cannot be satisfied by static reading and must not be marked done on
 the strength of a code trace.
 
-## Status: pending
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12)

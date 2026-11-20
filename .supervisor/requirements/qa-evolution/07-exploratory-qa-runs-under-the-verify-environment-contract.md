@@ -1,6 +1,6 @@
 # Exploratory QA runs under the verify environment contract
 
-## Status: pending
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12)
 
 Source: re-validation of `loomwright/docs/QA_SYSTEM_BLUEPRINT.md` against main `8ec200e` / v17.35.1 (2026-11-09). Sibling of the qa-evolution stories in this folder: `01-qa-session-accounting-is-derived-never-agent-written.md`, `02-qa-findings-reach-a-consumer-propose-from-qa.md`, `03-the-qa-lane-earns-its-cost-on-the-feature-scorecard.md`, `04-verify-runs-inside-the-delivery-loop-in-shadow.md`, `05-verify-can-target-a-pull-requests-preview-deployment.md`, `08-the-qa-blueprint-describes-the-two-lane-qa-system.md`, `operator-run/06-dogfood-qa-accounting-and-verify-on-a-real-app.md` (`00-overview.md` was still being written when this was drafted).
 

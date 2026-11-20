@@ -1,6 +1,6 @@
 # QA findings reach a consumer: /propose --from-qa
 
-## Status: pending
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12)
 
 Source: `/product-owner` qa-evolution set, 2026-11-09, read against main `8ec200e` / v17.35.1. Plan doc: `00-overview.md` in this folder.
 

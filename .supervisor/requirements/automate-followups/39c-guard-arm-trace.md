@@ -139,3 +139,9 @@ the spawn shape that bypassed it). Any change to `guard-test-integrity.sh`'s den
   tool-call disarm, `arm` exits 3 on no id).
 
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-28T09:06:31Z
+- **Brief:** .supervisor/jobs/done/2026-10-28-af39c-guard-arm-trace.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/741

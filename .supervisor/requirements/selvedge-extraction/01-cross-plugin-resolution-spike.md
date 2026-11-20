@@ -211,7 +211,7 @@ Nothing else in this slice changes: still no `selvedge/` scaffold, no QA asset m
 changes, and `.claude-plugin/marketplace.json` must be **unchanged at merge** — the probe marketplace
 is a throwaway registered by path outside this repo's manifest, not an entry added to it.
 
-## Status: done (PR #153, merge 97ff83d)
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12) — note: (PR #153, merge 97ff83d) was later discarded by the 2026-08-20 force-push of main
 - **Completed:** 2026-08-20T06:11:44Z
 - **Brief:** (engine-driven; see automate-2026-08-18-124023.md)
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/153

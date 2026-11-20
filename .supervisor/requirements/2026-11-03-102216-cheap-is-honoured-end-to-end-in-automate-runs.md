@@ -1,6 +1,6 @@
 # --cheap survives resume in sequential /automate runs
 
-## Status: pending
+## Status: parked (merged 2026-11-05 into 2026-11-05-192936-cheap-honoured-end-to-end.md as Part A — do not run this file)
 
 **Story: --cheap survives resume in sequential /automate runs** (type: story)
 

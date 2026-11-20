@@ -179,7 +179,7 @@ agent-memory store rename (06).
 - Rejected alternatives are recorded alongside each decision, in the repo
 
 
-## Status: done (PR #156, merge 742a6df)
+## Status: done_with_escalation — SUPERSEDED by qa-split/00-plan.md (owner approved 2026-11-12) — note: (PR #156, merge 742a6df) was later discarded by the 2026-08-20 force-push of main
 - **Completed:** 2026-08-20T11:21:35Z
 - **Brief:** .supervisor/jobs/failed/2026-08-20-decouple-loomwright-side-qa-couplings.md (brief file landed in failed/ although PR #156 merged)
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/156
