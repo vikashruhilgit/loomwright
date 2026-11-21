@@ -172,7 +172,7 @@ up_variant() {
   rm -rf "$work/app" && mkdir -p "$work" && cp -R "$dir" "$work/app" || fail "cannot copy $dir"
   step "node app-server.mjs serve"
   rm -f "$work/servers.json"
-  nohup node "$work/app/app-server.mjs" serve "$work/servers.json" >"$work/app.log" 2>&1 &
+  nohup node "$work/app/app-server.mjs" serve "$work/servers.json" </dev/null >"$work/app.log" 2>&1 &
   echo "$!" >"$work/app.pid"
   while [ ! -s "$work/servers.json" ] && [ "$i" -lt 150 ]; do i=$((i + 1)); sleep 0.2; done
   port="$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).app.port))' "$work/servers.json" 2>/dev/null)"
@@ -295,8 +295,10 @@ EOF
   if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then fail "port $PORT is already in use (not by this target); free it first"; fi
   [ -x "$clone/node_modules/.bin/next" ] || fail "node_modules/.bin/next is missing after npm ci"
   rm -rf "$clone/.next"
-  (cd "$clone" && NEXT_FONT_GOOGLE_MOCKED_RESPONSES="$work/font-mocks.js" NEXT_TELEMETRY_DISABLED=1 nohup ./node_modules/.bin/next dev -p "$PORT" >"$work/next-dev.log" 2>&1 &
-    echo "$!" >"$work/next.pid")
+  # The background job's own shell must not keep this script's stdout open: the harness reads it to
+  # the end, and would wait for the dev server to exit.
+  (cd "$clone" && NEXT_FONT_GOOGLE_MOCKED_RESPONSES="$work/font-mocks.js" NEXT_TELEMETRY_DISABLED=1 nohup ./node_modules/.bin/next dev -p "$PORT" </dev/null >"$work/next-dev.log" 2>&1 &
+    echo "$!" >"$work/next.pid") </dev/null >/dev/null 2>&1
   i=0; code=000
   while [ "$i" -lt "${SELVEDGE_EVAL_START_TIMEOUT_S:-900}" ]; do
     code="$(curl -s -o /dev/null -m 120 -w '%{http_code}' "http://localhost:$PORT/login" 2>/dev/null || true)"
