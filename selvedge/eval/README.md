@@ -27,6 +27,10 @@ which the owner writes in a separate session; `count` shows the measured values.
 | `held-out/manifest.sha256` | `<sha256>  <relative path>`, one line per file in the outside folder, sorted |
 | `real-bugs.json` | `{"schema_version": 1, "entries": [...]}`, one entry per real bug tried |
 | `eval-set.mjs` | the tooling (below) |
+| `harness.mjs` | the eval harness: runs Selvedge on one side of the set and scores it ([The eval harness](#the-eval-harness)) |
+| `stats.mjs` | the harness's arithmetic: rates, Clopper-Pearson intervals, the gate, the two-revision rule (no I/O) |
+| `target-driver.sh` | brings one target (a commit, or a planted variant) up on localhost for the harness |
+| `results.json` | every report the harness wrote, one per run; the only place its rates live |
 | `plugin-eval-limits.md` | what `claude plugin eval` can and cannot do for this set |
 
 Outside the repository, in the **outside folder** `$SELVEDGE_EVAL_HELD_OUT` (default
@@ -125,6 +129,92 @@ be committed, even briefly), then run `split <file>`, `manifest write`, `check-l
 
 These are the eval tool's own reasons; the CLI's verdict and config reasons are listed in
 `selvedge/README.md`.
+
+## The eval harness
+
+`harness.mjs` runs the normal Selvedge path on every case of one side of the set: plan (the
+default `claude -p` planner, or `SELVEDGE_PLANNER`), freeze, the model-free `selvedge run`, and the
+verdict. It then scores each criterion's verdict against its known answer, appends one report to
+`results.json`, and prints the rates and the gate line. The harness writes no rate anywhere else:
+`selvedge/README.md` shows the latest reports in a block that `harness.mjs readme` generates from
+`results.json`, and `selvedge/tests/test-eval-harness.sh` fails when the two differ.
+
+| Command | What it does |
+|---|---|
+| `node selvedge/eval/harness.mjs run --set held-out\|tuning [--planner-repeats N] [--runner-repeats N] [--work-dir <dir> [--resume]]` | checks the set (held-out: `eval-set.mjs count`, so validate, `manifest check` and the answers check; tuning: `validate`), stopping on any problem before a target is brought up or a file is written; then brings each target up once, plans and runs its cases, takes it down, and appends the report |
+| `node selvedge/eval/harness.mjs score --work-dir <dir>` | scores a finished work dir again and appends that report |
+| `node selvedge/eval/harness.mjs readme` | rewrites the results block in `selvedge/README.md` from `results.json` (never edit the block by hand) |
+| `node selvedge/eval/harness.mjs check-readme` | exits 1 when that block is not what `readme` would write |
+
+All take `--repo <dir>`, `--results <file>` and (readme, check-readme) `--readme <file>`.
+
+**Repeats.** `--planner-repeats N` makes N fresh plans per target: plan 1 gives the main verdicts,
+plans 2 to N only feed the planner-flip number. `--runner-repeats N` runs plan 1 N times in all (the
+first run, then `selvedge run --replay` of it): runs 2 to N only feed the runner-flip number. A case
+flips when its verdicts across those repeats are not all equal. The main rates' denominators are the
+case counts, whatever the repeats.
+
+**Work dir and targets.** Every run folder, workspace, clone and log lives in the work dir, outside
+this repository (default under `${TMPDIR}`; a work dir inside the repository is refused). A run
+that stops part-way keeps each finished target; `--work-dir <dir> --resume` finishes it with the same
+set, engine, repeats and cases. Each target is brought up by `target-driver.sh` (or the command in
+`SELVEDGE_EVAL_TARGET_DRIVER`): `up <target.json> <dir>` prints `origin=<url>` and `root=<dir>`,
+`down <dir>` takes it down, and `stop <dir>` runs once at the end. For a commit it carries out the
+`setup` lines `real-bugs.json` recorded for that commit, each as a known step: a scratch clone
+(`SELVEDGE_EVAL_CLONE_DIR`), `supabase/config.toml` copied read-only from the owner's checkout
+(`SELVEDGE_EVAL_SM_CHECKOUT`) and patched to project id `selvedge-eval-sm` and ports 553xx, `npm ci`,
+`supabase db reset --local`, any fixture SQL, `.env.local`, the Google Fonts stylesheets, and a fresh
+`next dev -p 3471`. A setup line it does not know, or a step that fails, stops the run with
+`target_unavailable` and the step named; a target is never scored part-way. A planted variant is
+served with `node app-server.mjs serve`. Each target's workspace is a git repo in the work dir
+holding `criteria.json` and a `selvedge.json` that allows only the driver's origin, and
+`selvedge/bin/selvedge` runs there (`SELVEDGE_EVAL_SELVEDGE_BIN` replaces it; Playwright comes from
+`SELVEDGE_PLAYWRIGHT_MODULE`). `SELVEDGE_PLANNER_TOKEN_BUDGET` is removed from every selvedge child's
+environment: a plan over budget would be BLOCKED after its tokens were spent.
+
+**Scoring.** Abstention = (BLOCKED + NOT_VERIFIABLE) ÷ every criterion scored. False-PASS = PASS on
+a known-FAIL case ÷ every known-FAIL case. False-FAIL = FAIL on a known-PASS case ÷ every
+known-PASS case. Each comes with its numerator, denominator and exact Clopper-Pearson 95% interval
+(two-sided). A plan that does not freeze makes each of that target's criteria BLOCKED with the
+planner's reason (`planner_failed`, `plan_invalid`), and a run that leaves no `verdict.json` makes
+them BLOCKED with its reason: Selvedge gave no verdict, so they count as abstention. A criterion
+whose `evidence_class` in `verdict.json` is `model-judged` is counted in the report's own
+`model_judged` section and never in those rates. A `budget_exceeded` BLOCKED is shown on its own line
+as well as in abstention.
+
+**The Phase 3 gate** (`stats.mjs`, `GATE`): `met` only on a held-out report whose known-FAIL
+denominator is at least `FLOORS.held_out_fail` (from `eval-set.mjs`), with a false-PASS point
+estimate at most `GATE.false_pass_max` and abstention at most `GATE.abstention_max`; otherwise `not
+met`, naming every condition that failed. A tuning report has no gate verdict. **Two-revision rule:**
+when the latest held-out reports (each at or above the floor) of `GATE.revisions_before_review`
+distinct engine versions all miss the gate, the harness prints that the owner should stop and run
+the section 8 review early. Nothing in the harness raises the abstention cap or loosens the gate.
+
+**`results.json`** is `{"schema_version": 1, "reports": [...]}`. Each report holds `set`, `engine`
+(`selvedge_version` from `plugin.json`, `planner_model` from `SELVEDGE_PLANNER_MODEL` or the
+planner's default, or `SELVEDGE_PLANNER` for a custom planner), `ts`, `cases`, `rates`
+(`false_pass`, `false_fail`, `abstention`, each `{numerator, denominator, rate, ci95: {lower,
+upper}}`), `verdict_counts`, `abstention_reasons`, `budget_exceeded`, `model_judged`, `per_group`
+and `per_app` (counts per `group_id` and per app: the target repo, or `sample-app` for a variant),
+`repeatability` (`runner` and `planner`, each with `repeats`, `cases`, `flipped` and `flips`, an
+array of `{case_id, verdicts}`), `runs` (planner tokens and duration per run), `totals` and `gate`
+(`{verdict: "met" | "not met", failed}`, or null for tuning). It carries no `answer` key and no map
+of case ids to PASS or FAIL, so `check-leak` passes on it. When the planted held-out set lands, check
+the per-group counts and flip lists of planted groups for answer exposure before committing a report.
+
+### Harness reason tokens
+
+Printed `harness: FAIL <token>: <detail>` on stderr (exit 1). A failing set check prints
+`eval-set.mjs`'s own lines and tokens (above) instead.
+
+| Token | Meaning |
+|---|---|
+| `target_unavailable` | the target driver could not bring a target up (the step it stopped at is named); the run stops, nothing is scored |
+| `results_invalid` | `results.json` is missing (for `readme`) or not `{"schema_version": 1, "reports": [...]}` with a set, engine and rates on every report |
+| `readme_results_out_of_sync` | the results block in `selvedge/README.md` is not what `readme` would write from `results.json` (or a block exists with no results file) |
+| `readme_markers_missing` | `selvedge/README.md` has one block marker without the other, or no markers and no "Measuring Selvedge" section to put them in |
+| `work_dir_invalid` | the work dir is inside the repository, already holds a run (without `--resume`), or holds a run of another set, engine, repeat count or case list |
+| `run_incomplete` | `score` (or the end of `run`) found a target with no finished result in the work dir |
 
 ## The planted-defect author session (open)
 
