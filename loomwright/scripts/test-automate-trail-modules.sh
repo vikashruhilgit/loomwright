@@ -9,9 +9,12 @@
 #      module, and invoking the arm (no args, empty stdin, empty temp cwd, failing git/gh stubs
 #      on PATH) prints something and never `unknown subcommand` / `command not found`; every
 #      subcommand the header's `# Subcommands:` block documents is routed (never `unknown`).
-#   2. `--help`, `-h`, no-arg and an unknown subcommand give the same stdout, stderr and exit
-#      code as the last single-file automate-trail.sh (the BASE blob below, read with
-#      `git show`; a named SKIP where that commit is not in the clone, e.g. a shallow checkout).
+#   2. on the SPLIT commit's tree, `--help`, `-h`, no-arg and an unknown subcommand give the same
+#      stdout, stderr and exit code as the last single-file automate-trail.sh (the BASE blob
+#      below, read with `git show`; a named SKIP where either commit is not in the clone, e.g. a
+#      shallow checkout), with a mutation control; it reads SPLIT, never this checkout, for the
+#      reason check 5 gives. This checkout: --help == -h == no-arg, exit 0, empty stderr, and
+#      exactly the bundle's `#   <sub>` lines.
 #   3. a stray file in automate-trail.d/ is never sourced (modules are listed, never globbed).
 #   4. a copy with ONE module removed (each in turn), or unreadable, exits non-zero with the
 #      loader's own message `automate-trail: missing module file: automate-trail.d/<name>.sh`.
@@ -92,6 +95,17 @@ verbatim_ok() {
   cmp -s "$T/vb.restored" "$T/base.sh"
 }
 
+# split_copy — the SPLIT commit's entry point + the modules it sources, from git; prints its path
+split_copy() {
+  local c m; c="$(mktemp -d "$T/split.XXXXXX")"; mkdir -p "$c/automate-trail.d"
+  git -C "$REPO" show "$SPLIT:loomwright/scripts/automate-trail.sh" > "$c/automate-trail.sh" 2>/dev/null \
+    && [ -s "$c/automate-trail.sh" ] || return 1
+  for m in $(mods_of "$c/automate-trail.sh"); do
+    git -C "$REPO" show "$SPLIT:loomwright/scripts/automate-trail.d/$m.sh" > "$c/automate-trail.d/$m.sh" 2>/dev/null \
+      && [ -s "$c/automate-trail.d/$m.sh" ] || return 1
+  done
+  echo "$c/automate-trail.sh"
+}
 MODS="$(mods_of "$E")"; NMOD="$(grep -c . <<<"$MODS")"
 
 echo "== 1. every case-table arm reaches its function (real entry point)"
@@ -130,26 +144,60 @@ if grep -qF "automate-trail: unknown subcommand: no-such-subcommand" <<<"$PC"; t
   ok "positive control: an unlisted subcommand IS reported unknown (the probe can see the failure)"
 else no "positive control: an unlisted subcommand was not reported unknown"; fi
 
-echo "== 2. --help / -h / no-arg / unknown equal the single-file base ($BASE)"
+echo "== 2. --help / -h / no-arg / unknown: the split commit equals the single-file base ($BASE); this checkout is self-consistent"
+# The equality is a property of the SPLIT commit (the move must not change what --help prints), so it
+# is checked on SPLIT's tree, never this checkout's: a later fix edits a help line on purpose (a new
+# flag in a subcommand's signature), and comparing this checkout to the base turned this check red on
+# every full clone while CI's shallow clone skipped it — the lesson check 5 already records.
 REPO="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 HAVE_BASE=0
 if [ -n "$REPO" ] && git -C "$REPO" cat-file -e "$BASE:$BASE_PATH" 2>/dev/null \
    && git -C "$REPO" show "$BASE:$BASE_PATH" > "$T/base.sh" 2>/dev/null && [ -s "$T/base.sh" ]; then
   HAVE_BASE=1
 fi
-if [ "$HAVE_BASE" = 0 ]; then
-  skp "base blob $BASE:$BASE_PATH not in this clone (shallow checkout?) — the --help/unknown equality legs are not run"
-else
-  mkdir -p "$T/basedir"; cp "$T/base.sh" "$T/basedir/automate-trail.sh"
+# help_equal <entry> — 0 iff <entry> and the base give the same stdout, stderr and exit for every
+# probe (and print something). Every probe runs; EACH differing one is named in $HE_MSG, so a
+# regression that breaks several probes is diagnosed in one red run, as the per-probe check was.
+help_equal() {
+  local a brc nrc; HE_MSG=""
   for a in --help -h "" no-such-subcommand; do
     ( cd "$T/cwd" && bash "$T/basedir/automate-trail.sh" $a >"$T/bo" 2>"$T/be" ); brc=$?
-    ( cd "$T/cwd" && bash "$E" $a >"$T/no" 2>"$T/ne" ); nrc=$?
-    if [ "$brc" = "$nrc" ] && cmp -s "$T/bo" "$T/no" && cmp -s "$T/be" "$T/ne" && { [ -s "$T/no" ] || [ -s "$T/ne" ]; }; then
-      ok "'${a:-<no-arg>}': stdout ($(wc -l <"$T/no" | tr -d ' ') lines), stderr and exit $nrc equal the base"
-    else no "'${a:-<no-arg>}': differs from the base (rc $brc vs $nrc; stdout $(wc -l <"$T/bo" | tr -d ' ') vs $(wc -l <"$T/no" | tr -d ' ') lines; stderr '$(head -1 "$T/be")' vs '$(head -1 "$T/ne")')"; fi
+    ( cd "$T/cwd" && bash "$1" $a >"$T/no" 2>"$T/ne" ); nrc=$?
+    if ! { [ "$brc" = "$nrc" ] && cmp -s "$T/bo" "$T/no" && cmp -s "$T/be" "$T/ne" && { [ -s "$T/no" ] || [ -s "$T/ne" ]; }; }; then
+      HE_MSG="${HE_MSG:+$HE_MSG; }'${a:-<no-arg>}': rc $brc vs $nrc, stdout $(wc -l <"$T/bo" | tr -d ' ') vs $(wc -l <"$T/no" | tr -d ' ') lines, first diff: $(diff "$T/bo" "$T/no" | sed -n 2p)"
+    fi
   done
+  [ -z "$HE_MSG" ]
+}
+if [ "$HAVE_BASE" = 0 ]; then
+  skp "base blob $BASE:$BASE_PATH not in this clone (shallow checkout?) — the split-equality legs are not run"
+elif ! SE2="$(split_copy)"; then
+  skp "split commit $SPLIT not in this clone (shallow checkout?) — the split-equality legs are not run"
+else
+  mkdir -p "$T/basedir"; cp "$T/base.sh" "$T/basedir/automate-trail.sh"
+  if help_equal "$SE2"; then ok "split $SPLIT: --help, -h, no-arg and an unknown subcommand equal the base (stdout, stderr, exit)"
+  else no "split $SPLIT differs from the base: $HE_MSG"; fi
+  # Mutation control: one documented help line in a split module changed ⇒ the comparison fails.
+  C="$(split_copy)"; m="$(grep -lE '^#   [a-z]' "$(dirname "$C")"/automate-trail.d/*.sh 2>/dev/null | head -1)"
+  if [ -n "$m" ]; then
+    awk '!d && /^#   [a-z]/ { sub(/$/, " [--mutant]"); d = 1 } { print }' "$m" > "$m.t" && mv "$m.t" "$m"
+  fi
+  if [ -z "$m" ] || ! grep -q -- '--mutant' "$m" || ! bash -n "$m"; then
+    no "split help mutant: not built (no module help line, awk matched nothing, or bash -n failed)"
+  elif help_equal "$C"; then no "split help mutant (one module help line changed) still compared equal — the comparison is vacuous"
+  else ok "split help mutant (one module help line changed) ⇒ the comparison fails ($HE_MSG)"; fi
 fi
-
+# This checkout: --help, -h and no-arg print the same non-empty help, exit 0, nothing on stderr; an
+# unknown subcommand names itself on stderr. Durable properties — never "equal to an old blob".
+( cd "$T/cwd" && bash "$E" --help >"$T/h1" 2>"$T/h1e"; echo $? >"$T/h1r"; bash "$E" -h >"$T/h2" 2>/dev/null; bash "$E" >"$T/h3" 2>/dev/null )
+if [ -s "$T/h1" ] && [ ! -s "$T/h1e" ] && [ "$(cat "$T/h1r")" = 0 ] && cmp -s "$T/h1" "$T/h2" && cmp -s "$T/h1" "$T/h3" \
+   && [ "$(cat "$T/h1")" = "$(bundle_of "$E" | grep -E '^#   [a-z]' | sed 's/^#   /  /')" ]; then
+  ok "this checkout: --help == -h == no-arg ($(wc -l <"$T/h1" | tr -d ' ') lines, exit 0, empty stderr), and it is exactly the bundle's '#   <sub>' lines"
+else no "this checkout's help: rc $(cat "$T/h1r") stderr '$(head -1 "$T/h1e")'; --help/-h/no-arg/bundle disagree"; fi
+( cd "$T/cwd" && bash "$E" no-such-subcommand >"$T/u1" 2>"$T/u1e"; echo $? >"$T/u1r" )
+if [ ! -s "$T/u1" ] && [ "$(cat "$T/u1e")" = "automate-trail: unknown subcommand: no-such-subcommand" ] && [ "$(cat "$T/u1r")" = 0 ]; then
+  ok "this checkout: an unknown subcommand names itself on stderr only (stdout empty, exit 0)"
+else no "this checkout's unknown subcommand: rc $(cat "$T/u1r") stdout '$(head -1 "$T/u1")' stderr '$(head -1 "$T/u1e")'"; fi
 echo "== 3. no glob: a stray module file is never sourced"
 C="$(mk_copy)"
 printf 'echo STRAY_MODULE_SOURCED\n' > "$(dirname "$C")/automate-trail.d/zz-stray.sh"
@@ -185,17 +233,6 @@ if [ "$rc" -ne 0 ] && grep -qxF "$MISSING_MSG/$m.sh" <<<"$err"; then ok "_trail_
 else no "_trail_bundle without $m.sh ⇒ rc=$rc err='$err'"; fi
 
 echo "== 5. verbatim move: the stripped bundle equals the base except the one --help line"
-# split_copy — the SPLIT commit's entry point + the modules it sources, from git; prints its path
-split_copy() {
-  local c m; c="$(mktemp -d "$T/split.XXXXXX")"; mkdir -p "$c/automate-trail.d"
-  git -C "$REPO" show "$SPLIT:loomwright/scripts/automate-trail.sh" > "$c/automate-trail.sh" 2>/dev/null \
-    && [ -s "$c/automate-trail.sh" ] || return 1
-  for m in $(mods_of "$c/automate-trail.sh"); do
-    git -C "$REPO" show "$SPLIT:loomwright/scripts/automate-trail.d/$m.sh" > "$c/automate-trail.d/$m.sh" 2>/dev/null \
-      && [ -s "$c/automate-trail.d/$m.sh" ] || return 1
-  done
-  echo "$c/automate-trail.sh"
-}
 if [ "$HAVE_BASE" = 0 ]; then
   skp "base blob not in this clone — the verbatim-move legs are not run"
 elif ! SE="$(split_copy)"; then
