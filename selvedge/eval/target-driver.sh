@@ -43,7 +43,10 @@ set -uo pipefail
 
 PROJECT_ID="selvedge-eval-sm"
 PORT=3471
-CHROME_UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+# A current desktop Chrome: for an older one Google serves some families (Archivo, for one) as
+# fonts.gstatic.com/l/font?kit=… files, whose query Turbopack refuses ("next/font/google queries have
+# exactly one entry"), and the page answers 500.
+CHROME_UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 STEP="start"
 
 step() { STEP="$1"; echo "target-driver: step: $1" >&2; }
@@ -158,7 +161,10 @@ for (const f of files) {
   }
 }
 const mocks = {};
-for (const u of urls) mocks[u] = execFileSync('curl', ['-fsSL', '--max-time', '60', '-A', ua, u], { encoding: 'utf8' });
+for (const u of urls) {
+  mocks[u] = execFileSync('curl', ['-fsSL', '--max-time', '60', '-A', ua, u], { encoding: 'utf8' });
+  if (mocks[u].includes('fonts.gstatic.com/l/')) throw new Error(`${u} was served as fonts.gstatic.com/l/ files, which Turbopack refuses`);
+}
 fs.writeFileSync(out, `module.exports = ${JSON.stringify(mocks, null, 2)};\n`);
 process.stdout.write(`${urls.size}\n`);
 EOF
