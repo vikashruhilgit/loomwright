@@ -232,7 +232,20 @@ fs.writeFileSync(process.argv[2], t);' "$SELVEDGE_EVAL_SM_CHECKOUT/supabase/conf
     supabase start --workdir "$clone" -x studio,imgproxy,logflare,vector,edge-runtime >"$work/supabase-start.log" 2>&1 || fail "supabase start: $(tail -n 3 "$work/supabase-start.log")"
   fi
   step "supabase db reset --local"
-  supabase db reset --local --workdir "$clone" >"$work/db-reset.log" 2>&1 || fail "supabase db reset: $(grep -v '^$' "$work/db-reset.log" | tail -n 3 | tr '\n' ' ')"
+  # `db reset` applies the migrations and seed.sql, restarts the storage, auth and realtime
+  # containers, then seeds the [storage.buckets] through the API gateway. The gateway (kong) keeps
+  # the restarted storage container's old address and answers 502, so that last call fails although
+  # the database is done. Only in that case: restart this project's own gateway, then run the CLI's
+  # own last step, `supabase seed buckets`. Any other failure stops the run.
+  if ! supabase db reset --local --workdir "$clone" >"$work/db-reset.log" 2>&1; then
+    grep -q 'Restarting containers' "$work/db-reset.log" && grep -q 'Error status 502' "$work/db-reset.log" \
+      || fail "supabase db reset: $(grep -v '^$' "$work/db-reset.log" | tail -n 3 | tr '\n' ' ')"
+    echo "target-driver: db reset applied the database but the gateway answered 502 on its bucket seeding; restarting supabase_kong_$PROJECT_ID, then supabase seed buckets" >&2
+    docker restart "supabase_kong_$PROJECT_ID" >"$work/kong-restart.log" 2>&1 || fail "docker restart supabase_kong_$PROJECT_ID: $(tail -n 2 "$work/kong-restart.log")"
+    i=0
+    while [ "$i" -lt 60 ] && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:55321/storage/v1/bucket" 2>/dev/null)" = 502 ]; do i=$((i + 2)); sleep 2; done
+    supabase seed buckets --workdir "$clone" >"$work/seed-buckets.log" 2>&1 || fail "supabase seed buckets: $(grep -v '^$' "$work/seed-buckets.log" | tail -n 3 | tr '\n' ' ')"
+  fi
   supabase status -o env --workdir "$clone" >"$work/status.env" 2>/dev/null || fail "supabase status -o env failed"
   db_url="$(sed -n 's/^DB_URL="\(.*\)"$/\1/p' "$work/status.env")"
   api_url="$(sed -n 's/^API_URL="\(.*\)"$/\1/p' "$work/status.env")"
