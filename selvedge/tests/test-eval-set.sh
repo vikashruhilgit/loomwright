@@ -49,7 +49,7 @@ run() {
 }
 # expect_fail <label> <token> [detail] — the last run exited 1 and named <token> (and <detail>).
 expect_fail() {
-  if [ "$rc" -eq 1 ] && printf '%s\n' "$err" | grep -F -- "FAIL $2" | grep -qF -- "${3:-}"; then ok "$1"; else ko "$1 (rc=$rc, want '$2${3:+ … $3}'): $err"; fi
+  if [ "$rc" -eq 1 ] && grep -qF -- "${3:-}" < <(grep -F -- "FAIL $2" <<<"$err"); then ok "$1"; else ko "$1 (rc=$rc, want '$2${3:+ … $3}'): $err"; fi
 }
 expect_ok() { if [ "$rc" -eq 0 ]; then ok "$1"; else ko "$1 (rc=$rc): $err"; fi; }
 
@@ -133,10 +133,10 @@ run "$B" check-leak; expect_ok "check-leak: base set"
 run "$B" manifest check; expect_ok "manifest check: base set"
 run "$B" count
 expect_ok "count: base set"
-printf '%s\n' "$out" | grep -qE '^known-FAIL +2 +floor 100 +open$' \
-  && printf '%s\n' "$out" | grep -qE '^known-PASS +4 +floor 100 +open$' \
-  && printf '%s\n' "$out" | grep -qE '^real-bug known-FAIL +2 +floor +30 +open$' \
-  && printf '%s\n' "$out" | grep -qE '^held-out known-FAIL +1 +floor +60 +open$' \
+grep -qE '^known-FAIL +2 +floor 100 +open$' <<<"$out" \
+  && grep -qE '^known-PASS +4 +floor 100 +open$' <<<"$out" \
+  && grep -qE '^real-bug known-FAIL +2 +floor +30 +open$' <<<"$out" \
+  && grep -qE '^held-out known-FAIL +1 +floor +60 +open$' <<<"$out" \
   && ok "count: each count beside its floor, marked open" || ko "count: unexpected output: $out"
 
 # fresh <name> — a copy of the base repo (and of the outside folder) to break; sets $R and exports
