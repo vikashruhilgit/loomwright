@@ -1,0 +1,1511 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 190,
+      "title": "fix(landing): trust-surface fixes + hero loop pause control (SPO-288, SPO-280)",
+      "url": "https://github.com/karch4162/sports-management/pull/190",
+      "parent_sha": "46ddf96df2f0fa79a81fabd16dd438cf4c295a3f",
+      "fix_sha": "ffa16db0bc3af6f128e7c25e5ae5b34f43e2f43f",
+      "criterion": "On the home page, the featured-clubs grid is one column wide on a narrow phone screen (grid-cols-1 before sm:grid-cols-2), so no club card is clipped.",
+      "setup": {
+        "parent": [
+          "git checkout 46ddf96df2f0fa79a81fabd16dd438cf4c295a3f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci"
+        ],
+        "fix": [
+          "git checkout ffa16db0bc3af6f128e7c25e5ae5b34f43e2f43f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "not revived: supabase db reset failed: At statement: 2                                                                                 INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3) Try rerunning the command with --debug to troubleshoot the error.",
+        "fix": "criterion fails: HTTP 200; grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 absent"
+      },
+      "status": "skipped",
+      "skip_reason": "did not revive on localhost: parent_sha: supabase db reset failed: At statement: 2 INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3) Try rerunning the command with --debug to troubleshoot the error."
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 226,
+      "title": "fix(explore): club search works end-to-end (SPO-329)",
+      "url": "https://github.com/karch4162/sports-management/pull/226",
+      "parent_sha": "bc47e626633cbfe6c962e2c9462b2516996d4292",
+      "fix_sha": "3e17f380c6c717e8939e4911de566147eddec22c",
+      "criterion": "Opening /explore?search=Sunset shows \"Sunset\" in the club search box on first load.",
+      "setup": {
+        "parent": [
+          "git checkout bc47e626633cbfe6c962e2c9462b2516996d4292 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 3e17f380c6c717e8939e4911de566147eddec22c (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; value=\"Sunset\" absent",
+        "fix": "criterion holds: HTTP 200; value=\"Sunset\" present"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 249,
+      "title": "fix(leagues): SPO-340 league detail route joins Sport",
+      "url": "https://github.com/karch4162/sports-management/pull/249",
+      "parent_sha": "e8e2107e0a0c5d03bb1642e799ee346d06fa8787",
+      "fix_sha": "9c7d0925275e94b4ff02b8d363c6171aa5894a17",
+      "criterion": "The public league detail API (GET /api/leagues/<id>) returns the league's sport with its name.",
+      "setup": {
+        "parent": [
+          "git checkout e8e2107e0a0c5d03bb1642e799ee346d06fa8787 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 9c7d0925275e94b4ff02b8d363c6171aa5894a17 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 404; sport{name} absent",
+        "fix": "criterion fails: HTTP 404; sport{name} absent"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written failed at parent_sha and failed at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 283,
+      "title": "fix(copy): rename remaining \"SportSphere\" strings to Sportify-360 (SPO-396)",
+      "url": "https://github.com/karch4162/sports-management/pull/283",
+      "parent_sha": "cc52d4da77eed43a02460e8097d719a697ea3c5e",
+      "fix_sha": "6093fb85d93584e55ea3433336e42712a796caee",
+      "criterion": "The platform admin dashboard names the product Sportify-360 and never SportSphere.",
+      "setup": {
+        "parent": [
+          "git checkout cc52d4da77eed43a02460e8097d719a697ea3c5e (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 6093fb85d93584e55ea3433336e42712a796caee (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion holds: HTTP 200; SportSphere absent",
+        "fix": "criterion holds: HTTP 200; SportSphere absent"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written held at parent_sha and held at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 286,
+      "title": "fix(proxy): gate /sales behind platform ADMIN/OWNER (SPO-270)",
+      "url": "https://github.com/karch4162/sports-management/pull/286",
+      "parent_sha": "c1208085fca6f305819aac432bb810caa30a71ff",
+      "fix_sha": "7bc87805ce3939b5b545a843cf1fa254c5554b20",
+      "criterion": "An anonymous visitor who opens /sales is redirected to the login page.",
+      "setup": {
+        "parent": [
+          "git checkout c1208085fca6f305819aac432bb810caa30a71ff (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 7bc87805ce3939b5b545a843cf1fa254c5554b20 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; location (none)",
+        "fix": "criterion holds: HTTP 307; location /login?redirect=%2Fsales"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 289,
+      "title": "fix(reminders): remove unreachable POST /api/reminders (SPO-402)",
+      "url": "https://github.com/karch4162/sports-management/pull/289",
+      "parent_sha": "e385ddaef62fada46ace4f7758a636952b477c53",
+      "fix_sha": "2fdea0d044ae9b77416194ee96dbdc4941e10c6b",
+      "criterion": "POST /api/reminders is not offered: it answers 405 Method Not Allowed.",
+      "setup": {
+        "parent": [
+          "git checkout e385ddaef62fada46ace4f7758a636952b477c53 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 2fdea0d044ae9b77416194ee96dbdc4941e10c6b (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 403",
+        "fix": "criterion holds: HTTP 405"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 298,
+      "title": "fix(reminders): GET /api/reminders queried a phantom schema and returned 500 (SPO-419)",
+      "url": "https://github.com/karch4162/sports-management/pull/298",
+      "parent_sha": "89f7b6711a29043ec2793d804329dff0b2d7b54d",
+      "fix_sha": "49346ac5267db230749bf7e09fa877b4aeb5735a",
+      "criterion": "A signed-in user's GET /api/reminders answers 200 with a reminders list, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout 89f7b6711a29043ec2793d804329dff0b2d7b54d (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 49346ac5267db230749bf7e09fa877b4aeb5735a (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 305,
+      "title": "fix(ical): PRODID identifies the product as Sportify-360 (SPO-424)",
+      "url": "https://github.com/karch4162/sports-management/pull/305",
+      "parent_sha": "b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1",
+      "fix_sha": "13f663750f7ad030503703b5c91ace63c55186f0",
+      "criterion": "The calendar export (.ics) identifies the product as PRODID:-//Sportify-360//EN.",
+      "setup": {
+        "parent": [
+          "git checkout b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 13f663750f7ad030503703b5c91ace63c55186f0 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; PRODID:-//Sports Management Platform//EN",
+        "fix": "criterion holds: HTTP 200; PRODID:-//Sportify-360//EN"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 328,
+      "title": "fix(chats): validate POST /api/chats memberIds with zod (SPO-436)",
+      "url": "https://github.com/karch4162/sports-management/pull/328",
+      "parent_sha": "f41c0e8bc77877947dfd3f330d4784b4e732d6db",
+      "fix_sha": "3c509002e1c13511693829b0f7b8eda9afcfe251",
+      "criterion": "POST /api/chats with memberIds that is not a list answers 400, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout f41c0e8bc77877947dfd3f330d4784b4e732d6db (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 3c509002e1c13511693829b0f7b8eda9afcfe251 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 400"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 333,
+      "title": "fix(admin): PUT /api/admin/users/[id] no longer echoes hashedPassword (SPO-444)",
+      "url": "https://github.com/karch4162/sports-management/pull/333",
+      "parent_sha": "bc359bfe05f7bc2105564e25ed79eaf848548f4f",
+      "fix_sha": "331204472bbac4af3e09e00d6c1096fe7c892d2f",
+      "criterion": "Updating a user through PUT /api/admin/users/<id> never returns the user's hashedPassword.",
+      "setup": {
+        "parent": [
+          "git checkout bc359bfe05f7bc2105564e25ed79eaf848548f4f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 331204472bbac4af3e09e00d6c1096fe7c892d2f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 331204472b with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; hashedPassword present",
+        "fix": "criterion holds: HTTP 200; hashedPassword absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 334,
+      "title": "fix(chats): insert/select real Chat and ChatMember columns (SPO-443)",
+      "url": "https://github.com/karch4162/sports-management/pull/334",
+      "parent_sha": "331204472bbac4af3e09e00d6c1096fe7c892d2f",
+      "fix_sha": "58c750afdb8758caf243a369a14d3b9a9c5bd056",
+      "criterion": "A chat member's GET /api/chats answers 200 and lists their team chat, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout 331204472bbac4af3e09e00d6c1096fe7c892d2f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 58c750afdb8758caf243a369a14d3b9a9c5bd056 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500; team chat not listed",
+        "fix": "criterion fails: HTTP 200; team chat not listed"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written failed at parent_sha and failed at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 340,
+      "title": "fix(lfg): embed sport via Sport FK in GET /api/lfg/my-responses (SPO-450)",
+      "url": "https://github.com/karch4162/sports-management/pull/340",
+      "parent_sha": "bde99e6e882e4fc89a8714805be8d5b62d6e21b4",
+      "fix_sha": "1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5",
+      "criterion": "A signed-in user's GET /api/lfg/my-responses answers 200, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout bde99e6e882e4fc89a8714805be8d5b62d6e21b4 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 357,
+      "title": "fix(chats): drop nonexistent ChatMember.role; gate member admin on chat creator (SPO-447)",
+      "url": "https://github.com/karch4162/sports-management/pull/357",
+      "parent_sha": "a3f447e4ccae7bc49bff63c3a5d691a8b60e90da",
+      "fix_sha": "c6b34bf48391596e49f8b4b24df29bbc33532f79",
+      "criterion": "A chat member's GET /api/chats/<chatId>/members answers 200, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout a3f447e4ccae7bc49bff63c3a5d691a8b60e90da (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout c6b34bf48391596e49f8b4b24df29bbc33532f79 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 361,
+      "title": "fix(leagues,tournaments): hide registration count on public listings (SPO-468)",
+      "url": "https://github.com/karch4162/sports-management/pull/361",
+      "parent_sha": "bb20122f0aa81b6f504a22a345e3957745f79e5e",
+      "fix_sha": "e04e7a33349f84125732c8e2f752a70af26cec8f",
+      "criterion": "The public league listing (GET /api/leagues) does not report registration counts it cannot see.",
+      "setup": {
+        "parent": [
+          "git checkout bb20122f0aa81b6f504a22a345e3957745f79e5e (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout e04e7a33349f84125732c8e2f752a70af26cec8f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since e04e7a3334 with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion holds: HTTP 200; registrations/_count absent",
+        "fix": "criterion holds: HTTP 200; registrations/_count absent"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written held at parent_sha and held at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 362,
+      "title": "fix(landing): beta offer copy — fees waived instead of 14-day trial (SPO-470)",
+      "url": "https://github.com/karch4162/sports-management/pull/362",
+      "parent_sha": "b899ba97b201f14276ae7b624121028eb7d5fc42",
+      "fix_sha": "fa86d90745c3175c3920da12f381c50431bcac92",
+      "criterion": "The home page offers the beta (free while in beta) and never promises a 14-day free trial.",
+      "setup": {
+        "parent": [
+          "git checkout b899ba97b201f14276ae7b624121028eb7d5fc42 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout fa86d90745c3175c3920da12f381c50431bcac92 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; \"14-day\" present",
+        "fix": "criterion holds: HTTP 200; \"14-day\" absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 363,
+      "title": "fix(weather): rate-limit and require auth on GET /api/weather/forecast (SPO-474)",
+      "url": "https://github.com/karch4162/sports-management/pull/363",
+      "parent_sha": "e04e7a33349f84125732c8e2f752a70af26cec8f",
+      "fix_sha": "166ff55c8fa87d86f34e66d9c04e0dc1d4fd6bc2",
+      "criterion": "GET /api/weather/forecast without a signed-in session answers 401.",
+      "setup": {
+        "parent": [
+          "git checkout e04e7a33349f84125732c8e2f752a70af26cec8f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 166ff55c8fa87d86f34e66d9c04e0dc1d4fd6bc2 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 503",
+        "fix": "criterion holds: HTTP 401"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 365,
+      "title": "fix(chats): GET /api/chats/[chatId]/members returns user: null on every row (SPO-467)",
+      "url": "https://github.com/karch4162/sports-management/pull/365",
+      "parent_sha": "7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a",
+      "fix_sha": "2b5d6f4939c6126e6f642b76c62eed8a2458d2f6",
+      "criterion": "GET /api/chats/<chatId>/members names each member's user; no row has user: null.",
+      "setup": {
+        "parent": [
+          "git checkout 7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 2b5d6f4939c6126e6f642b76c62eed8a2458d2f6 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; 3 member(s), 0 with user",
+        "fix": "criterion holds: HTTP 200; 3 member(s), 3 with user"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 367,
+      "title": "fix(copy): pricing and sales tell the beta offer, not a 14-day trial (SPO-477)",
+      "url": "https://github.com/karch4162/sports-management/pull/367",
+      "parent_sha": "c8c99566efdabfc6794cfab97da3b117ed9bedcb",
+      "fix_sha": "53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+      "criterion": "/pricing never promises a 14-day free trial.",
+      "setup": {
+        "parent": [
+          "git checkout c8c99566efdabfc6794cfab97da3b117ed9bedcb (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 53ef4af70c3d84ddd338e240131af2f5ed9543ca (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 53ef4af70c with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; 14-day/free-trial wording present",
+        "fix": "criterion holds: HTTP 200; 14-day/free-trial wording absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 368,
+      "title": "fix(api): page past the end returns an empty page on all counted routes (SPO-442)",
+      "url": "https://github.com/karch4162/sports-management/pull/368",
+      "parent_sha": "53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+      "fix_sha": "7e3052af52d372513f86c9e9811587c6f816e3c9",
+      "criterion": "Asking GET /api/organizations for a page past the end answers 200 with an empty page, not an error.",
+      "setup": {
+        "parent": [
+          "git checkout 53ef4af70c3d84ddd338e240131af2f5ed9543ca (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 7e3052af52d372513f86c9e9811587c6f816e3c9 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 503",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 370,
+      "title": "fix(api): read many-to-one User embeds as objects (SPO-482)",
+      "url": "https://github.com/karch4162/sports-management/pull/370",
+      "parent_sha": "43c8ae83fb5d20120b37a9eef5997827937b196f",
+      "fix_sha": "0fbe564557820e37bcc7bffe7037b391fc6996af",
+      "criterion": "GET /api/chats/<chatId>/messages names each message's sender (the user embed is an object, never null).",
+      "setup": {
+        "parent": [
+          "git checkout 43c8ae83fb5d20120b37a9eef5997827937b196f (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 0fbe564557820e37bcc7bffe7037b391fc6996af (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "not revived: next dev did not answer /login below 500 within 900s",
+        "fix": "criterion fails: HTTP 500; sender objects 0, null senders 0"
+      },
+      "status": "skipped",
+      "skip_reason": "did not revive on localhost: parent_sha: next dev did not answer /login below 500 within 900s"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 376,
+      "title": "fix(SPO-490): featured-clubs cards respect the beta club cap",
+      "url": "https://github.com/karch4162/sports-management/pull/376",
+      "parent_sha": "ecaaa23c2f582933d81415f6e1ec26fb7d6f323a",
+      "fix_sha": "6c5788a58870e13e63dcd02f37f8b267020afcbd",
+      "criterion": "With club signup closed (beta full), the home page's featured-clubs grid shows no 'Your club could be here' card.",
+      "setup": {
+        "parent": [
+          "git checkout ecaaa23c2f582933d81415f6e1ec26fb7d6f323a (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 6c5788a58870e13e63dcd02f37f8b267020afcbd (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 6c5788a588 with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; open-spot card present",
+        "fix": "criterion holds: HTTP 200; open-spot card absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 377,
+      "title": "fix(SPO-489): team players route 500 — embed PlayerProfile through User",
+      "url": "https://github.com/karch4162/sports-management/pull/377",
+      "parent_sha": "6c5788a58870e13e63dcd02f37f8b267020afcbd",
+      "fix_sha": "0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+      "criterion": "GET /api/teams/<teamId>/players answers 200 with the team's players, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout 6c5788a58870e13e63dcd02f37f8b267020afcbd (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 0de9d8de947e43b0fa590bfdb4f80253597f5e30 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 0de9d8de94 with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 378,
+      "title": "fix(SPO-488): chat messages 500 — use Message.attachments, not phantom attachment columns",
+      "url": "https://github.com/karch4162/sports-management/pull/378",
+      "parent_sha": "0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+      "fix_sha": "c90e4125ac1955057164c4cdd125f816424ea31b",
+      "criterion": "GET /api/chats/<chatId>/messages answers 200 with the chat's messages, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout 0de9d8de947e43b0fa590bfdb4f80253597f5e30 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout c90e4125ac1955057164c4cdd125f816424ea31b (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 379,
+      "title": "fix(api): read Chat and Discussion createdBy embeds as objects (SPO-485)",
+      "url": "https://github.com/karch4162/sports-management/pull/379",
+      "parent_sha": "c90e4125ac1955057164c4cdd125f816424ea31b",
+      "fix_sha": "ede6eb9c4e27c79f5d5cc5de7b8a717a643c3d3d",
+      "criterion": "GET /api/teams/<teamId>/discussions names each discussion's creator (createdBy is an object).",
+      "setup": {
+        "parent": [
+          "git checkout c90e4125ac1955057164c4cdd125f816424ea31b (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout ede6eb9c4e27c79f5d5cc5de7b8a717a643c3d3d (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; createdBy objects 0, null 1",
+        "fix": "criterion holds: HTTP 200; createdBy objects 1, null 0"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 384,
+      "title": "fix(admin): overview events select sport via Sport embed (SPO-502)",
+      "url": "https://github.com/karch4162/sports-management/pull/384",
+      "parent_sha": "9412137596634ccf5fc471375c5958dd57a19687",
+      "fix_sha": "871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2",
+      "criterion": "The org admin overview API lists the org's upcoming tournament (Demo Tournament 2026).",
+      "setup": {
+        "parent": [
+          "git checkout 9412137596634ccf5fc471375c5958dd57a19687 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; Demo Tournament 2026 not listed",
+        "fix": "criterion holds: HTTP 200; Demo Tournament 2026 listed"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 387,
+      "title": "fix(api): team discussions + players report the real pagination total (SPO-503)",
+      "url": "https://github.com/karch4162/sports-management/pull/387",
+      "parent_sha": "49700390d9ed782c9508f4957648eae90e11b456",
+      "fix_sha": "6a24639555ea630f8c514fcd14228e72f92389fb",
+      "criterion": "GET /api/teams/<teamId>/discussions reports the real number of discussions in pagination.total.",
+      "setup": {
+        "parent": [
+          "git checkout 49700390d9ed782c9508f4957648eae90e11b456 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout 6a24639555ea630f8c514fcd14228e72f92389fb (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded coach (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; pagination.total 0, rows 1",
+        "fix": "criterion holds: HTTP 200; pagination.total 1, rows 1"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 398,
+      "title": "fix(contact): repoint every contact CTA at the domain we actually own (SPO-509)",
+      "url": "https://github.com/karch4162/sports-management/pull/398",
+      "parent_sha": "c8507bb06a01f6d0f135f071652a9e5073b721ef",
+      "fix_sha": "d251a9ebb7819781682aaeafdc712a371c37967a",
+      "criterion": "/pricing's contact link never points at sales@sportify360.com, a domain the product does not own.",
+      "setup": {
+        "parent": [
+          "git checkout c8507bb06a01f6d0f135f071652a9e5073b721ef (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout d251a9ebb7819781682aaeafdc712a371c37967a (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; @sportify360.com present",
+        "fix": "criterion holds: HTTP 200; @sportify360.com absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 406,
+      "title": "fix(lfg): stop public LFG GETs leaking contact fields + GPS; rate-limit them (SPO-560)",
+      "url": "https://github.com/karch4162/sports-management/pull/406",
+      "parent_sha": "e5f56c7c2e6dc5ff01a5c4715ed40efe018c5184",
+      "fix_sha": "0223f2a62b6f4172445092ca942de72e31aaf031",
+      "criterion": "The public LFG list (GET /api/lfg) never returns a poster's contact email, phone or exact latitude/longitude.",
+      "setup": {
+        "parent": [
+          "git checkout e5f56c7c2e6dc5ff01a5c4715ed40efe018c5184 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 0223f2a62b6f4172445092ca942de72e31aaf031 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 0223f2a62b with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; contact/GPS fields present",
+        "fix": "criterion holds: HTTP 200; contact/GPS fields absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 407,
+      "title": "fix(tournaments): stop public GETs leaking registrant email and payment fields (SPO-563)",
+      "url": "https://github.com/karch4162/sports-management/pull/407",
+      "parent_sha": "0223f2a62b6f4172445092ca942de72e31aaf031",
+      "fix_sha": "4c2c98adc225cf812276081e2de78d4bc700982e",
+      "criterion": "The public tournament API (GET /api/tournaments/<id>) never returns registrants' emails or payment fields.",
+      "setup": {
+        "parent": [
+          "git checkout 0223f2a62b6f4172445092ca942de72e31aaf031 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 4c2c98adc225cf812276081e2de78d4bc700982e (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; email/payment fields present",
+        "fix": "criterion holds: HTTP 200; email/payment fields absent"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 410,
+      "title": "fix(leagues): stop public league GET leaking registrant email and payment fields (SPO-567)",
+      "url": "https://github.com/karch4162/sports-management/pull/410",
+      "parent_sha": "397d5d48ef217542359bc3bc0470fb1d73d1bf61",
+      "fix_sha": "e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+      "criterion": "The public league API (GET /api/leagues/<id>) never returns registrants' emails or payment fields.",
+      "setup": {
+        "parent": [
+          "git checkout 397d5d48ef217542359bc3bc0470fb1d73d1bf61 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout e9e03c2ad8e03689040bbd014de89fcf16e5d73d (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since e9e03c2ad8 with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 404; email/payment fields absent",
+        "fix": "criterion fails: HTTP 404; email/payment fields absent"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written failed at parent_sha and failed at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 411,
+      "title": "fix(auth): validate signup email/name/password types (SPO-564)",
+      "url": "https://github.com/karch4162/sports-management/pull/411",
+      "parent_sha": "e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+      "fix_sha": "d507d546108ca9123c5b15600b7171d6dbf13db0",
+      "criterion": "POST /api/auth/signup with a number as the email answers 400, not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout e9e03c2ad8e03689040bbd014de89fcf16e5d73d (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout d507d546108ca9123c5b15600b7171d6dbf13db0 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 400"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 417,
+      "title": "fix(tournaments): stop printing \"Pool Pool A\" on match cards (SPO-568)",
+      "url": "https://github.com/karch4162/sports-management/pull/417",
+      "parent_sha": "bfd371fd005d15a0f63da36eaaebde27e2419c10",
+      "fix_sha": "9f6a92a48c6d1d298580b40d313e2cd0993592b5",
+      "criterion": "The public tournament page labels pool matches \"Pool A\", never \"Pool Pool A\".",
+      "setup": {
+        "parent": [
+          "git checkout bfd371fd005d15a0f63da36eaaebde27e2419c10 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 9f6a92a48c6d1d298580b40d313e2cd0993592b5 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion holds: HTTP 200; \"Pool Pool\" absent",
+        "fix": "criterion holds: HTTP 200; \"Pool Pool\" absent"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written held at parent_sha and held at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 420,
+      "title": "fix(leagues): 404 the division public route for DRAFT leagues unless org admin (SPO-572)",
+      "url": "https://github.com/karch4162/sports-management/pull/420",
+      "parent_sha": "9e70556e86205670ea04b4f49da5fd5ef95e2fba",
+      "fix_sha": "04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+      "criterion": "An anonymous GET of a DRAFT league's division public route answers 404.",
+      "setup": {
+        "parent": [
+          "git checkout 9e70556e86205670ea04b4f49da5fd5ef95e2fba (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          "fixture SQL (scratch DB only): UPDATE \"League\" SET \"leagueStatus\"='DRAFT' WHERE id='league_demo00000000-0000-0000-0000-000000000001'; INSERT INTO \"LeagueDivision\" (id, \"leagueId\", name) VALUES ('99999999-9999-4999-8999-999999999991', 'league_demo00000000-0000-0000-0000-000000000001', 'Probe Division') ON CONFLICT DO NOTHING;",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 04e53e88992763e34c9fd3ed30a94a6b9989a6a4 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          "fixture SQL (scratch DB only): UPDATE \"League\" SET \"leagueStatus\"='DRAFT' WHERE id='league_demo00000000-0000-0000-0000-000000000001'; INSERT INTO \"LeagueDivision\" (id, \"leagueId\", name) VALUES ('99999999-9999-4999-8999-999999999991', 'league_demo00000000-0000-0000-0000-000000000001', 'Probe Division') ON CONFLICT DO NOTHING;",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 04e53e8899 with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200",
+        "fix": "criterion holds: HTTP 404"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 421,
+      "title": "fix(signup): drop the zod field-path prefix from signup validation errors (SPO-573)",
+      "url": "https://github.com/karch4162/sports-management/pull/421",
+      "parent_sha": "04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+      "fix_sha": "72045ecb6d38c3fe1138993706351ce8671dbcbb",
+      "criterion": "POST /api/auth/signup with an invalid email answers 400 with \"Please enter a valid email address\" and no \"email:\" field prefix.",
+      "setup": {
+        "parent": [
+          "git checkout 04e53e88992763e34c9fd3ed30a94a6b9989a6a4 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 72045ecb6d38c3fe1138993706351ce8671dbcbb (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since 72045ecb6d with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 400; error \"email: Please enter a valid email address\"",
+        "fix": "criterion holds: HTTP 400; error \"Please enter a valid email address\""
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 422,
+      "title": "fix(pricing): show 'Beta Is Full' on /pricing CTAs when club signup is closed (SPO-487)",
+      "url": "https://github.com/karch4162/sports-management/pull/422",
+      "parent_sha": "72045ecb6d38c3fe1138993706351ce8671dbcbb",
+      "fix_sha": "126eadc82819a30558b14f0dbb646f506a2c70e4",
+      "criterion": "With club signup closed (beta full), /pricing's plan buttons read 'Beta Is Full'.",
+      "setup": {
+        "parent": [
+          "git checkout 72045ecb6d38c3fe1138993706351ce8671dbcbb (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 126eadc82819a30558b14f0dbb646f506a2c70e4 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; \"Beta Is Full\" absent",
+        "fix": "criterion holds: HTTP 200; \"Beta Is Full\" present"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 425,
+      "title": "fix(pricing): header says the beta is full when club signup is closed (SPO-582)",
+      "url": "https://github.com/karch4162/sports-management/pull/425",
+      "parent_sha": "3c7f4f8acda69a7a2e5b53cb2101f76275e2fcb9",
+      "fix_sha": "e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+      "criterion": "With club signup closed (beta full), the /pricing header says the beta is full.",
+      "setup": {
+        "parent": [
+          "git checkout 3c7f4f8acda69a7a2e5b53cb2101f76275e2fcb9 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout e0359a6b5eedd79d9e124333afaa7ec9e117ae90 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since e0359a6b5e with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion holds: HTTP 200; \"The beta is full\" present",
+        "fix": "criterion holds: HTTP 200; \"The beta is full\" present"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written held at parent_sha and held at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 426,
+      "title": "fix(leagues): 404 a DRAFT league's schedule and divisions for non-admins (SPO-581)",
+      "url": "https://github.com/karch4162/sports-management/pull/426",
+      "parent_sha": "e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+      "fix_sha": "7571b0c7a2f8d98ea2ae4be269c14f266949dad6",
+      "criterion": "An anonymous GET of a DRAFT league's schedule (GET /api/leagues/<id>/schedule) answers 404.",
+      "setup": {
+        "parent": [
+          "git checkout e0359a6b5eedd79d9e124333afaa7ec9e117ae90 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          "fixture SQL (scratch DB only): UPDATE \"League\" SET \"leagueStatus\"='DRAFT' WHERE id='league_demo00000000-0000-0000-0000-000000000001';",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 7571b0c7a2f8d98ea2ae4be269c14f266949dad6 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          "fixture SQL (scratch DB only): UPDATE \"League\" SET \"leagueStatus\"='DRAFT' WHERE id='league_demo00000000-0000-0000-0000-000000000001';",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200",
+        "fix": "criterion holds: HTTP 404"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 454,
+      "title": "fix(org-pages): show entryFee cents as dollars on org league/tournament lists (SPO-626)",
+      "url": "https://github.com/karch4162/sports-management/pull/454",
+      "parent_sha": "38d9c87e8ee140394a69cd44139daf8a5106aa24",
+      "fix_sha": "edc4af6aa70f8c6dafc5c3e95126d050c6385f64",
+      "criterion": "An organization's public leagues page shows a $20 entry fee as $20.00, never $2000.",
+      "setup": {
+        "parent": [
+          "git checkout 38d9c87e8ee140394a69cd44139daf8a5106aa24 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          "fixture SQL (scratch DB only): UPDATE \"League\" SET \"entryFee\"=2000 WHERE id='league_demo00000000-0000-0000-0000-000000000001';",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout edc4af6aa70f8c6dafc5c3e95126d050c6385f64 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          "fixture SQL (scratch DB only): UPDATE \"League\" SET \"entryFee\"=2000 WHERE id='league_demo00000000-0000-0000-0000-000000000001';",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; $20.00 absent, $2000 absent",
+        "fix": "criterion fails: HTTP 200; $20.00 absent, $2000 absent"
+      },
+      "status": "skipped",
+      "skip_reason": "the defect was not observable on localhost with the seeded data: the criterion as written failed at parent_sha and failed at fix_sha, so the FAIL/PASS answers are not confirmed"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 468,
+      "title": "fix: dark color-scheme on :root so native scrollbars match the theme",
+      "url": "https://github.com/karch4162/sports-management/pull/468",
+      "parent_sha": "ec0794422d88fb996973e6f26079fc7068d541c1",
+      "fix_sha": "f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+      "criterion": "The app's root style declares color-scheme: dark, so native scrollbars match the dark theme.",
+      "setup": {
+        "parent": [
+          "git checkout ec0794422d88fb996973e6f26079fc7068d541c1 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since f8a7c8228d with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; 1 stylesheet(s); :root color-scheme dark absent",
+        "fix": "criterion holds: HTTP 200; 1 stylesheet(s); :root color-scheme dark present"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 469,
+      "title": "fix: return 404 for unknown leagues",
+      "url": "https://github.com/karch4162/sports-management/pull/469",
+      "parent_sha": "d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+      "fix_sha": "267652c8c0d9f2c874a2bd0e20b9ba958733b59a",
+      "criterion": "GET /api/leagues/<id> for a league that does not exist answers 404.",
+      "setup": {
+        "parent": [
+          "git checkout d57e3822f78abe9f91f4dad6101a20b5c8efa8ea (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 267652c8c0d9f2c874a2bd0e20b9ba958733b59a (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 404"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 470,
+      "title": "fix(api): shared uuidIdSchema, 400 on malformed ids instead of 500",
+      "url": "https://github.com/karch4162/sports-management/pull/470",
+      "parent_sha": "f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+      "fix_sha": "d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+      "criterion": "GET /api/organizations/<slug>/sections/<id> with a malformed id answers 400 'Invalid id', not a server error.",
+      "setup": {
+        "parent": [
+          "git checkout f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ],
+        "fix": [
+          "git checkout d57e3822f78abe9f91f4dad6101a20b5c8efa8ea (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "next dev -p 3471, already running since d57e3822f7 with the same lockfile, fonts and config files; hot-recompiled this commit's checked-out files",
+          "sign in as the seeded platform admin (POST /api/auth/login, seed password)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 400"
+      },
+      "status": "used"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 483,
+      "title": "fix: quote PostgREST search filters",
+      "url": "https://github.com/karch4162/sports-management/pull/483",
+      "parent_sha": "eaf2560d4974d345fbe1d04748789e4921ae5610",
+      "fix_sha": "2b605b7cac757c782da984b8c412ee1ea9a6ba78",
+      "criterion": "Searching the public league list for text containing a comma (GET /api/leagues?search=a,b) answers 200, not an error.",
+      "setup": {
+        "parent": [
+          "git checkout eaf2560d4974d345fbe1d04748789e4921ae5610 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 2b605b7cac757c782da984b8c412ee1ea9a6ba78 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 500",
+        "fix": "criterion holds: HTTP 200"
+      },
+      "status": "used",
+      "attempts": "4 commit revivals (a revival that failed was re-run; the last run of each commit is the one recorded)"
+    },
+    {
+      "repo": "karch4162/sports-management",
+      "pr": 486,
+      "title": "fix(pricing): remove unsupported locations offering",
+      "url": "https://github.com/karch4162/sports-management/pull/486",
+      "parent_sha": "fc0b8296a74a0b3112f8d2183f7b33668c0b710a",
+      "fix_sha": "887bf8cb97584b342c2fc9929ad2b7c4a9d794e6",
+      "criterion": "/pricing makes no claim of multi-location support, which the product does not offer.",
+      "setup": {
+        "parent": [
+          "git checkout fc0b8296a74a0b3112f8d2183f7b33668c0b710a (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ],
+        "fix": [
+          "git checkout 887bf8cb97584b342c2fc9929ad2b7c4a9d794e6 (scratch clone of karch4162/sports-management)",
+          "supabase/config.toml (gitignored upstream) copied from a local sports-management checkout and patched: project_id \"selvedge-eval-sm\", ports 543xx -> 553xx (the owner's own stack keeps 543xx)",
+          "npm ci",
+          "supabase db reset --local (applies this commit's supabase/migrations and supabase/seed.sql)",
+          ".env.local: local Supabase URL/keys from `supabase status -o env`, a local NEXTAUTH_SECRET, dummy Stripe test keys, EMAIL_FROM, BETA_CLUB_CAP=0 (club signup closed)",
+          "NEXT_FONT_GOOGLE_MOCKED_RESPONSES: the commit's own next/font/google CSS URLs, fetched once with a desktop Chrome user agent (Turbopack rejects the /l/font?kit= URLs Google serves its own fetch)",
+          "rm -rf .next; next dev -p 3471 (a fresh server per commit)"
+        ]
+      },
+      "observed": {
+        "parent": "criterion fails: HTTP 200; \"Multi-Location\" present",
+        "fix": "criterion holds: HTTP 200; \"Multi-Location\" absent"
+      },
+      "status": "used"
+    }
+  ]
+}
