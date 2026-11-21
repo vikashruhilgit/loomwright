@@ -8,6 +8,36 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.9.0 — 2026-11-21
+
+- `selvedge/eval/harness.mjs` measures Selvedge on the known-answer set. `run --set
+  held-out|tuning` checks the set first (for held-out: validate, the outside folder's manifest and
+  the answers; any problem stops it before a target is brought up or a file is written), then runs
+  the normal path on every case: each target is brought up once by `selvedge/eval/target-driver.sh`,
+  planned, frozen and run with no model, and taken down. It scores each verdict against the known
+  answer and appends a report for the engine version to `selvedge/eval/results.json`: false-PASS,
+  false-FAIL and abstention with numerators, denominators and exact Clopper-Pearson 95% intervals;
+  `model-judged` criteria counted apart; counts per defect and per app; runner flips (replays of one
+  frozen plan) and planner flips (fresh plans) apart from the main denominators; planner tokens and
+  duration per run. It prints the Phase 3 gate line: `met` only on a held-out report with a
+  known-FAIL denominator at the floor, false-PASS at most 5% and abstention at most 20%. When two
+  engine versions' full held-out reports both miss, it says to stop and run the section 8 review; it
+  never loosens the gate. `readme` writes the results block in this README from `results.json`, and
+  `check-readme` (run by the tests) fails when they differ. `SELVEDGE_PLANNER_TOKEN_BUDGET` is
+  removed from every selvedge child the harness starts, so no plan is BLOCKED `budget_exceeded`
+  after its tokens were spent.
+- `selvedge/eval/target-driver.sh` revives a sports-management commit from the setup lines
+  `real-bugs.json` recorded for it (a scratch clone, a read-only copy of the owner's Supabase config
+  on its own project id and 553xx ports, `npm ci`, `supabase db reset`, fixture SQL, `.env.local`,
+  the Google Fonts stylesheets, a fresh `next dev`); a setup line it does not know, or a step that
+  fails, stops the run with `target_unavailable` and the step named. It serves a planted variant with
+  `node`.
+- The first real held-out run is in progress, not yet recorded: `docs/evidence/qa-split-08-eval-harness.md`
+  says how far it got and how to finish it; no report is in `results.json` yet.
+- `tests/test-eval-harness.sh` covers the interval table, the gate and its floor, the manifest
+  refusal, model-judged, repeatability, the two-revision stop, tuning, the README sync and each
+  harness reason token, with a stub CLI and a stub driver.
+
 ## 0.8.0 — 2026-11-21
 
 - `selvedge/eval/` holds a known-answer set for measuring how often Selvedge says PASS when the
