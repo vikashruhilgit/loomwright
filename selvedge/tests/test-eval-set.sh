@@ -161,6 +161,14 @@ run "$R" validate
 expect_fail "validate: a case on the side its group does not get" case_on_wrong_side "group $GH"
 
 # --- case shapes (case_invalid) ----------------------------------------------------------------------
+fresh chain
+jedit "$R/selvedge/eval/real-bugs.json" 'd.entries.push({ ...d.entries[0], pr: 4, parent_sha: "2".repeat(40), fix_sha: "7".repeat(40) });'
+run "$R" validate
+expect_fail "validate: a commit that is one entry's fix_sha and another's parent_sha, with no group link" case_invalid "t1-pass: its commit is the parent_sha"
+jedit "$R/selvedge/eval/real-bugs.json" 'd.entries[0].group_id = "'"$GT"'";'
+run "$R" validate
+expect_ok "validate: on a shared commit, the case's own entry (group_id) gives its role"
+
 fresh invalid
 jedit "$R/selvedge/eval/tuning/cases.json" 'const by = (id) => d.cases.find((c) => c.case_id === id); by("t1-fail").criterion.id = "c-000000000000"; by("t1-pass").criterion.text = " The total  shows \"12\"";'
 run "$R" validate

@@ -269,11 +269,19 @@ export function checkSet(set, ctx) {
     ['tuning', `${EVAL_REL}/tuning/cases.json`, tuning],
     ['held-out', `${EVAL_REL}/held-out/cases.json`, heldOut],
   ];
-  const used = new Map(); // `${repo}@${sha}` → 'parent' | 'fix', complete "used" entries only
+  // `${repo}@${sha}` → [{role: 'parent' | 'fix', group}], complete "used" entries only. One commit can
+  // be one bug's fix_sha and the next bug's parent_sha (back-to-back merges), so a commit keeps every
+  // link, and a case on a shared commit takes its role from its own entry (group_id, default sm-pr-<pr>).
+  const used = new Map();
+  const link = (key, role, group) => {
+    if (!used.has(key)) used.set(key, []);
+    used.get(key).push({ role, group });
+  };
   for (const e of realBugs.entries) {
     if (isObj(e) && e.status === 'used' && realBugGaps(e).length === 0) {
-      used.set(`${e.repo}@${e.parent_sha}`, 'parent');
-      used.set(`${e.repo}@${e.fix_sha}`, 'fix');
+      const group = nonEmpty(e.group_id) ? e.group_id : `sm-pr-${e.pr}`;
+      link(`${e.repo}@${e.parent_sha}`, 'parent', group);
+      link(`${e.repo}@${e.fix_sha}`, 'fix', group);
     }
   }
   const groupsBySide = { tuning: new Set(), 'held-out': new Set() };
@@ -293,8 +301,11 @@ export function checkSet(set, ctx) {
       if (side === 'tuning' && !('answer' in c)) ctx.invalid.push(`${label} case ${c.case_id}: a tuning case needs an answer`);
       if (c.source === 'non-defect' && 'answer' in c && c.answer !== 'PASS') ctx.invalid.push(`${label} case ${c.case_id}: a non-defect case's answer is PASS`);
       if (c.source === 'real-bug') {
-        const role = c.target.kind === 'commit' ? used.get(`${c.target.repo}@${c.target.sha}`) : undefined;
-        if (!role) ctx.invalid.push(`${label} case ${c.case_id}: a real-bug case targets the parent_sha or fix_sha of a complete "used" real-bugs.json entry`);
+        const links = (c.target.kind === 'commit' && used.get(`${c.target.repo}@${c.target.sha}`)) || [];
+        const own = links.find((l) => l.group === c.group_id);
+        const role = own ? own.role : new Set(links.map((l) => l.role)).size === 1 ? links[0].role : undefined;
+        if (links.length === 0) ctx.invalid.push(`${label} case ${c.case_id}: a real-bug case targets the parent_sha or fix_sha of a complete "used" real-bugs.json entry`);
+        else if (!role) ctx.invalid.push(`${label} case ${c.case_id}: its commit is the parent_sha of one "used" real-bugs.json entry and the fix_sha of another, and neither entry's group_id (default sm-pr-<pr>) is ${c.group_id}`);
         else if ('answer' in c && c.answer !== (role === 'parent' ? 'FAIL' : 'PASS')) ctx.invalid.push(`${label} case ${c.case_id}: a real-bug case is FAIL on parent_sha, PASS on fix_sha`);
       }
     });

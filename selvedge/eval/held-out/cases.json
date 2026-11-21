@@ -1,0 +1,1769 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "sm-pr-226-bug-fix",
+      "group_id": "sm-pr-226",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-f66cd1624ee7",
+        "text": "Opening /explore?search=Sunset shows \"Sunset\" in the club search box on first load."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "3e17f380c6c717e8939e4911de566147eddec22c"
+      }
+    },
+    {
+      "case_id": "sm-pr-226-bug-parent",
+      "group_id": "sm-pr-226",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-f66cd1624ee7",
+        "text": "Opening /explore?search=Sunset shows \"Sunset\" in the club search box on first load."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bc47e626633cbfe6c962e2c9462b2516996d4292"
+      }
+    },
+    {
+      "case_id": "sm-pr-226-nd-login-form-fix",
+      "group_id": "sm-pr-226",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "3e17f380c6c717e8939e4911de566147eddec22c"
+      }
+    },
+    {
+      "case_id": "sm-pr-226-nd-login-form-parent",
+      "group_id": "sm-pr-226",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bc47e626633cbfe6c962e2c9462b2516996d4292"
+      }
+    },
+    {
+      "case_id": "sm-pr-226-nd-tournament-api-fix",
+      "group_id": "sm-pr-226",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "3e17f380c6c717e8939e4911de566147eddec22c"
+      }
+    },
+    {
+      "case_id": "sm-pr-226-nd-tournament-api-parent",
+      "group_id": "sm-pr-226",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bc47e626633cbfe6c962e2c9462b2516996d4292"
+      }
+    },
+    {
+      "case_id": "sm-pr-289-bug-fix",
+      "group_id": "sm-pr-289",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-ec285d920bdd",
+        "text": "POST /api/reminders is not offered: it answers 405 Method Not Allowed."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "2fdea0d044ae9b77416194ee96dbdc4941e10c6b"
+      }
+    },
+    {
+      "case_id": "sm-pr-289-bug-parent",
+      "group_id": "sm-pr-289",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-ec285d920bdd",
+        "text": "POST /api/reminders is not offered: it answers 405 Method Not Allowed."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e385ddaef62fada46ace4f7758a636952b477c53"
+      }
+    },
+    {
+      "case_id": "sm-pr-289-nd-admin-login-fix",
+      "group_id": "sm-pr-289",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "2fdea0d044ae9b77416194ee96dbdc4941e10c6b"
+      }
+    },
+    {
+      "case_id": "sm-pr-289-nd-admin-login-parent",
+      "group_id": "sm-pr-289",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e385ddaef62fada46ace4f7758a636952b477c53"
+      }
+    },
+    {
+      "case_id": "sm-pr-289-nd-bad-login-fix",
+      "group_id": "sm-pr-289",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "2fdea0d044ae9b77416194ee96dbdc4941e10c6b"
+      }
+    },
+    {
+      "case_id": "sm-pr-289-nd-bad-login-parent",
+      "group_id": "sm-pr-289",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e385ddaef62fada46ace4f7758a636952b477c53"
+      }
+    },
+    {
+      "case_id": "sm-pr-305-bug-fix",
+      "group_id": "sm-pr-305",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-7ba46cb127a6",
+        "text": "The calendar export (.ics) identifies the product as PRODID:-//Sportify-360//EN."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "13f663750f7ad030503703b5c91ace63c55186f0"
+      }
+    },
+    {
+      "case_id": "sm-pr-305-bug-parent",
+      "group_id": "sm-pr-305",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-7ba46cb127a6",
+        "text": "The calendar export (.ics) identifies the product as PRODID:-//Sportify-360//EN."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1"
+      }
+    },
+    {
+      "case_id": "sm-pr-305-nd-pricing-plans-fix",
+      "group_id": "sm-pr-305",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "13f663750f7ad030503703b5c91ace63c55186f0"
+      }
+    },
+    {
+      "case_id": "sm-pr-305-nd-pricing-plans-parent",
+      "group_id": "sm-pr-305",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1"
+      }
+    },
+    {
+      "case_id": "sm-pr-305-nd-sports-list-fix",
+      "group_id": "sm-pr-305",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "13f663750f7ad030503703b5c91ace63c55186f0"
+      }
+    },
+    {
+      "case_id": "sm-pr-305-nd-sports-list-parent",
+      "group_id": "sm-pr-305",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1"
+      }
+    },
+    {
+      "case_id": "sm-pr-328-bug-fix",
+      "group_id": "sm-pr-328",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-623a9d367d76",
+        "text": "POST /api/chats with memberIds that is not a list answers 400, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "3c509002e1c13511693829b0f7b8eda9afcfe251"
+      }
+    },
+    {
+      "case_id": "sm-pr-328-bug-parent",
+      "group_id": "sm-pr-328",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-623a9d367d76",
+        "text": "POST /api/chats with memberIds that is not a list answers 400, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "f41c0e8bc77877947dfd3f330d4784b4e732d6db"
+      }
+    },
+    {
+      "case_id": "sm-pr-328-nd-pricing-plans-fix",
+      "group_id": "sm-pr-328",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "3c509002e1c13511693829b0f7b8eda9afcfe251"
+      }
+    },
+    {
+      "case_id": "sm-pr-328-nd-pricing-plans-parent",
+      "group_id": "sm-pr-328",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "f41c0e8bc77877947dfd3f330d4784b4e732d6db"
+      }
+    },
+    {
+      "case_id": "sm-pr-328-nd-sports-list-fix",
+      "group_id": "sm-pr-328",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "3c509002e1c13511693829b0f7b8eda9afcfe251"
+      }
+    },
+    {
+      "case_id": "sm-pr-328-nd-sports-list-parent",
+      "group_id": "sm-pr-328",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "f41c0e8bc77877947dfd3f330d4784b4e732d6db"
+      }
+    },
+    {
+      "case_id": "sm-pr-333-bug-fix",
+      "group_id": "sm-pr-333",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-7f620fb34796",
+        "text": "Updating a user through PUT /api/admin/users/<id> never returns the user's hashedPassword."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "331204472bbac4af3e09e00d6c1096fe7c892d2f"
+      }
+    },
+    {
+      "case_id": "sm-pr-333-bug-parent",
+      "group_id": "sm-pr-333",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-7f620fb34796",
+        "text": "Updating a user through PUT /api/admin/users/<id> never returns the user's hashedPassword."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bc359bfe05f7bc2105564e25ed79eaf848548f4f"
+      }
+    },
+    {
+      "case_id": "sm-pr-333-nd-admin-login-fix",
+      "group_id": "sm-pr-333",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "331204472bbac4af3e09e00d6c1096fe7c892d2f"
+      }
+    },
+    {
+      "case_id": "sm-pr-333-nd-admin-login-parent",
+      "group_id": "sm-pr-333",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bc359bfe05f7bc2105564e25ed79eaf848548f4f"
+      }
+    },
+    {
+      "case_id": "sm-pr-333-nd-login-form-fix",
+      "group_id": "sm-pr-333",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "331204472bbac4af3e09e00d6c1096fe7c892d2f"
+      }
+    },
+    {
+      "case_id": "sm-pr-333-nd-login-form-parent",
+      "group_id": "sm-pr-333",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bc359bfe05f7bc2105564e25ed79eaf848548f4f"
+      }
+    },
+    {
+      "case_id": "sm-pr-340-bug-fix",
+      "group_id": "sm-pr-340",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-350d815ec5fe",
+        "text": "A signed-in user's GET /api/lfg/my-responses answers 200, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5"
+      }
+    },
+    {
+      "case_id": "sm-pr-340-bug-parent",
+      "group_id": "sm-pr-340",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-350d815ec5fe",
+        "text": "A signed-in user's GET /api/lfg/my-responses answers 200, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bde99e6e882e4fc89a8714805be8d5b62d6e21b4"
+      }
+    },
+    {
+      "case_id": "sm-pr-340-nd-admin-login-fix",
+      "group_id": "sm-pr-340",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5"
+      }
+    },
+    {
+      "case_id": "sm-pr-340-nd-admin-login-parent",
+      "group_id": "sm-pr-340",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bde99e6e882e4fc89a8714805be8d5b62d6e21b4"
+      }
+    },
+    {
+      "case_id": "sm-pr-340-nd-bad-login-fix",
+      "group_id": "sm-pr-340",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5"
+      }
+    },
+    {
+      "case_id": "sm-pr-340-nd-bad-login-parent",
+      "group_id": "sm-pr-340",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "bde99e6e882e4fc89a8714805be8d5b62d6e21b4"
+      }
+    },
+    {
+      "case_id": "sm-pr-357-bug-fix",
+      "group_id": "sm-pr-357",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-12e8e0635ea2",
+        "text": "A chat member's GET /api/chats/<chatId>/members answers 200, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "c6b34bf48391596e49f8b4b24df29bbc33532f79"
+      }
+    },
+    {
+      "case_id": "sm-pr-357-bug-parent",
+      "group_id": "sm-pr-357",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-12e8e0635ea2",
+        "text": "A chat member's GET /api/chats/<chatId>/members answers 200, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "a3f447e4ccae7bc49bff63c3a5d691a8b60e90da"
+      }
+    },
+    {
+      "case_id": "sm-pr-357-nd-org-page-fix",
+      "group_id": "sm-pr-357",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "c6b34bf48391596e49f8b4b24df29bbc33532f79"
+      }
+    },
+    {
+      "case_id": "sm-pr-357-nd-org-page-parent",
+      "group_id": "sm-pr-357",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "a3f447e4ccae7bc49bff63c3a5d691a8b60e90da"
+      }
+    },
+    {
+      "case_id": "sm-pr-357-nd-tournament-api-fix",
+      "group_id": "sm-pr-357",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "c6b34bf48391596e49f8b4b24df29bbc33532f79"
+      }
+    },
+    {
+      "case_id": "sm-pr-357-nd-tournament-api-parent",
+      "group_id": "sm-pr-357",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "a3f447e4ccae7bc49bff63c3a5d691a8b60e90da"
+      }
+    },
+    {
+      "case_id": "sm-pr-362-bug-fix",
+      "group_id": "sm-pr-362",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-4b84f15fd69f",
+        "text": "The home page offers the beta (free while in beta) and never promises a 14-day free trial."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "fa86d90745c3175c3920da12f381c50431bcac92"
+      }
+    },
+    {
+      "case_id": "sm-pr-362-bug-parent",
+      "group_id": "sm-pr-362",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-4b84f15fd69f",
+        "text": "The home page offers the beta (free while in beta) and never promises a 14-day free trial."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "b899ba97b201f14276ae7b624121028eb7d5fc42"
+      }
+    },
+    {
+      "case_id": "sm-pr-362-nd-login-form-fix",
+      "group_id": "sm-pr-362",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "fa86d90745c3175c3920da12f381c50431bcac92"
+      }
+    },
+    {
+      "case_id": "sm-pr-362-nd-login-form-parent",
+      "group_id": "sm-pr-362",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "b899ba97b201f14276ae7b624121028eb7d5fc42"
+      }
+    },
+    {
+      "case_id": "sm-pr-362-nd-tournament-api-fix",
+      "group_id": "sm-pr-362",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "fa86d90745c3175c3920da12f381c50431bcac92"
+      }
+    },
+    {
+      "case_id": "sm-pr-362-nd-tournament-api-parent",
+      "group_id": "sm-pr-362",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "b899ba97b201f14276ae7b624121028eb7d5fc42"
+      }
+    },
+    {
+      "case_id": "sm-pr-365-bug-fix",
+      "group_id": "sm-pr-365",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-4b27849f0cc2",
+        "text": "GET /api/chats/<chatId>/members names each member's user; no row has user: null."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "2b5d6f4939c6126e6f642b76c62eed8a2458d2f6"
+      }
+    },
+    {
+      "case_id": "sm-pr-365-bug-parent",
+      "group_id": "sm-pr-365",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-4b27849f0cc2",
+        "text": "GET /api/chats/<chatId>/members names each member's user; no row has user: null."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a"
+      }
+    },
+    {
+      "case_id": "sm-pr-365-nd-org-page-fix",
+      "group_id": "sm-pr-365",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "2b5d6f4939c6126e6f642b76c62eed8a2458d2f6"
+      }
+    },
+    {
+      "case_id": "sm-pr-365-nd-org-page-parent",
+      "group_id": "sm-pr-365",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a"
+      }
+    },
+    {
+      "case_id": "sm-pr-365-nd-tournament-api-fix",
+      "group_id": "sm-pr-365",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "2b5d6f4939c6126e6f642b76c62eed8a2458d2f6"
+      }
+    },
+    {
+      "case_id": "sm-pr-365-nd-tournament-api-parent",
+      "group_id": "sm-pr-365",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a"
+      }
+    },
+    {
+      "case_id": "sm-pr-368-bug-fix",
+      "group_id": "sm-pr-368",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-14dba2dffc86",
+        "text": "Asking GET /api/organizations for a page past the end answers 200 with an empty page, not an error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7e3052af52d372513f86c9e9811587c6f816e3c9"
+      }
+    },
+    {
+      "case_id": "sm-pr-368-bug-parent",
+      "group_id": "sm-pr-368",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-14dba2dffc86",
+        "text": "Asking GET /api/organizations for a page past the end answers 200 with an empty page, not an error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "53ef4af70c3d84ddd338e240131af2f5ed9543ca"
+      }
+    },
+    {
+      "case_id": "sm-pr-368-nd-login-form-fix",
+      "group_id": "sm-pr-368",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7e3052af52d372513f86c9e9811587c6f816e3c9"
+      }
+    },
+    {
+      "case_id": "sm-pr-368-nd-login-form-parent",
+      "group_id": "sm-pr-368",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "53ef4af70c3d84ddd338e240131af2f5ed9543ca"
+      }
+    },
+    {
+      "case_id": "sm-pr-368-nd-tournament-api-fix",
+      "group_id": "sm-pr-368",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7e3052af52d372513f86c9e9811587c6f816e3c9"
+      }
+    },
+    {
+      "case_id": "sm-pr-368-nd-tournament-api-parent",
+      "group_id": "sm-pr-368",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "53ef4af70c3d84ddd338e240131af2f5ed9543ca"
+      }
+    },
+    {
+      "case_id": "sm-pr-376-bug-fix",
+      "group_id": "sm-pr-376",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-c4babcf37221",
+        "text": "With club signup closed (beta full), the home page's featured-clubs grid shows no 'Your club could be here' card."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "6c5788a58870e13e63dcd02f37f8b267020afcbd"
+      }
+    },
+    {
+      "case_id": "sm-pr-376-bug-parent",
+      "group_id": "sm-pr-376",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-c4babcf37221",
+        "text": "With club signup closed (beta full), the home page's featured-clubs grid shows no 'Your club could be here' card."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "ecaaa23c2f582933d81415f6e1ec26fb7d6f323a"
+      }
+    },
+    {
+      "case_id": "sm-pr-376-nd-pricing-plans-fix",
+      "group_id": "sm-pr-376",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "6c5788a58870e13e63dcd02f37f8b267020afcbd"
+      }
+    },
+    {
+      "case_id": "sm-pr-376-nd-pricing-plans-parent",
+      "group_id": "sm-pr-376",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "ecaaa23c2f582933d81415f6e1ec26fb7d6f323a"
+      }
+    },
+    {
+      "case_id": "sm-pr-376-nd-sports-list-fix",
+      "group_id": "sm-pr-376",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "6c5788a58870e13e63dcd02f37f8b267020afcbd"
+      }
+    },
+    {
+      "case_id": "sm-pr-376-nd-sports-list-parent",
+      "group_id": "sm-pr-376",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "ecaaa23c2f582933d81415f6e1ec26fb7d6f323a"
+      }
+    },
+    {
+      "case_id": "sm-pr-378-bug-fix",
+      "group_id": "sm-pr-378",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-32aacb907f05",
+        "text": "GET /api/chats/<chatId>/messages answers 200 with the chat's messages, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "c90e4125ac1955057164c4cdd125f816424ea31b"
+      }
+    },
+    {
+      "case_id": "sm-pr-378-bug-parent",
+      "group_id": "sm-pr-378",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-32aacb907f05",
+        "text": "GET /api/chats/<chatId>/messages answers 200 with the chat's messages, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "0de9d8de947e43b0fa590bfdb4f80253597f5e30"
+      }
+    },
+    {
+      "case_id": "sm-pr-378-nd-org-page-fix",
+      "group_id": "sm-pr-378",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "c90e4125ac1955057164c4cdd125f816424ea31b"
+      }
+    },
+    {
+      "case_id": "sm-pr-378-nd-org-page-parent",
+      "group_id": "sm-pr-378",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "0de9d8de947e43b0fa590bfdb4f80253597f5e30"
+      }
+    },
+    {
+      "case_id": "sm-pr-378-nd-pricing-plans-fix",
+      "group_id": "sm-pr-378",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "c90e4125ac1955057164c4cdd125f816424ea31b"
+      }
+    },
+    {
+      "case_id": "sm-pr-378-nd-pricing-plans-parent",
+      "group_id": "sm-pr-378",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "0de9d8de947e43b0fa590bfdb4f80253597f5e30"
+      }
+    },
+    {
+      "case_id": "sm-pr-384-bug-fix",
+      "group_id": "sm-pr-384",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-98e6559d41be",
+        "text": "The org admin overview API lists the org's upcoming tournament (Demo Tournament 2026)."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2"
+      }
+    },
+    {
+      "case_id": "sm-pr-384-bug-parent",
+      "group_id": "sm-pr-384",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-98e6559d41be",
+        "text": "The org admin overview API lists the org's upcoming tournament (Demo Tournament 2026)."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "9412137596634ccf5fc471375c5958dd57a19687"
+      }
+    },
+    {
+      "case_id": "sm-pr-384-nd-admin-login-fix",
+      "group_id": "sm-pr-384",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2"
+      }
+    },
+    {
+      "case_id": "sm-pr-384-nd-admin-login-parent",
+      "group_id": "sm-pr-384",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "9412137596634ccf5fc471375c5958dd57a19687"
+      }
+    },
+    {
+      "case_id": "sm-pr-384-nd-bad-login-fix",
+      "group_id": "sm-pr-384",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2"
+      }
+    },
+    {
+      "case_id": "sm-pr-384-nd-bad-login-parent",
+      "group_id": "sm-pr-384",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "9412137596634ccf5fc471375c5958dd57a19687"
+      }
+    },
+    {
+      "case_id": "sm-pr-387-bug-fix",
+      "group_id": "sm-pr-387",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-b46c2371eeb9",
+        "text": "GET /api/teams/<teamId>/discussions reports the real number of discussions in pagination.total."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "6a24639555ea630f8c514fcd14228e72f92389fb"
+      }
+    },
+    {
+      "case_id": "sm-pr-387-bug-parent",
+      "group_id": "sm-pr-387",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-b46c2371eeb9",
+        "text": "GET /api/teams/<teamId>/discussions reports the real number of discussions in pagination.total."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "49700390d9ed782c9508f4957648eae90e11b456"
+      }
+    },
+    {
+      "case_id": "sm-pr-387-nd-pricing-plans-fix",
+      "group_id": "sm-pr-387",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "6a24639555ea630f8c514fcd14228e72f92389fb"
+      }
+    },
+    {
+      "case_id": "sm-pr-387-nd-pricing-plans-parent",
+      "group_id": "sm-pr-387",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "49700390d9ed782c9508f4957648eae90e11b456"
+      }
+    },
+    {
+      "case_id": "sm-pr-387-nd-sports-list-fix",
+      "group_id": "sm-pr-387",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "6a24639555ea630f8c514fcd14228e72f92389fb"
+      }
+    },
+    {
+      "case_id": "sm-pr-387-nd-sports-list-parent",
+      "group_id": "sm-pr-387",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "49700390d9ed782c9508f4957648eae90e11b456"
+      }
+    },
+    {
+      "case_id": "sm-pr-411-bug-fix",
+      "group_id": "sm-pr-411",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-7b5ccce0854a",
+        "text": "POST /api/auth/signup with a number as the email answers 400, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "d507d546108ca9123c5b15600b7171d6dbf13db0"
+      }
+    },
+    {
+      "case_id": "sm-pr-411-bug-parent",
+      "group_id": "sm-pr-411",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-7b5ccce0854a",
+        "text": "POST /api/auth/signup with a number as the email answers 400, not a server error."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e9e03c2ad8e03689040bbd014de89fcf16e5d73d"
+      }
+    },
+    {
+      "case_id": "sm-pr-411-nd-admin-login-fix",
+      "group_id": "sm-pr-411",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "d507d546108ca9123c5b15600b7171d6dbf13db0"
+      }
+    },
+    {
+      "case_id": "sm-pr-411-nd-admin-login-parent",
+      "group_id": "sm-pr-411",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e9e03c2ad8e03689040bbd014de89fcf16e5d73d"
+      }
+    },
+    {
+      "case_id": "sm-pr-411-nd-login-form-fix",
+      "group_id": "sm-pr-411",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "d507d546108ca9123c5b15600b7171d6dbf13db0"
+      }
+    },
+    {
+      "case_id": "sm-pr-411-nd-login-form-parent",
+      "group_id": "sm-pr-411",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e9e03c2ad8e03689040bbd014de89fcf16e5d73d"
+      }
+    },
+    {
+      "case_id": "sm-pr-420-bug-fix",
+      "group_id": "sm-pr-420",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-d2ffef63cd9d",
+        "text": "An anonymous GET of a DRAFT league's division public route answers 404."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "04e53e88992763e34c9fd3ed30a94a6b9989a6a4"
+      }
+    },
+    {
+      "case_id": "sm-pr-420-bug-parent",
+      "group_id": "sm-pr-420",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-d2ffef63cd9d",
+        "text": "An anonymous GET of a DRAFT league's division public route answers 404."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "9e70556e86205670ea04b4f49da5fd5ef95e2fba"
+      }
+    },
+    {
+      "case_id": "sm-pr-420-nd-bad-login-fix",
+      "group_id": "sm-pr-420",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "04e53e88992763e34c9fd3ed30a94a6b9989a6a4"
+      }
+    },
+    {
+      "case_id": "sm-pr-420-nd-bad-login-parent",
+      "group_id": "sm-pr-420",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-c744c22a86a7",
+        "text": "Signing in through POST /api/auth/login with a wrong password is refused with 401."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "9e70556e86205670ea04b4f49da5fd5ef95e2fba"
+      }
+    },
+    {
+      "case_id": "sm-pr-420-nd-sports-list-fix",
+      "group_id": "sm-pr-420",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "04e53e88992763e34c9fd3ed30a94a6b9989a6a4"
+      }
+    },
+    {
+      "case_id": "sm-pr-420-nd-sports-list-parent",
+      "group_id": "sm-pr-420",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "9e70556e86205670ea04b4f49da5fd5ef95e2fba"
+      }
+    },
+    {
+      "case_id": "sm-pr-422-bug-fix",
+      "group_id": "sm-pr-422",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-13748f40ecdc",
+        "text": "With club signup closed (beta full), /pricing's plan buttons read 'Beta Is Full'."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "126eadc82819a30558b14f0dbb646f506a2c70e4"
+      }
+    },
+    {
+      "case_id": "sm-pr-422-bug-parent",
+      "group_id": "sm-pr-422",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-13748f40ecdc",
+        "text": "With club signup closed (beta full), /pricing's plan buttons read 'Beta Is Full'."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "72045ecb6d38c3fe1138993706351ce8671dbcbb"
+      }
+    },
+    {
+      "case_id": "sm-pr-422-nd-pricing-plans-fix",
+      "group_id": "sm-pr-422",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "126eadc82819a30558b14f0dbb646f506a2c70e4"
+      }
+    },
+    {
+      "case_id": "sm-pr-422-nd-pricing-plans-parent",
+      "group_id": "sm-pr-422",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "72045ecb6d38c3fe1138993706351ce8671dbcbb"
+      }
+    },
+    {
+      "case_id": "sm-pr-422-nd-sports-list-fix",
+      "group_id": "sm-pr-422",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "126eadc82819a30558b14f0dbb646f506a2c70e4"
+      }
+    },
+    {
+      "case_id": "sm-pr-422-nd-sports-list-parent",
+      "group_id": "sm-pr-422",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4782ac93572a",
+        "text": "GET /api/sports lists Soccer among the sports."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "72045ecb6d38c3fe1138993706351ce8671dbcbb"
+      }
+    },
+    {
+      "case_id": "sm-pr-426-bug-fix",
+      "group_id": "sm-pr-426",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-dbf7b77d9afc",
+        "text": "An anonymous GET of a DRAFT league's schedule (GET /api/leagues/<id>/schedule) answers 404."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7571b0c7a2f8d98ea2ae4be269c14f266949dad6"
+      }
+    },
+    {
+      "case_id": "sm-pr-426-bug-parent",
+      "group_id": "sm-pr-426",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-dbf7b77d9afc",
+        "text": "An anonymous GET of a DRAFT league's schedule (GET /api/leagues/<id>/schedule) answers 404."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e0359a6b5eedd79d9e124333afaa7ec9e117ae90"
+      }
+    },
+    {
+      "case_id": "sm-pr-426-nd-org-page-fix",
+      "group_id": "sm-pr-426",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7571b0c7a2f8d98ea2ae4be269c14f266949dad6"
+      }
+    },
+    {
+      "case_id": "sm-pr-426-nd-org-page-parent",
+      "group_id": "sm-pr-426",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e0359a6b5eedd79d9e124333afaa7ec9e117ae90"
+      }
+    },
+    {
+      "case_id": "sm-pr-426-nd-pricing-plans-fix",
+      "group_id": "sm-pr-426",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "7571b0c7a2f8d98ea2ae4be269c14f266949dad6"
+      }
+    },
+    {
+      "case_id": "sm-pr-426-nd-pricing-plans-parent",
+      "group_id": "sm-pr-426",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-a2b19a82a083",
+        "text": "The /pricing page lists the Starter and Professional plans."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "e0359a6b5eedd79d9e124333afaa7ec9e117ae90"
+      }
+    },
+    {
+      "case_id": "sm-pr-468-bug-fix",
+      "group_id": "sm-pr-468",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-4bb799940e9a",
+        "text": "The app's root style declares color-scheme: dark, so native scrollbars match the dark theme."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16"
+      }
+    },
+    {
+      "case_id": "sm-pr-468-bug-parent",
+      "group_id": "sm-pr-468",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-4bb799940e9a",
+        "text": "The app's root style declares color-scheme: dark, so native scrollbars match the dark theme."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "ec0794422d88fb996973e6f26079fc7068d541c1"
+      }
+    },
+    {
+      "case_id": "sm-pr-468-nd-org-page-fix",
+      "group_id": "sm-pr-468",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16"
+      }
+    },
+    {
+      "case_id": "sm-pr-468-nd-org-page-parent",
+      "group_id": "sm-pr-468",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-4161802d6e61",
+        "text": "The public organization page /pdbva answers 200 and names the organization."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "ec0794422d88fb996973e6f26079fc7068d541c1"
+      }
+    },
+    {
+      "case_id": "sm-pr-468-nd-tournament-api-fix",
+      "group_id": "sm-pr-468",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16"
+      }
+    },
+    {
+      "case_id": "sm-pr-468-nd-tournament-api-parent",
+      "group_id": "sm-pr-468",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "ec0794422d88fb996973e6f26079fc7068d541c1"
+      }
+    },
+    {
+      "case_id": "sm-pr-469-bug-fix",
+      "group_id": "sm-pr-469",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-c52de23b0eb6",
+        "text": "GET /api/leagues/<id> for a league that does not exist answers 404."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "267652c8c0d9f2c874a2bd0e20b9ba958733b59a"
+      }
+    },
+    {
+      "case_id": "sm-pr-469-bug-parent",
+      "group_id": "sm-pr-469",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-c52de23b0eb6",
+        "text": "GET /api/leagues/<id> for a league that does not exist answers 404."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "d57e3822f78abe9f91f4dad6101a20b5c8efa8ea"
+      }
+    },
+    {
+      "case_id": "sm-pr-469-nd-login-form-fix",
+      "group_id": "sm-pr-469",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "267652c8c0d9f2c874a2bd0e20b9ba958733b59a"
+      }
+    },
+    {
+      "case_id": "sm-pr-469-nd-login-form-parent",
+      "group_id": "sm-pr-469",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "d57e3822f78abe9f91f4dad6101a20b5c8efa8ea"
+      }
+    },
+    {
+      "case_id": "sm-pr-469-nd-tournament-api-fix",
+      "group_id": "sm-pr-469",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "267652c8c0d9f2c874a2bd0e20b9ba958733b59a"
+      }
+    },
+    {
+      "case_id": "sm-pr-469-nd-tournament-api-parent",
+      "group_id": "sm-pr-469",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-60246cb85774",
+        "text": "The public tournament API (GET /api/tournaments/<id>) returns the tournament named \"Demo Tournament 2026\"."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "d57e3822f78abe9f91f4dad6101a20b5c8efa8ea"
+      }
+    },
+    {
+      "case_id": "sm-pr-486-bug-fix",
+      "group_id": "sm-pr-486",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-ebc1c7c7a0a0",
+        "text": "/pricing makes no claim of multi-location support, which the product does not offer."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "887bf8cb97584b342c2fc9929ad2b7c4a9d794e6"
+      }
+    },
+    {
+      "case_id": "sm-pr-486-bug-parent",
+      "group_id": "sm-pr-486",
+      "source": "real-bug",
+      "criterion": {
+        "id": "c-ebc1c7c7a0a0",
+        "text": "/pricing makes no claim of multi-location support, which the product does not offer."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "fc0b8296a74a0b3112f8d2183f7b33668c0b710a"
+      }
+    },
+    {
+      "case_id": "sm-pr-486-nd-admin-login-fix",
+      "group_id": "sm-pr-486",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "887bf8cb97584b342c2fc9929ad2b7c4a9d794e6"
+      }
+    },
+    {
+      "case_id": "sm-pr-486-nd-admin-login-parent",
+      "group_id": "sm-pr-486",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-1748f1a31429",
+        "text": "Signing in through POST /api/auth/login with the seeded admin's email and password succeeds with a session cookie."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "fc0b8296a74a0b3112f8d2183f7b33668c0b710a"
+      }
+    },
+    {
+      "case_id": "sm-pr-486-nd-login-form-fix",
+      "group_id": "sm-pr-486",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "887bf8cb97584b342c2fc9929ad2b7c4a9d794e6"
+      }
+    },
+    {
+      "case_id": "sm-pr-486-nd-login-form-parent",
+      "group_id": "sm-pr-486",
+      "source": "non-defect",
+      "criterion": {
+        "id": "c-56ecd25d034b",
+        "text": "The /login page shows an email field and a password field."
+      },
+      "target": {
+        "kind": "commit",
+        "repo": "karch4162/sports-management",
+        "sha": "fc0b8296a74a0b3112f8d2183f7b33668c0b710a"
+      }
+    }
+  ]
+}

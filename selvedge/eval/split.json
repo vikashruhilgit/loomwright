@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "rule": "sha256(seed:group_id)[0:8] mod 100, below 40 -> tuning",
+  "seed": "qa-split-07-2026-11-21"
+}

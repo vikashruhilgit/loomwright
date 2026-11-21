@@ -8,6 +8,30 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.8.0 — 2026-11-21
+
+- `selvedge/eval/` holds a known-answer set for measuring how often Selvedge says PASS when the
+  right answer is FAIL. It is an owner-only tool, not a CLI command. `eval-set.mjs` validates the
+  set, splits it by underlying defect into tuning (about 40%) and held-out (about 60%) with a
+  recorded seed, checks that no held-out answer or variant is tracked in the repository
+  (`check-leak`), keeps the held-out answers in an outside folder (`$SELVEDGE_EVAL_HELD_OUT`,
+  default `~/.claude/selvedge-eval/held-out/`) behind a committed sha256 manifest
+  (`manifest write|check`), checks the planted-defect author's start folder, and prints each count
+  beside its floor (`count`). Every failure is a named reason token; `selvedge/eval/README.md`
+  lists them. `tests/test-eval-set.sh` covers each one on temp fixtures.
+- The set's first data: real sports-management bugs, each revived on localhost at its parent and
+  fix commits and recorded in `selvedge/eval/real-bugs.json` (`used`, or `skipped` with the
+  reason), with one FAIL case on the parent and one PASS case on the fix, plus non-defect criteria
+  taken on the same commits and observed to hold. Planted defects are not in this release: the
+  owner writes them in a separate session, and the floors that need them stay `open` until then
+  (`node selvedge/eval/eval-set.mjs count` shows which).
+- `validate` accepts a commit that is one real bug's `fix_sha` and the next one's `parent_sha` (two
+  fixes merged back to back): a case on it takes its role from its own `real-bugs.json` entry
+  (`group_id`, default `sm-pr-<pr>`), and with no such entry it is `case_invalid`. Before, the
+  later entry overwrote the earlier one's role and good cases were rejected.
+- `selvedge/eval/plugin-eval-limits.md` records what `claude plugin eval` could and could not do
+  for this set when re-checked.
+
 ## 0.7.1 — 2026-11-20
 
 - `selvedge doctor` treats a blank `SELVEDGE_PLANNER` as unset, exactly as `plan` does, so the

@@ -12,7 +12,8 @@ The set's sizes are never written here: run `node selvedge/eval/eval-set.mjs cou
 each count beside its floor and marks it `met` or `open`. The floors live in `eval-set.mjs`
 (`FLOORS`).
 
-Floors still open: TBD (recorded when the set lands).
+Floors still open: known-FAIL and held-out known-FAIL. Both need the planted-defect set (below),
+which the owner writes in a separate session; `count` shows the measured values.
 
 ## Layout
 
@@ -50,7 +51,10 @@ Outside the repository, in the **outside folder** `$SELVEDGE_EVAL_HELD_OUT` (def
 - **Real-bug entry** (`real-bugs.json`) — `repo`, `pr`, `parent_sha`, `fix_sha` (40 hex each),
   `setup` (the steps used to revive the commits: a list of strings, or `{"parent": [...], "fix":
   [...]}`), `status` (`used` or `skipped`), and a non-empty `skip_reason` on every `skipped` entry.
-  A real-bug case must target the `parent_sha` or `fix_sha` of a complete `used` entry.
+  A real-bug case must target the `parent_sha` or `fix_sha` of a complete `used` entry. An entry
+  may carry `group_id` (default `sm-pr-<pr>`): when one commit is one entry's `fix_sha` and another
+  entry's `parent_sha` (two fixes merged back to back), a case on it takes its role from the entry
+  whose group is the case's `group_id`, and with no such entry it is `case_invalid`.
 
 ## The split rule
 
