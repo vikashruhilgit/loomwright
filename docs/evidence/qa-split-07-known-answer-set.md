@@ -99,10 +99,13 @@ closed, which several pricing and home-page criteria are about). Turbopack rejec
 ## Split and leak limits
 
 The split seed (`qa-split-07-2026-11-21`) was written to `selvedge/eval/split.json` before any case
-existed. 12 groups landed in tuning and 21 in held-out. As `selvedge/eval/README.md` says, a real
-bug's answers can be worked out from the committed `parent_sha` / `fix_sha` and the public history;
-the outside folder keeps the non-defect answers, and later the planted variants, out of the
-repository.
+existed. 12 groups landed in tuning and 21 in held-out. As `selvedge/eval/README.md` says, in this
+release every held-out answer can be worked out from committed data: a non-defect case is PASS by
+rule and its `source` is committed, and a real-bug case is FAIL on the committed `parent_sha` and
+PASS on the committed `fix_sha` (with `observed` beside them in `real-bugs.json`). All 126 held-out
+answers (84 non-defect PASS, 21 real-bug FAIL, 21 real-bug PASS) follow from
+`held-out/cases.json` and `real-bugs.json` alone. The outside `answers.json` therefore withholds
+nothing yet; only the planted variants, once written, will be withheld.
 
 One defect in the tooling showed up only on real data and was fixed here: sports-management often
 merges two fixes back to back, so one commit is one bug's `fix_sha` and the next bug's `parent_sha`

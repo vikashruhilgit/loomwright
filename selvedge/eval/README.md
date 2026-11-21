@@ -2,8 +2,10 @@
 
 A fixed set of acceptance criteria with known right answers, used to measure how often Selvedge
 says PASS when the right answer is FAIL. The set is split by underlying defect into a **tuning**
-side (about 40% of the defects) and a **held-out** side (about 60%). The held-out answers are kept
-outside this repository, so the people and agents who build Selvedge never tune toward them.
+side (about 40% of the defects) and a **held-out** side (about 60%). The held-out answers file is
+kept outside this repository, but in this release every held-out answer can still be worked out
+from committed data (see "What the outside folder does not hide" below); only the planted variants,
+once they land, will be withheld.
 
 This folder is an owner-only measurement tool. It is not part of the `selvedge` CLI, and nothing
 in `selvedge/bin` or `selvedge/lib` reads it.
@@ -67,17 +69,21 @@ group later never moves an existing one. `split.json` records the rule's name an
 
 `$SELVEDGE_EVAL_HELD_OUT` is read by `eval-set.mjs` only (not by the `selvedge` CLI). It lives on
 one machine. To back it up, copy the whole folder; to check a restored copy, run
-`node selvedge/eval/eval-set.mjs manifest check`. Losing it loses the held-out answers that are not
-derivable (non-defect cases, planted variants), and the held-out set then has to be rebuilt.
+`node selvedge/eval/eval-set.mjs manifest check`. Losing it loses `answers.json` (which, in this
+release, can be rebuilt from committed data) and, once they land, the held-out planted variants,
+which cannot; the held-out set then has to be rebuilt.
 
 Finder and other tools can drop files such as `.DS_Store` into the folder; `manifest check` names
 any file it does not list (`manifest_extra_file`), so remove such files rather than re-writing the
 manifest around them.
 
-**What the outside folder does not hide.** A real bug's answers can be worked out from the
-committed `parent_sha` / `fix_sha` and from sports-management's public history (the fix commit is
-where the criterion starts to pass). The outside folder still keeps the answers that cannot be
-worked out that way: the non-defect cases and, later, the planted variants.
+**What the outside folder does not hide.** In this release, every held-out answer can be worked
+out from committed data alone. A `non-defect` case's answer is PASS by the rule above, and its
+`source` is committed in `held-out/cases.json`. A real-bug case is FAIL on its entry's `parent_sha`
+and PASS on its `fix_sha`, and both commits, with what the probe saw (`observed`), are committed in
+`real-bugs.json`. So `answers.json` keeps no held-out answer secret yet; it is what `count` reads.
+Only the planted variants, once they land, will be withheld: their files and answers go to the
+outside folder only.
 
 ## Commands
 
@@ -106,7 +112,7 @@ be committed, even briefly), then run `split <file>`, `manifest write`, `check-l
 | `defect_on_both_sides` | one `group_id` has cases in both `tuning/cases.json` and `held-out/cases.json` |
 | `case_on_wrong_side` | a case sits on the side the rule does not give its `group_id` |
 | `case_invalid` | a case is malformed (fields, criterion id, duplicate `case_id`, answer direction, real-bug link) |
-| `held_out_answer_committed` | a tracked case or answer for a held-out group carries an answer, a tracked file sits under a held-out variant path, is named `answers.json`, or has the bytes of an outside file |
+| `held_out_answer_committed` | a tracked file, read by content whatever its name (JSON, or JSON Lines line by line, at any depth), holds an object for a held-out group or case that carries an answer, or maps held-out case ids to PASS or FAIL; or a tracked file sits under a held-out variant path, is named `answers.json`, or has the bytes of an outside file (an outside `variants/` file left unchanged from `tests/fixtures/app-server.mjs` or `servers.mjs` is exempt) |
 | `real_bug_entry_incomplete` | a `real-bugs.json` entry lacks a field, or a `skipped` entry lacks its `skip_reason` |
 | `no_tracked_files` | `git ls-files` returned nothing (fails closed rather than passing an empty tree) |
 | `manifest_empty` | `held-out/manifest.sha256` is missing or lists no file |

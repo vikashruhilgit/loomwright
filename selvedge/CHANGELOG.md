@@ -17,7 +17,9 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   (`check-leak`), keeps the held-out answers in an outside folder (`$SELVEDGE_EVAL_HELD_OUT`,
   default `~/.claude/selvedge-eval/held-out/`) behind a committed sha256 manifest
   (`manifest write|check`), checks the planted-defect author's start folder, and prints each count
-  beside its floor (`count`). Every failure is a named reason token; `selvedge/eval/README.md`
+  beside its floor (`count`). In this release every held-out answer can still be worked out from
+  committed data (a non-defect case is PASS by rule; a real-bug case follows from its commit's role
+  in `real-bugs.json`); only the planted variants, once they land, will be withheld. Every failure is a named reason token; `selvedge/eval/README.md`
   lists them. `tests/test-eval-set.sh` covers each one on temp fixtures.
 - The set's first data: real sports-management bugs, each revived on localhost at its parent and
   fix commits and recorded in `selvedge/eval/real-bugs.json` (`used`, or `skipped` with the

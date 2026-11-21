@@ -392,16 +392,72 @@ export function readAnswers(heldOut, ctx, outside = heldOutDir()) {
   return r.value;
 }
 
+// The JSON values a tracked file holds, read by content, never by name: the whole file when it
+// parses as JSON, else each line that parses (JSON Lines). [] when nothing parses.
+function jsonValues(file) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  try {
+    return [JSON.parse(text)];
+  } catch {
+    const out = [];
+    for (const line of text.split('\n')) {
+      const s = line.trim();
+      if (!(s.startsWith('{') || s.startsWith('['))) continue;
+      try {
+        out.push(JSON.parse(s));
+      } catch {
+        // not a JSON line
+      }
+    }
+    return out;
+  }
+}
+
+// Every held-out answer inside one JSON value, at any depth: an object that carries `answer` and
+// belongs to a held-out group (its group_id's side) or to a held-out case (its case_id), and an
+// object whose keys are held-out case ids mapped to PASS | FAIL.
+function answerLeaks(value, rel, seed, heldOutGroup, add) {
+  const seen = new Set();
+  const walk = (v) => {
+    if (v === null || typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if ('answer' in v) {
+      const group = nonEmpty(v.group_id) && sideOf(seed, v.group_id) === 'held-out' ? v.group_id : heldOutGroup.get(v.case_id);
+      if (group !== undefined) add(leakMessage(rel, v, group));
+    }
+    const hit = Object.keys(v).filter((k) => heldOutGroup.has(k) && ANSWERS.includes(v[k]));
+    if (hit.length) add(`${rel} maps held-out case ids to answers (${hit.sort().join(', ')})`);
+    for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(value);
+}
+
 // Leak checks over the tracked files under selvedge/eval/.
 export function leakCheck(repo, split, heldOut, ctx, outside = heldOutDir()) {
   const tracked = trackedFiles(repo, EVAL_REL, ctx);
   if (!split) return;
-  const heldOutIds = new Set(heldOut.filter(isObj).map((c) => c.case_id));
+  const heldOutGroup = new Map(heldOut.filter((c) => isObj(c) && typeof c.case_id === 'string').map((c) => [c.case_id, c.group_id]));
+  // An outside variant file left unchanged from a start-folder base (tests/fixtures/app-server.mjs or
+  // servers.mjs) is public already, and a committed tuning variant may hold the same bytes; only
+  // files under variants/ get this exemption, so a copy of answers.json is always a leak.
+  const baseShas = new Set(START_FOLDER_FILES.map((n) => fileSha(join(repo, 'selvedge', 'tests', 'fixtures', n))).filter(Boolean));
   const outsideHashes = new Map();
-  for (const e of readManifest(repo).entries) outsideHashes.set(e.sha, e.rel);
+  const addOutside = (sha, rel) => {
+    if (!(rel.startsWith('variants/') && baseShas.has(sha))) outsideHashes.set(sha, rel);
+  };
+  for (const e of readManifest(repo).entries) addOutside(e.sha, e.rel);
   for (const rel of listFiles(outside)) {
     const sha = fileSha(join(outside, rel));
-    if (sha) outsideHashes.set(sha, rel);
+    if (sha) addOutside(sha, rel);
   }
   outsideHashes.delete(sha256Hex('')); // an empty file carries no answer
   for (const rel of tracked) {
@@ -413,18 +469,7 @@ export function leakCheck(repo, split, heldOut, ctx, outside = heldOutDir()) {
     const abs = join(repo, rel);
     const sha = fileSha(abs);
     if (sha && outsideHashes.has(sha)) ctx.leaks.add(`${rel} has the bytes of outside file ${outsideHashes.get(sha)}`);
-    if (!name.endsWith('.json')) continue;
-    const r = readJson(abs);
-    if (!r.ok) continue;
-    const cases = name === 'cases.json' ? (Array.isArray(r.value) ? r.value : isObj(r.value) ? r.value.cases : null) : null;
-    if (Array.isArray(cases)) {
-      for (const c of cases) {
-        if (isObj(c) && nonEmpty(c.group_id) && 'answer' in c && sideOf(split.seed, c.group_id) === 'held-out') ctx.leaks.add(leakMessage(rel, c, c.group_id));
-      }
-    } else if (isObj(r.value)) {
-      const hit = Object.keys(r.value).filter((k) => heldOutIds.has(k) && ANSWERS.includes(r.value[k]));
-      if (hit.length) ctx.leaks.add(`${rel} maps held-out case ids to answers (${hit.sort().join(', ')})`);
-    }
+    for (const v of jsonValues(abs)) answerLeaks(v, rel, split.seed, heldOutGroup, (m) => ctx.leaks.add(m));
   }
 }
 

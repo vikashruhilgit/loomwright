@@ -209,6 +209,45 @@ fresh leak-map
 printf '{"m1-pass": "PASS"}\n' >"$R/selvedge/eval/notes.json" && git -C "$R" add -A && git -C "$R" commit -qm leak
 run "$R" check-leak
 expect_fail "check-leak: a tracked JSON mapping held-out case ids to answers" held_out_answer_committed "notes.json maps held-out case ids"
+# The scan reads every tracked file by content, never by its name.
+# leak_case <name> <file under selvedge/eval/> <node expr writing a held-out case with an answer to f>
+leak_case() {
+  fresh "$1"
+  mkdir -p "$(dirname "$R/selvedge/eval/$2")"
+  node -e 'const fs=require("fs"); const [src, f]=process.argv.slice(1); const c={...JSON.parse(fs.readFileSync(src,"utf8")).cases[0], answer:"FAIL"}; '"$3" "$R/selvedge/eval/held-out/cases.json" "$R/selvedge/eval/$2"
+  git -C "$R" add -A && git -C "$R" commit -qm leak
+  run "$R" check-leak
+}
+leak_case leak-backup held-out/backup.json 'fs.writeFileSync(f, JSON.stringify({schema_version:1, cases:[c]}));'
+expect_fail "check-leak: a held-out case with an answer in a case list not named cases.json" held_out_answer_committed "held-out/backup.json case m1-fail"
+leak_case leak-array held-out/list.json 'fs.writeFileSync(f, JSON.stringify([c]));'
+expect_fail "check-leak: a held-out case with an answer in a bare array" held_out_answer_committed "held-out/list.json case m1-fail"
+leak_case leak-jsonl held-out/cases.jsonl 'fs.writeFileSync(f, JSON.stringify({case_id:"x0"}) + "\n" + JSON.stringify(c) + "\n");'
+expect_fail "check-leak: a held-out case with an answer on a JSON Lines line" held_out_answer_committed "held-out/cases.jsonl case m1-fail"
+leak_case leak-nested nested.json 'fs.writeFileSync(f, JSON.stringify({answers:{[c.case_id]:"FAIL"}}));'
+expect_fail "check-leak: a nested map of held-out case ids to answers" held_out_answer_committed "nested.json maps held-out case ids"
+leak_case leak-noext notes/dump 'fs.writeFileSync(f, JSON.stringify({rows:[{case_id:c.case_id, answer:"FAIL"}]}));'
+expect_fail "check-leak: a held-out case id with an answer and no group_id, in a file with no extension" held_out_answer_committed "notes/dump case m1-fail"
+
+# An unchanged start-folder base under an outside variant is public: a committed tuning variant with
+# the same bytes is not a leak. The exemption is for variants/ only.
+fresh base-variant
+mkdir -p "$R/selvedge/tests/fixtures" "$R/selvedge/eval/tuning/variants/$GT" "$R.outside/variants/$GM"
+cp "$PLUGIN_DIR/tests/fixtures/app-server.mjs" "$PLUGIN_DIR/tests/fixtures/servers.mjs" "$R/selvedge/tests/fixtures/"
+cp "$PLUGIN_DIR/tests/fixtures/servers.mjs" "$R/selvedge/eval/tuning/variants/$GT/servers.mjs"
+cp "$PLUGIN_DIR/tests/fixtures/servers.mjs" "$R.outside/variants/$GM/servers.mjs"
+git -C "$R" add -A && git -C "$R" commit -qm base-variant
+run "$R" manifest write
+git -C "$R" commit -qam manifest
+run "$R" check-leak
+expect_ok "check-leak: a tuning variant and an outside variant both unchanged from tests/fixtures/servers.mjs"
+cp "$PLUGIN_DIR/tests/fixtures/servers.mjs" "$R.outside/servers-copy.mjs"
+run "$R" check-leak
+expect_fail "check-leak: a fixture's bytes outside variants/ get no exemption" held_out_answer_committed "has the bytes of outside file servers-copy.mjs"
+rm "$R.outside/servers-copy.mjs"
+cp "$R.outside/answers.json" "$R/selvedge/eval/tuning/variants/$GT/answers-copy.mjs" && git -C "$R" add -A && git -C "$R" commit -qm leak
+run "$R" check-leak
+expect_fail "check-leak: a copy of the outside answers.json is still a leak beside the exemption" held_out_answer_committed "answers-copy.mjs has the bytes of outside file answers.json"
 
 # --- check-leak fails closed (pins: no_tracked_files, split_unreadable) -----------------------------
 fresh untracked
