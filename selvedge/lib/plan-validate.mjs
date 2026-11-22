@@ -211,6 +211,7 @@ function lintNotPlanned(list, ctx, add) {
     if ('rewrite' in np && typeof np.rewrite !== 'string') bad('rewrite must be a string');
     if ('detail' in np && typeof np.detail !== 'string') bad('detail must be a string');
     if (np.reason === REASONS.criterion_not_testable && !nonEmptyString(np.rewrite)) bad(`${REASONS.criterion_not_testable} needs a non-empty rewrite`);
+    if (np.reason === REASONS.side_effect_not_observable && !nonEmptyString(np.detail)) bad(`${REASONS.side_effect_not_observable} needs a non-empty detail naming the pages looked at`);
     const text = ctx.textById.get(np.id);
     if (text !== undefined && classifyTestability(text).testability === 'vague' && np.reason !== REASONS.criterion_not_testable) {
       bad(`a vague criterion is not planned under ${REASONS.criterion_not_testable}, with a rewrite`);

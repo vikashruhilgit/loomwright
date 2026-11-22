@@ -103,8 +103,29 @@ its accessible name, as the snapshot tree shows them.
 3. **Negative criteria** ("must not", "does not change") set `"polarity": "negative"`, `read` the
    side effect before their first action (the baseline), then read it again after the action and
    compare (`changed_from` false, or the count unchanged). Proving only that something is absent
-   or hidden is rejected. If no side effect can be read before and after, list the criterion under
-   `not_planned` with `side_effect_not_observable` and a `detail`.
+   or hidden is rejected.
+
+   The side effect often does not show on the page where the action happens. Before you give up
+   on a negative criterion, look for the page that does show it, and snapshot it: a list or table
+   whose rows or count would change, a counter, badge or total, the detail or edit page of the
+   record the action touches, a history or activity page, or the same page opened again after the
+   action. Steps may move between pages, because `goto` is not an action: read the baseline on that
+   page, go to the action's page and act, then go back and read it again:
+
+   ```json
+   [{"type": "goto", "url": "<origin>/orders"},
+    {"type": "read", "property": "count", "locator": {"role": "row"}},
+    {"type": "goto", "url": "<origin>/checkout"},
+    {"type": "click", "locator": {"role": "button", "name": "Place order"}},
+    {"type": "goto", "url": "<origin>/orders"},
+    {"type": "read", "property": "count", "locator": {"role": "row"}},
+    {"type": "expect", "op": "changed_from", "value": false}]
+   ```
+
+   Only when no page you could snapshot within `origins` shows the side effect, list the
+   criterion under `not_planned` with `side_effect_not_observable`. Its `detail` is required: name
+   the pages you looked at and why none of them shows the effect (for example, it is an email
+   sent, or a server-side record no page lists).
 4. **State what you assumed.** `interpretation` is one sentence; `unverified_assumptions` lists,
    as `{"text", "material"}`, what you took for granted and could not confirm (`material: true`
    when the verdict would change if it were wrong). An empty list is allowed when there is none.
