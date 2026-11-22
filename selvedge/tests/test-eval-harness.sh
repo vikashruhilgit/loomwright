@@ -259,6 +259,11 @@ h run --repo "$R" --set held-out --work-dir "$W" --planner-repeats 2 --runner-re
 expect_fail "run --resume: other repeat counts than the work dir's" work_dir_invalid "another set"
 h run --repo "$R" --set held-out --work-dir "$R/work"
 expect_fail "run: a work dir inside the repository" work_dir_invalid "inside the repository"
+# The same, reached through a symlink to the repo with a leaf that does not exist yet: realish()
+# resolves the nearest existing parent, so the link cannot hide a work dir inside the repository.
+ln -s "$R" "$TMP/link-to-repo"
+h run --repo "$R" --set held-out --work-dir "$TMP/link-to-repo/not-yet/work"
+expect_fail "run: a work dir inside the repository through a symlinked parent" work_dir_invalid "inside the repository"
 
 # score: a finished work dir again; an unfinished one is run_incomplete.
 h score --repo "$R" --work-dir "$W"
