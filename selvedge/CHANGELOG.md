@@ -32,8 +32,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   the Google Fonts stylesheets, a fresh `next dev`); a setup line it does not know, or a step that
   fails, stops the run with `target_unavailable` and the step named. It serves a planted variant with
   `node`.
-- The first real held-out run is in progress, not yet recorded: `docs/evidence/qa-split-08-eval-harness.md`
-  says how far it got and how to finish it; no report is in `results.json` yet.
+- The first real held-out report is in `results.json`, and this README's "Measuring Selvedge" section
+  shows it; how it was run is in `docs/evidence/qa-split-08-eval-harness.md`.
 - `tests/test-eval-harness.sh` covers the interval table, the gate and its floor, the manifest
   refusal, model-judged, repeatability, the two-revision stop, tuning, the README sync and each
   harness reason token, with a stub CLI and a stub driver.
