@@ -118,6 +118,9 @@ out(mj.rates.false_pass.numerator === 0 && mj.rates.false_pass.denominator === 5
   out(JSON.stringify(R.runner.flips) === JSON.stringify([{ case_id: 'x', verdicts: ['FAIL', 'PASS', 'FAIL'] }]) && R.runner.repeats === 3 && R.runner.flipped === 1, 'AC5 runner flips: the case whose 3 runs of one frozen plan differ, listed on its own', JSON.stringify(R.runner));
   out(JSON.stringify(R.planner.flips) === JSON.stringify([{ case_id: 'y', verdicts: ['PASS', 'BLOCKED', 'PASS'] }]) && R.planner.repeats === 3 && R.planner.flipped === 1, 'AC5 planner flips: the case whose 3 fresh plans differ, listed on its own', JSON.stringify(R.planner));
   out(r.rates.false_pass.denominator === 1 && r.rates.false_fail.denominator === 2 && r.rates.abstention.denominator === 3 && r.rates.false_pass.numerator === 0 && r.rates.abstention.numerator === 0, 'AC5 the main denominators equal the case counts, unchanged by the repeats', JSON.stringify(r.rates));
+  // A target whose plan 1 never froze is not replayed: its case is BLOCKED in the main rates, out of the runner series, no flip.
+  const nr = S.buildReport({ set: 'tuning', engine: { selvedge_version: '1', planner_model: 'm' }, ts: 't', cases, plans: [v('FAIL', 'PASS', 'BLOCKED')], replays: [{ x: v('FAIL').x, y: v('', 'PASS').y }], not_replayed: ['z'] });
+  out(nr.repeatability.runner.flipped === 0 && nr.repeatability.runner.cases === 2 && nr.rates.abstention.numerator === 1 && nr.rates.abstention.denominator === 3, 'not replayed: a never-frozen case is no runner flip and still counts in the main rates', JSON.stringify({ runner: nr.repeatability.runner, ab: nr.rates.abstention }));
 }
 // AC9 — the report schema: false-FAIL with its interval, groups per defect and per app, runs.
 {
@@ -256,6 +259,11 @@ h run --repo "$R" --set held-out --work-dir "$W" --planner-repeats 2 --runner-re
 expect_fail "run --resume: other repeat counts than the work dir's" work_dir_invalid "another set"
 h run --repo "$R" --set held-out --work-dir "$R/work"
 expect_fail "run: a work dir inside the repository" work_dir_invalid "inside the repository"
+# The same, reached through a symlink to the repo with a leaf that does not exist yet:
+# realpathOrResolve() resolves the nearest existing parent, so the link cannot hide a work dir inside the repository.
+ln -s "$R" "$TMP/link-to-repo"
+h run --repo "$R" --set held-out --work-dir "$TMP/link-to-repo/not-yet/work"
+expect_fail "run: a work dir inside the repository through a symlinked parent" work_dir_invalid "inside the repository"
 
 # score: a finished work dir again; an unfinished one is run_incomplete.
 h score --repo "$R" --work-dir "$W"
@@ -263,6 +271,33 @@ expect_ok "score: a finished work dir"
 rm "$(ls -d "$W"/targets/* | head -n 1)/result.json"
 h score --repo "$R" --work-dir "$W"
 expect_fail "score: a work dir with a target not finished" run_incomplete "1 of 2 target(s)"
+
+# --- a target whose plans never freeze: not replayed, nothing ran, no runner flip ---------------------
+fresh nofreeze
+STUB_PLAN_FAIL_SLUG=001- h run --repo "$R" --set held-out --work-dir "$W" --planner-repeats 3 --runner-repeats 3
+expect_ok "run: a target whose plans never freeze still finishes with a report"
+RES="$R/selvedge/eval/results.json"; T1="$(ls -d "$W"/targets/001-*)"
+np="$(grep -c '^plan ' "$STUB_LOG/calls.log")"; nr="$(grep -c '^run ' "$STUB_LOG/calls.log")"
+[ "$np" = 6 ] && [ "$nr" = 5 ] && ok "no freeze: 3 plans per target, no run or replay of the target that never froze" || ko "no freeze: $np plan and $nr run call(s)"
+[ "$(jq_ "$T1/result.json" 'JSON.stringify(d.frozen)')" = '[false,false,false]' ] && [ "$(jq_ "$T1/result.json" 'd.replays.length')" = 0 ] \
+  && ok "no freeze: the target's result records frozen false per plan and no replays" || ko "no freeze: result $(jq_ "$T1/result.json" '({frozen: d.frozen, replays: d.replays.length})')"
+NR_CASES="$(jq_ "$RES" 'd.reports[0].cases - d.reports[0].repeatability.runner.cases')"
+[ "$(jq_ "$RES" 'd.reports[0].runs.filter(r => r.run === null && r.run_id === null && r.planner_tokens === null && r.duration_ms === null).length')" = 3 ] \
+  && [ "$NR_CASES" -ge 1 ] && [ "$(jq_ "$RES" 'd.reports[0].repeatability.runner.flipped')" = 0 ] \
+  && [ "$(jq_ "$RES" 'd.reports[0].rates.abstention.numerator')" -ge "$NR_CASES" ] && [ "$(jq_ "$RES" 'd.reports[0].abstention_reasons["BLOCKED planner_failed"]')" = "$NR_CASES" ] \
+  && ok "no freeze: 3 nothing-ran runs entries; its cases left out of the runner series (no flip) and counted as abstention" || ko "no freeze: report $(jq_ "$RES" '({runs: d.reports[0].runs, runner: d.reports[0].repeatability.runner, ab: d.reports[0].abstention_reasons})')"
+# The same work dir in the result format written before `frozen` existed: made-up BLOCKED replays and
+# a planner_tokens 0 runs[] entry per plan. score reads the flags back from the logs and gives the same report.
+for f in "$W"/targets/*/result.json; do
+  node -e 'const fs=require("fs"); const f=process.argv[1]; const r=JSON.parse(fs.readFileSync(f,"utf8"));
+    if (r.frozen && !r.frozen[0]) { r.replays=[r.plans[0], r.plans[0]]; r.runs=r.runs.map(x=>({...x, run:1, planner_tokens:0})); }
+    delete r.frozen; fs.writeFileSync(f, JSON.stringify(r));' "$f"
+done
+h score --repo "$R" --work-dir "$W"
+expect_ok "score: a work dir in the old result format"
+same='["cases","repeatability","runs","totals","rates","abstention_reasons"].every(k => JSON.stringify(d.reports[0][k]) === JSON.stringify(d.reports[1][k]))'
+[ "$(jq_ "$RES" 'd.reports.length')" = 2 ] && [ "$(jq_ "$RES" "$same")" = true ] \
+  && ok "score: an old-format result gives the same report (frozen read back from the run logs)" || ko "score old format: $(jq_ "$RES" '({r0: d.reports[0].repeatability.runner, r1: d.reports[1].repeatability.runner, runs1: d.reports[1].runs})')"
 
 # --- target_unavailable ------------------------------------------------------------------------------
 fresh unavailable

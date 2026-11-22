@@ -67,8 +67,11 @@ export function approvalsPath(env = process.env) {
   return path.join(home, '.claude', 'selvedge', 'approvals.json');
 }
 
-function realpathOrResolve(p) {
-  // Resolve the deepest existing ancestor, then re-append the rest.
+// realpathOrResolve(p) — p with every symlink resolved, also when p does not exist yet: the deepest
+// existing ancestor is realpathed and the rest re-appended. Shared by the approvals root check and the
+// eval harness's work-dir containment check, so a symlinked prefix (/tmp → /private/tmp) cannot hide a
+// path inside the root on either side.
+export function realpathOrResolve(p) {
   let cur = path.resolve(p);
   const rest = [];
   for (;;) {

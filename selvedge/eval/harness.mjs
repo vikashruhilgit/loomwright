@@ -35,7 +35,7 @@
 // or cannot run. Node >= 18, standard library only.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,7 @@ import { EVAL_REL, heldOutDir, loadSet, main as evalSetMain, readAnswers } from 
 import { buildReport, GATE, revisionRule } from './stats.mjs';
 import { DEFAULT_PLANNER_MODEL } from '../lib/plan-planner.mjs';
 import { isMain } from '../lib/env-config.mjs';
+import { realpathOrResolve } from '../lib/env-approvals.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(HERE, '..');
@@ -348,6 +349,9 @@ function verdictsFrom(file, criteria, reasonIfMissing) {
   }));
 }
 
+// The runs[] entry of a plan that did not freeze: nothing ran, its planner tokens are not known.
+const notRun = (target, plan) => ({ target, plan, run: null, run_id: null, planner_tokens: null, duration_ms: null });
+
 // `selvedge run` (or `run --replay`): its verdicts, run id and duration.
 function runOnce(args, ws, logBase, criteria) {
   const r = selvedgeSync(args, ws, logBase);
@@ -381,18 +385,21 @@ async function runTarget(g, tdir, opts) {
     note(`${g.key}: up at ${origin}; ${opts.plannerRepeats} plan(s) of ${criteria.length} criterion(s)`);
     const planned = await Promise.all(Array.from({ length: opts.plannerRepeats }, (_, i) => selvedgeAsync(['plan', 'criteria.json'], ws, join(tdir, 'logs', `plan-${i + 1}`))));
     const plans = [];
+    const frozenPlans = [];
     const replays = [];
     const runs = [];
     const freezes = runsLog(ws).filter((l) => l.event === 'freeze');
     for (let p = 0; p < planned.length; p++) {
       const pr = planned[p];
       const dir = pr.stdout.trim().split('\n').filter(Boolean).pop();
-      const frozen = pr.code === 0 && dir && existsSync(join(dir, 'plan.sha256'));
+      const frozen = Boolean(pr.code === 0 && dir && existsSync(join(dir, 'plan.sha256')));
+      frozenPlans.push(frozen);
       if (!frozen) {
+        // The plan's verdicts are BLOCKED with the planner's reason (they count as abstention), but
+        // nothing ran: no replays of it, and a runs[] entry that says so (no run, tokens unknown).
         const reason = PLAN_REASONS.find((t) => pr.stderr.includes(t)) || `plan_exit_${pr.code}`;
         plans.push(allAs(criteria, 'BLOCKED', reason));
-        if (p === 0) for (let r = 1; r < opts.runnerRepeats; r++) replays.push(allAs(criteria, 'BLOCKED', reason));
-        runs.push({ target: g.key, plan: p + 1, run: 1, run_id: null, planner_tokens: 0, duration_ms: null });
+        runs.push(notRun(g.key, p + 1));
         continue;
       }
       const fl = freezes.find((l) => l.run_id === basename(dir));
@@ -407,7 +414,7 @@ async function runTarget(g, tdir, opts) {
         runs.push({ target: g.key, plan: 1, run: r + 1, run_id: rep.runId, planner_tokens: 0, duration_ms: rep.duration_ms });
       }
     }
-    return { key: g.key, status: 'done', origin, plans, replays, runs };
+    return { key: g.key, status: 'done', origin, plans, frozen: frozenPlans, replays, runs };
   } finally {
     runDriver('down', [join(tdir, 'driver')], join(tdir, 'logs', 'driver-down'));
   }
@@ -416,14 +423,7 @@ async function runTarget(g, tdir, opts) {
 // --- run / score --------------------------------------------------------------------------------
 
 function insideRepo(repo, dir) {
-  const real = (p) => {
-    try {
-      return realpathSync(p);
-    } catch {
-      return resolve(p);
-    }
-  };
-  const rel = relative(real(repo), real(dir));
+  const rel = relative(realpathOrResolve(repo), realpathOrResolve(dir));
   return rel === '' || !(rel.startsWith('..') || rel.startsWith(sep) || /^[A-Za-z]:/.test(rel));
 }
 
@@ -431,20 +431,38 @@ function caseIdsHash(cases) {
   return createHash('sha256').update(cases.map((c) => c.case_id).sort().join('\n')).digest('hex');
 }
 
+// A finished target's result with `frozen` (one flag per plan) and only runs that happened. A
+// result written before `frozen` existed carries made-up BLOCKED replays and a runs[] entry for a
+// plan that never froze; plan p froze iff its first run left logs/run-<p>-1.out (runOnce is the only
+// writer, and it runs a frozen plan only), so the flags are read back from the target's logs.
+function normalized(res, tdir) {
+  const frozen = Array.isArray(res.frozen) ? res.frozen : res.plans.map((_, p) => existsSync(join(tdir, 'logs', `run-${p + 1}-1.out`)));
+  const runs = res.runs.map((r) => (r.run === 1 && frozen[r.plan - 1] === false ? notRun(r.target, r.plan) : r));
+  return { ...res, frozen, runs, replays: frozen[0] ? res.replays : [] };
+}
+
 function report(meta, cases, groups, workDir) {
-  const results = groups.map((g) => {
-    const f = join(workDir, 'targets', g.slug, 'result.json');
+  const tdirs = groups.map((g) => join(workDir, 'targets', g.slug));
+  const results = tdirs.map((t) => {
+    const f = join(t, 'result.json');
     return existsSync(f) ? readJsonFile(f) : null;
   });
   const missing = groups.filter((g, i) => !(results[i] && results[i].status === 'done'));
   if (missing.length) throw new Failure([`run_incomplete: ${missing.length} of ${groups.length} target(s) have no finished result in ${workDir} (first: ${missing[0].key}); finish them with run --work-dir ${workDir} --resume`]);
+  for (let i = 0; i < results.length; i++) results[i] = normalized(results[i], tdirs[i]);
+  // Only targets whose plan 1 froze were replayed; their cases alone make the runner series.
+  const replayed = groups.map((g, i) => results[i].frozen[0]);
   const perCase = (series) => {
     const out = {};
-    for (let i = 0; i < groups.length; i++) for (const c of groups[i].cases) out[c.case_id] = results[i][series.kind][series.index][c.criterion.id];
+    for (let i = 0; i < groups.length; i++) {
+      if (series.kind === 'replays' && !replayed[i]) continue;
+      for (const c of groups[i].cases) out[c.case_id] = results[i][series.kind][series.index][c.criterion.id];
+    }
     return out;
   };
   const plans = Array.from({ length: meta.planner_repeats }, (_, i) => perCase({ kind: 'plans', index: i }));
   const replays = Array.from({ length: meta.runner_repeats - 1 }, (_, i) => perCase({ kind: 'replays', index: i }));
+  const notReplayed = groups.flatMap((g, i) => (replayed[i] ? [] : g.cases.map((c) => c.case_id)));
   return buildReport({
     set: meta.set,
     engine: meta.engine,
@@ -452,6 +470,7 @@ function report(meta, cases, groups, workDir) {
     cases: cases.map((c) => ({ case_id: c.case_id, group_id: c.group_id, app: c.app, known: c.known })),
     plans,
     replays,
+    not_replayed: notReplayed,
     runs: results.flatMap((r) => r.runs),
   });
 }

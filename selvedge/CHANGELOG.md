@@ -8,6 +8,22 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.9.1 — 2026-11-22
+
+- `selvedge/eval/harness.mjs`: a target whose plan does not freeze is no longer replayed. Its
+  cases keep BLOCKED main verdicts (they still count as abstention), but no made-up BLOCKED replays
+  are written for it, and its `runs[]` entry says nothing ran (`run`, `run_id`, `planner_tokens`
+  and `duration_ms` all null; tokens were reported as 0 before). Each target result records
+  `frozen` per plan; a result written before that field existed is read back from the target's
+  logs on `--resume`.
+- `selvedge/eval/stats.mjs` `buildReport` takes `not_replayed` and leaves those cases out of the
+  runner repeatability series, so a missing replay is never counted as a runner flip; the runner
+  `cases` count can now be lower than the case count. `eval/README.md` says so.
+- The work-dir containment check resolves symlinks in both paths, including a path that does not
+  exist yet (its nearest existing parent), so a symlinked prefix such as `/tmp` → `/private/tmp`
+  cannot hide a work dir inside the repository. It reuses `realpathOrResolve` from
+  `lib/env-approvals.mjs` (now exported) instead of a second copy.
+
 ## 0.9.0 — 2026-11-21
 
 - `selvedge/eval/harness.mjs` measures Selvedge on the known-answer set. `run --set
