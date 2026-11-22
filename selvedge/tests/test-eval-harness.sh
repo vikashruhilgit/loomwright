@@ -55,7 +55,7 @@ h() {
   out="$(cat "$TMP/stdout")"; err="$(cat "$TMP/stderr")"
 }
 expect_fail() {
-  if [ "$rc" -eq 1 ] && grep -F -- "FAIL $2" <<<"$err" | grep -qF -- "${3:-}"; then ok "$1"; else ko "$1 (rc=$rc, want '$2${3:+ … $3}'): $err"; fi
+  if [ "$rc" -eq 1 ] && grep -qF -- "${3:-}" < <(grep -F -- "FAIL $2" <<<"$err"); then ok "$1"; else ko "$1 (rc=$rc, want '$2${3:+ … $3}'): $err"; fi
 }
 expect_ok() { if [ "$rc" -eq 0 ]; then ok "$1"; else ko "$1 (rc=$rc): $err"; fi; }
 # jq_ <file> <js expr over d> — prints the expression's value (JSON for objects).
@@ -211,7 +211,7 @@ for mode in byte missing extra; do
     extra) echo stray >"$R.outside/stray.txt"; want="manifest_extra_file"; file="stray.txt" ;;
   esac
   h run --repo "$R" --set held-out --work-dir "$W"
-  if [ "$rc" -eq 1 ] && grep -F "FAIL $want" <<<"$err" | grep -qF "$file"; then ok "AC2 run refuses on $want, naming $file"; else ko "AC2 $mode: rc=$rc err=$err"; fi
+  if [ "$rc" -eq 1 ] && grep -qF -- "$file" < <(grep -F -- "FAIL $want" <<<"$err"); then ok "AC2 run refuses on $want, naming $file"; else ko "AC2 $mode: rc=$rc err=$err"; fi
   [ ! -e "$STUB_LOG/driver.log" ] && [ ! -e "$STUB_LOG/calls.log" ] && [ ! -e "$W" ] && ok "AC2 $mode: no target brought up, no selvedge call, no work dir" || ko "AC2 $mode: something ran ($(cat "$STUB_LOG"/*.log 2>/dev/null | head -n 3))"
   cmp -s "$TMP/results.before" "$R/selvedge/eval/results.json" && cmp -s "$TMP/readme.before" "$R/selvedge/README.md" && ok "AC2 $mode: results file and README byte-identical" || ko "AC2 $mode: results file or README changed"
 done
