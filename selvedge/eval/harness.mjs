@@ -35,7 +35,7 @@
 // or cannot run. Node >= 18, standard library only.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,7 @@ import { EVAL_REL, heldOutDir, loadSet, main as evalSetMain, readAnswers } from 
 import { buildReport, GATE, revisionRule } from './stats.mjs';
 import { DEFAULT_PLANNER_MODEL } from '../lib/plan-planner.mjs';
 import { isMain } from '../lib/env-config.mjs';
+import { realpathOrResolve } from '../lib/env-approvals.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(HERE, '..');
@@ -421,26 +422,8 @@ async function runTarget(g, tdir, opts) {
 
 // --- run / score --------------------------------------------------------------------------------
 
-// realish(p) — p with every symlink resolved, also when p does not exist yet: the nearest existing
-// parent is realpathed and the rest of the path is added back. Both sides of a containment check go
-// through this, so a symlinked prefix (/tmp → /private/tmp) cannot hide a work dir inside the repo.
-export function realish(p) {
-  const rest = [];
-  let cur = resolve(p);
-  for (;;) {
-    try {
-      return join(realpathSync(cur), ...rest.slice().reverse());
-    } catch {
-      const up = dirname(cur);
-      if (up === cur) return resolve(p);
-      rest.push(basename(cur));
-      cur = up;
-    }
-  }
-}
-
 function insideRepo(repo, dir) {
-  const rel = relative(realish(repo), realish(dir));
+  const rel = relative(realpathOrResolve(repo), realpathOrResolve(dir));
   return rel === '' || !(rel.startsWith('..') || rel.startsWith(sep) || /^[A-Za-z]:/.test(rel));
 }
 

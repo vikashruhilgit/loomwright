@@ -21,7 +21,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   `cases` count can now be lower than the case count. `eval/README.md` says so.
 - The work-dir containment check resolves symlinks in both paths, including a path that does not
   exist yet (its nearest existing parent), so a symlinked prefix such as `/tmp` → `/private/tmp`
-  cannot hide a work dir inside the repository.
+  cannot hide a work dir inside the repository. It reuses `realpathOrResolve` from
+  `lib/env-approvals.mjs` (now exported) instead of a second copy.
 
 ## 0.9.0 — 2026-11-21
 
