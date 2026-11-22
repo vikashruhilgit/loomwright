@@ -272,6 +272,33 @@ rm "$(ls -d "$W"/targets/* | head -n 1)/result.json"
 h score --repo "$R" --work-dir "$W"
 expect_fail "score: a work dir with a target not finished" run_incomplete "1 of 2 target(s)"
 
+# --- a target whose plans never freeze: not replayed, nothing ran, no runner flip ---------------------
+fresh nofreeze
+STUB_PLAN_FAIL_SLUG=001- h run --repo "$R" --set held-out --work-dir "$W" --planner-repeats 3 --runner-repeats 3
+expect_ok "run: a target whose plans never freeze still finishes with a report"
+RES="$R/selvedge/eval/results.json"; T1="$(ls -d "$W"/targets/001-*)"
+np="$(grep -c '^plan ' "$STUB_LOG/calls.log")"; nr="$(grep -c '^run ' "$STUB_LOG/calls.log")"
+[ "$np" = 6 ] && [ "$nr" = 5 ] && ok "no freeze: 3 plans per target, no run or replay of the target that never froze" || ko "no freeze: $np plan and $nr run call(s)"
+[ "$(jq_ "$T1/result.json" 'JSON.stringify(d.frozen)')" = '[false,false,false]' ] && [ "$(jq_ "$T1/result.json" 'd.replays.length')" = 0 ] \
+  && ok "no freeze: the target's result records frozen false per plan and no replays" || ko "no freeze: result $(jq_ "$T1/result.json" '({frozen: d.frozen, replays: d.replays.length})')"
+NR_CASES="$(jq_ "$RES" 'd.reports[0].cases - d.reports[0].repeatability.runner.cases')"
+[ "$(jq_ "$RES" 'd.reports[0].runs.filter(r => r.run === null && r.run_id === null && r.planner_tokens === null && r.duration_ms === null).length')" = 3 ] \
+  && [ "$NR_CASES" -ge 1 ] && [ "$(jq_ "$RES" 'd.reports[0].repeatability.runner.flipped')" = 0 ] \
+  && [ "$(jq_ "$RES" 'd.reports[0].rates.abstention.numerator')" -ge "$NR_CASES" ] && [ "$(jq_ "$RES" 'd.reports[0].abstention_reasons["BLOCKED planner_failed"]')" = "$NR_CASES" ] \
+  && ok "no freeze: 3 nothing-ran runs entries; its cases left out of the runner series (no flip) and counted as abstention" || ko "no freeze: report $(jq_ "$RES" '({runs: d.reports[0].runs, runner: d.reports[0].repeatability.runner, ab: d.reports[0].abstention_reasons})')"
+# The same work dir in the result format written before `frozen` existed: made-up BLOCKED replays and
+# a planner_tokens 0 runs[] entry per plan. score reads the flags back from the logs and gives the same report.
+for f in "$W"/targets/*/result.json; do
+  node -e 'const fs=require("fs"); const f=process.argv[1]; const r=JSON.parse(fs.readFileSync(f,"utf8"));
+    if (r.frozen && !r.frozen[0]) { r.replays=[r.plans[0], r.plans[0]]; r.runs=r.runs.map(x=>({...x, run:1, planner_tokens:0})); }
+    delete r.frozen; fs.writeFileSync(f, JSON.stringify(r));' "$f"
+done
+h score --repo "$R" --work-dir "$W"
+expect_ok "score: a work dir in the old result format"
+same='["cases","repeatability","runs","totals","rates","abstention_reasons"].every(k => JSON.stringify(d.reports[0][k]) === JSON.stringify(d.reports[1][k]))'
+[ "$(jq_ "$RES" 'd.reports.length')" = 2 ] && [ "$(jq_ "$RES" "$same")" = true ] \
+  && ok "score: an old-format result gives the same report (frozen read back from the run logs)" || ko "score old format: $(jq_ "$RES" '({r0: d.reports[0].repeatability.runner, r1: d.reports[1].repeatability.runner, runs1: d.reports[1].runs})')"
+
 # --- target_unavailable ------------------------------------------------------------------------------
 fresh unavailable
 STUB_DRIVER_FAIL=1 h run --repo "$R" --set held-out --work-dir "$W"

@@ -4,7 +4,9 @@
 #
 #   plan <criteria.json>             a frozen-looking run folder under .selvedge/runs/, a freeze line
 #                                    in .selvedge/runs.jsonl (planner tokens 100 in / 20 out); prints
-#                                    the folder
+#                                    the folder; when the workspace sits under
+#                                    targets/$STUB_PLAN_FAIL_SLUG*, it freezes nothing, says
+#                                    planner_failed on stderr and exits 1 (a plan that did not freeze)
 #   run [--replay] [--non-interactive] <dir>
 #                                    verdict.json with every criterion STUB_VERDICT (default PASS),
 #                                    or BLOCKED budget_exceeded when SELVEDGE_PLANNER_TOKEN_BUDGET is
@@ -32,7 +34,11 @@ const newDir = () => {
   return { id, d };
 };
 const line = (o) => fs.appendFileSync(path.join(root, '.selvedge', 'runs.jsonl'), `${JSON.stringify(o)}\n`);
-if (cmd === 'plan') {
+const failSlug = process.env.STUB_PLAN_FAIL_SLUG;
+if (cmd === 'plan' && failSlug && root.split(path.sep).includes('targets') && path.basename(path.dirname(root)).startsWith(failSlug)) {
+  process.stderr.write('selvedge plan: FAIL planner_failed (stub)\n');
+  process.exit(1);
+} else if (cmd === 'plan') {
   const { id, d } = newDir();
   fs.copyFileSync(args[0], path.join(d, 'criteria.json'));
   fs.writeFileSync(path.join(d, 'plan.sha256'), `${'0'.repeat(64)}  plan.json\n`);
