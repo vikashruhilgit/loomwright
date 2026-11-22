@@ -7,6 +7,8 @@
 #   target-driver.sh down <workdir>               stops what `up` started for that target
 #   target-driver.sh stop <dir>                   once, after the last target: stops the eval's own
 #                                                 Supabase project (never any other)
+#   target-driver.sh fonts <clone> <out.js>       the font step of `up` alone (the harness never
+#                                                 calls it; tests/test-target-driver-fonts.sh does)
 #
 # <target.json> is a case's target plus the harness's additions: {"kind": "commit", "repo", "sha",
 # "setup": [the real-bugs.json setup lines recorded for that commit]} or {"kind": "variant", "path",
@@ -45,7 +47,8 @@ PROJECT_ID="selvedge-eval-sm"
 PORT=3471
 # A current desktop Chrome: for an older one Google serves some families (Archivo, for one) as
 # fonts.gstatic.com/l/font?kit=… files, whose query Turbopack refuses ("next/font/google queries have
-# exactly one entry"), and the page answers 500.
+# exactly one entry"), and the page answers 500. Even with this agent Google still serves that form
+# now and then, so a newer agent does not fix it alone: fonts_mock asks again (FONT_TRIES).
 CHROME_UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 STEP="start"
 
@@ -174,6 +177,14 @@ for (const u of urls) {
 fs.writeFileSync(out, `module.exports = ${JSON.stringify(mocks, null, 2)};\n`);
 process.stdout.write(`${urls.size}\n`);
 EOF
+}
+
+# fonts_step <clone> <out.js> <err file> — the font step as `up` and `fonts` run it: prints the
+# number of stylesheets mocked, or fails the step with the error's own line (not the stack's tail).
+fonts_step() {
+  local n
+  n="$(fonts_mock "$1" "$2" 2>"$3")" || fail "$(grep -m1 '^Error' "$3" || tail -n 3 "$3")"
+  echo "$n"
 }
 
 up_variant() {
@@ -306,7 +317,7 @@ EOF
   } >"$envfile" || fail "cannot write $envfile"
 
   step "NEXT_FONT_GOOGLE_MOCKED_RESPONSES"
-  n="$(fonts_mock "$clone" "$work/font-mocks.js" 2>"$work/fonts.err")" || fail "$(grep -m1 '^Error' "$work/fonts.err" || tail -n 3 "$work/fonts.err")"
+  n="$(fonts_step "$clone" "$work/font-mocks.js" "$work/fonts.err")" || exit 1
   echo "target-driver: $n next/font/google stylesheet(s) mocked" >&2
 
   step "next dev -p $PORT"
@@ -351,8 +362,10 @@ case "${1:-}" in
     # fonts <clone> <out.js>: the font step alone (what `up` runs for a commit), for the tests.
     [ "$#" -eq 3 ] || usage
     STEP="NEXT_FONT_GOOGLE_MOCKED_RESPONSES"
-    fonts_mock "$2" "$3" || exit 1
-    exit 0
+    err="$(mktemp "${TMPDIR:-/tmp}/target-driver-fonts.XXXXXX")" || exit 1
+    ( fonts_step "$2" "$3" "$err" >/dev/null ); rc=$?
+    rm -f "$err"
+    exit "$rc"
     ;;
   stop)
     [ "$#" -eq 2 ] || usage

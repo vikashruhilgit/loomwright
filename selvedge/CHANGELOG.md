@@ -15,8 +15,9 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   happened for about 1 request in 15 (MuseoModerno, measured 2026-11-23), with any user agent, and
   stopped the tuning run twice with `target_unavailable`. A failed step now reports the error line
   itself instead of the last three lines of the stack trace, which hid the cause. A new `fonts
-  <clone> <out.js>` subcommand runs the step alone, and `tests/test-target-driver-fonts.sh` pins
-  the retry with a fake `curl`.
+  <clone> <out.js>` subcommand runs the step alone, through the same `fonts_step` (retry and
+  error line) that `up` uses, and `tests/test-target-driver-fonts.sh` pins both with a fake `curl`.
+  The `CHROME_UA` comment now says a newer user agent alone does not stop the `/l/` form.
 - `selvedge/eval/results.json` carries the first tuning report (engine 0.10.0, planner sonnet, one
   plan and one run per target): 72 cases, PASS 27, FAIL 2, BLOCKED 15, NOT_VERIFIABLE 28;
   false-PASS 0/12, false-FAIL 0/60, abstention 43/72. `side_effect_not_observable` is 16 of 72.

@@ -64,8 +64,9 @@ fonts 2
 fonts 4
 { [ "$rc" -eq 0 ] && [ "$calls" = 5 ]; } && ok "four /l/ responses: the fifth try is still made and used" || ko "fifth try: rc=$rc calls=$calls err='$err'"
 fonts 99
-{ [ "$rc" -eq 1 ] && [ "$calls" = 5 ] && [ ! -e "$TMP/mocks.js" ] && grep -qF 'MuseoModerno:wght@400;700&display=swap was served as fonts.gstatic.com/l/ files 5 times in a row' <<<"$err"; } \
-  && ok "/l/ every time: five tries, then exit 1 naming the URL, no mock file written" || ko "give up: rc=$rc calls=$calls err='$err'"
+{ [ "$rc" -eq 1 ] && [ "$calls" = 5 ] && [ ! -e "$TMP/mocks.js" ] && [ "$(wc -l <<<"$err" | tr -d ' ')" = 1 ] \
+  && grep -qxF "target-driver: FAIL step 'NEXT_FONT_GOOGLE_MOCKED_RESPONSES': Error: https://fonts.googleapis.com/css2?family=MuseoModerno:wght@400;700&display=swap was served as fonts.gstatic.com/l/ files 5 times in a row, which Turbopack refuses" <<<"$err"; } \
+  && ok "/l/ every time: five tries, then exit 1 with ONE FAIL line carrying the Error line (no stack), no mock file written" || ko "give up: rc=$rc calls=$calls err='$err'"
 
 echo "test-target-driver-fonts: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
