@@ -1,0 +1,2265 @@
+{
+  "schema_version": 1,
+  "reports": [
+    {
+      "set": "held-out",
+      "engine": {
+        "selvedge_version": "0.9.0",
+        "planner_model": "sonnet"
+      },
+      "ts": "2026-11-22T02:26:54.754Z",
+      "cases": 126,
+      "rates": {
+        "false_pass": {
+          "numerator": 0,
+          "denominator": 21,
+          "rate": 0,
+          "ci95": {
+            "lower": 0,
+            "upper": 0.161098
+          }
+        },
+        "false_fail": {
+          "numerator": 0,
+          "denominator": 105,
+          "rate": 0,
+          "ci95": {
+            "lower": 0,
+            "upper": 0.034522
+          }
+        },
+        "abstention": {
+          "numerator": 74,
+          "denominator": 126,
+          "rate": 0.587302,
+          "ci95": {
+            "lower": 0.496167,
+            "upper": 0.674235
+          }
+        }
+      },
+      "verdict_counts": {
+        "PASS": 49,
+        "FAIL": 3,
+        "BLOCKED": 6,
+        "NOT_VERIFIABLE": 68
+      },
+      "abstention_reasons": {
+        "BLOCKED plan_invalid": 3,
+        "BLOCKED step_failed": 3,
+        "NOT_VERIFIABLE exploration_budget": 4,
+        "NOT_VERIFIABLE material_assumption": 14,
+        "NOT_VERIFIABLE no_value_read": 1,
+        "NOT_VERIFIABLE side_effect_not_observable": 49
+      },
+      "budget_exceeded": 0,
+      "model_judged": {
+        "criteria": 0,
+        "known_fail": 0,
+        "known_pass": 0,
+        "pass_on_known_fail": 0,
+        "fail_on_known_pass": 0,
+        "abstained": 0
+      },
+      "per_group": [
+        {
+          "group_id": "sm-pr-226",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 2
+        },
+        {
+          "group_id": "sm-pr-289",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 6
+        },
+        {
+          "group_id": "sm-pr-305",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 2
+        },
+        {
+          "group_id": "sm-pr-328",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 2
+        },
+        {
+          "group_id": "sm-pr-333",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 4
+        },
+        {
+          "group_id": "sm-pr-340",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 6
+        },
+        {
+          "group_id": "sm-pr-357",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 3
+        },
+        {
+          "group_id": "sm-pr-362",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 3
+        },
+        {
+          "group_id": "sm-pr-365",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 3
+        },
+        {
+          "group_id": "sm-pr-368",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 3
+        },
+        {
+          "group_id": "sm-pr-376",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 1
+        },
+        {
+          "group_id": "sm-pr-378",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 4
+        },
+        {
+          "group_id": "sm-pr-384",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 6
+        },
+        {
+          "group_id": "sm-pr-387",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 3
+        },
+        {
+          "group_id": "sm-pr-411",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 4
+        },
+        {
+          "group_id": "sm-pr-420",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 6
+        },
+        {
+          "group_id": "sm-pr-422",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 2
+        },
+        {
+          "group_id": "sm-pr-426",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 3
+        },
+        {
+          "group_id": "sm-pr-468",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 4
+        },
+        {
+          "group_id": "sm-pr-469",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 2
+        },
+        {
+          "group_id": "sm-pr-486",
+          "criteria": 6,
+          "known_fail": 1,
+          "known_pass": 5,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 5
+        }
+      ],
+      "per_app": [
+        {
+          "app": "karch4162/sports-management",
+          "criteria": 126,
+          "known_fail": 21,
+          "known_pass": 105,
+          "pass_on_known_fail": 0,
+          "fail_on_known_pass": 0,
+          "abstained": 74
+        }
+      ],
+      "repeatability": {
+        "runner": {
+          "repeats": 3,
+          "cases": 126,
+          "flipped": 1,
+          "flips": [
+            {
+              "case_id": "sm-pr-422-nd-pricing-plans-parent",
+              "verdicts": [
+                "BLOCKED",
+                "PASS",
+                "PASS"
+              ]
+            }
+          ]
+        },
+        "planner": {
+          "repeats": 3,
+          "cases": 126,
+          "flipped": 37,
+          "flips": [
+            {
+              "case_id": "sm-pr-226-nd-login-form-fix",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-226-nd-tournament-api-fix",
+              "verdicts": [
+                "PASS",
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-226-nd-tournament-api-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-333-nd-login-form-parent",
+              "verdicts": [
+                "PASS",
+                "NOT_VERIFIABLE",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-357-nd-tournament-api-fix",
+              "verdicts": [
+                "PASS",
+                "NOT_VERIFIABLE",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-357-nd-tournament-api-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-362-bug-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-362-nd-login-form-fix",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-362-nd-tournament-api-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-365-nd-org-page-fix",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-365-nd-org-page-parent",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-365-nd-tournament-api-fix",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-365-nd-tournament-api-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-368-bug-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-368-bug-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "BLOCKED",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-368-nd-tournament-api-fix",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-368-nd-tournament-api-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-378-nd-org-page-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-378-nd-org-page-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-387-nd-sports-list-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-411-nd-login-form-fix",
+              "verdicts": [
+                "PASS",
+                "NOT_VERIFIABLE",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-420-nd-sports-list-parent",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-422-bug-parent",
+              "verdicts": [
+                "FAIL",
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-422-nd-pricing-plans-parent",
+              "verdicts": [
+                "BLOCKED",
+                "PASS",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-426-bug-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-426-nd-org-page-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-426-nd-org-page-parent",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-426-nd-pricing-plans-fix",
+              "verdicts": [
+                "PASS",
+                "PASS",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-468-nd-org-page-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-468-nd-tournament-api-fix",
+              "verdicts": [
+                "NOT_VERIFIABLE",
+                "PASS",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-468-nd-tournament-api-parent",
+              "verdicts": [
+                "PASS",
+                "NOT_VERIFIABLE",
+                "PASS"
+              ]
+            },
+            {
+              "case_id": "sm-pr-469-bug-fix",
+              "verdicts": [
+                "BLOCKED",
+                "NOT_VERIFIABLE",
+                "BLOCKED"
+              ]
+            },
+            {
+              "case_id": "sm-pr-469-bug-parent",
+              "verdicts": [
+                "BLOCKED",
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-469-nd-tournament-api-parent",
+              "verdicts": [
+                "PASS",
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-486-bug-parent",
+              "verdicts": [
+                "BLOCKED",
+                "NOT_VERIFIABLE",
+                "FAIL"
+              ]
+            },
+            {
+              "case_id": "sm-pr-486-nd-admin-login-parent",
+              "verdicts": [
+                "BLOCKED",
+                "NOT_VERIFIABLE",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            {
+              "case_id": "sm-pr-486-nd-login-form-parent",
+              "verdicts": [
+                "BLOCKED",
+                "PASS",
+                "PASS"
+              ]
+            }
+          ]
+        }
+      },
+      "runs": [
+        {
+          "target": "karch4162/sports-management@3e17f380c6c717e8939e4911de566147eddec22c",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T184830Z-a250bf",
+          "planner_tokens": 200508,
+          "duration_ms": 5252
+        },
+        {
+          "target": "karch4162/sports-management@3e17f380c6c717e8939e4911de566147eddec22c",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T184901Z-481bc2",
+          "planner_tokens": 0,
+          "duration_ms": 5207
+        },
+        {
+          "target": "karch4162/sports-management@3e17f380c6c717e8939e4911de566147eddec22c",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T184906Z-a2d9cd",
+          "planner_tokens": 0,
+          "duration_ms": 5208
+        },
+        {
+          "target": "karch4162/sports-management@3e17f380c6c717e8939e4911de566147eddec22c",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T184830Z-09b85b",
+          "planner_tokens": 97856,
+          "duration_ms": 3988
+        },
+        {
+          "target": "karch4162/sports-management@3e17f380c6c717e8939e4911de566147eddec22c",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T184830Z-e85c61",
+          "planner_tokens": 146404,
+          "duration_ms": 4039
+        },
+        {
+          "target": "karch4162/sports-management@bc47e626633cbfe6c962e2c9462b2516996d4292",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T184957Z-1f1d33",
+          "planner_tokens": 96587,
+          "duration_ms": 4074
+        },
+        {
+          "target": "karch4162/sports-management@bc47e626633cbfe6c962e2c9462b2516996d4292",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185029Z-aed6da",
+          "planner_tokens": 0,
+          "duration_ms": 4052
+        },
+        {
+          "target": "karch4162/sports-management@bc47e626633cbfe6c962e2c9462b2516996d4292",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185033Z-b83850",
+          "planner_tokens": 0,
+          "duration_ms": 4035
+        },
+        {
+          "target": "karch4162/sports-management@bc47e626633cbfe6c962e2c9462b2516996d4292",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T184957Z-6986dd",
+          "planner_tokens": 202259,
+          "duration_ms": 5243
+        },
+        {
+          "target": "karch4162/sports-management@bc47e626633cbfe6c962e2c9462b2516996d4292",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T184957Z-323da2",
+          "planner_tokens": 98578,
+          "duration_ms": 4079
+        },
+        {
+          "target": "karch4162/sports-management@2fdea0d044ae9b77416194ee96dbdc4941e10c6b",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185131Z-47a50a",
+          "planner_tokens": 43155,
+          "duration_ms": 14
+        },
+        {
+          "target": "karch4162/sports-management@2fdea0d044ae9b77416194ee96dbdc4941e10c6b",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185144Z-867ecb",
+          "planner_tokens": 0,
+          "duration_ms": 18
+        },
+        {
+          "target": "karch4162/sports-management@2fdea0d044ae9b77416194ee96dbdc4941e10c6b",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185144Z-1ce5cf",
+          "planner_tokens": 0,
+          "duration_ms": 19
+        },
+        {
+          "target": "karch4162/sports-management@2fdea0d044ae9b77416194ee96dbdc4941e10c6b",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185131Z-9d08a0",
+          "planner_tokens": 45271,
+          "duration_ms": 12
+        },
+        {
+          "target": "karch4162/sports-management@2fdea0d044ae9b77416194ee96dbdc4941e10c6b",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185131Z-820cc2",
+          "planner_tokens": 45216,
+          "duration_ms": 13
+        },
+        {
+          "target": "karch4162/sports-management@e385ddaef62fada46ace4f7758a636952b477c53",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185218Z-570a79",
+          "planner_tokens": 45862,
+          "duration_ms": 14
+        },
+        {
+          "target": "karch4162/sports-management@e385ddaef62fada46ace4f7758a636952b477c53",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185229Z-20708a",
+          "planner_tokens": 0,
+          "duration_ms": 19
+        },
+        {
+          "target": "karch4162/sports-management@e385ddaef62fada46ace4f7758a636952b477c53",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185229Z-49302b",
+          "planner_tokens": 0,
+          "duration_ms": 19
+        },
+        {
+          "target": "karch4162/sports-management@e385ddaef62fada46ace4f7758a636952b477c53",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185218Z-ed6bc5",
+          "planner_tokens": 45801,
+          "duration_ms": 12
+        },
+        {
+          "target": "karch4162/sports-management@e385ddaef62fada46ace4f7758a636952b477c53",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185218Z-ac9582",
+          "planner_tokens": 45948,
+          "duration_ms": 14
+        },
+        {
+          "target": "karch4162/sports-management@13f663750f7ad030503703b5c91ace63c55186f0",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185307Z-bd2b60",
+          "planner_tokens": 270964,
+          "duration_ms": 3828
+        },
+        {
+          "target": "karch4162/sports-management@13f663750f7ad030503703b5c91ace63c55186f0",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185348Z-276096",
+          "planner_tokens": 0,
+          "duration_ms": 3834
+        },
+        {
+          "target": "karch4162/sports-management@13f663750f7ad030503703b5c91ace63c55186f0",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185352Z-07bff3",
+          "planner_tokens": 0,
+          "duration_ms": 3825
+        },
+        {
+          "target": "karch4162/sports-management@13f663750f7ad030503703b5c91ace63c55186f0",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185307Z-a3e3c7",
+          "planner_tokens": 216079,
+          "duration_ms": 3863
+        },
+        {
+          "target": "karch4162/sports-management@13f663750f7ad030503703b5c91ace63c55186f0",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185307Z-c0d88e",
+          "planner_tokens": 276783,
+          "duration_ms": 3830
+        },
+        {
+          "target": "karch4162/sports-management@b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185441Z-529b0b",
+          "planner_tokens": 157554,
+          "duration_ms": 3886
+        },
+        {
+          "target": "karch4162/sports-management@b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185515Z-4eaeed",
+          "planner_tokens": 0,
+          "duration_ms": 3845
+        },
+        {
+          "target": "karch4162/sports-management@b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185519Z-3e6d73",
+          "planner_tokens": 0,
+          "duration_ms": 3828
+        },
+        {
+          "target": "karch4162/sports-management@b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185441Z-a1ae63",
+          "planner_tokens": 215001,
+          "duration_ms": 3824
+        },
+        {
+          "target": "karch4162/sports-management@b84b21913313d5a05b8cb8ca3f774ea6d2a7e0f1",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185441Z-edecf2",
+          "planner_tokens": 214443,
+          "duration_ms": 3850
+        },
+        {
+          "target": "karch4162/sports-management@3c509002e1c13511693829b0f7b8eda9afcfe251",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185604Z-5e6716",
+          "planner_tokens": 148678,
+          "duration_ms": 3826
+        },
+        {
+          "target": "karch4162/sports-management@3c509002e1c13511693829b0f7b8eda9afcfe251",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185629Z-2797a7",
+          "planner_tokens": 0,
+          "duration_ms": 3850
+        },
+        {
+          "target": "karch4162/sports-management@3c509002e1c13511693829b0f7b8eda9afcfe251",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185632Z-d9c871",
+          "planner_tokens": 0,
+          "duration_ms": 3858
+        },
+        {
+          "target": "karch4162/sports-management@3c509002e1c13511693829b0f7b8eda9afcfe251",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185604Z-38e16e",
+          "planner_tokens": 97083,
+          "duration_ms": 3798
+        },
+        {
+          "target": "karch4162/sports-management@3c509002e1c13511693829b0f7b8eda9afcfe251",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185604Z-e1f08d",
+          "planner_tokens": 96434,
+          "duration_ms": 3791
+        },
+        {
+          "target": "karch4162/sports-management@f41c0e8bc77877947dfd3f330d4784b4e732d6db",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185718Z-8c403b",
+          "planner_tokens": 98727,
+          "duration_ms": 3855
+        },
+        {
+          "target": "karch4162/sports-management@f41c0e8bc77877947dfd3f330d4784b4e732d6db",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185741Z-af5cd0",
+          "planner_tokens": 0,
+          "duration_ms": 3836
+        },
+        {
+          "target": "karch4162/sports-management@f41c0e8bc77877947dfd3f330d4784b4e732d6db",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185745Z-f2ed3c",
+          "planner_tokens": 0,
+          "duration_ms": 3841
+        },
+        {
+          "target": "karch4162/sports-management@f41c0e8bc77877947dfd3f330d4784b4e732d6db",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185718Z-d5bc12",
+          "planner_tokens": 97219,
+          "duration_ms": 3879
+        },
+        {
+          "target": "karch4162/sports-management@f41c0e8bc77877947dfd3f330d4784b4e732d6db",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185718Z-3fd423",
+          "planner_tokens": 97191,
+          "duration_ms": 3908
+        },
+        {
+          "target": "karch4162/sports-management@331204472bbac4af3e09e00d6c1096fe7c892d2f",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185831Z-b6125b",
+          "planner_tokens": 94546,
+          "duration_ms": 2603
+        },
+        {
+          "target": "karch4162/sports-management@331204472bbac4af3e09e00d6c1096fe7c892d2f",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185851Z-8ee3c8",
+          "planner_tokens": 0,
+          "duration_ms": 2587
+        },
+        {
+          "target": "karch4162/sports-management@331204472bbac4af3e09e00d6c1096fe7c892d2f",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T185853Z-5a264b",
+          "planner_tokens": 0,
+          "duration_ms": 2591
+        },
+        {
+          "target": "karch4162/sports-management@331204472bbac4af3e09e00d6c1096fe7c892d2f",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185831Z-093c35",
+          "planner_tokens": 95228,
+          "duration_ms": 2573
+        },
+        {
+          "target": "karch4162/sports-management@331204472bbac4af3e09e00d6c1096fe7c892d2f",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185831Z-b31649",
+          "planner_tokens": 95194,
+          "duration_ms": 2600
+        },
+        {
+          "target": "karch4162/sports-management@bc359bfe05f7bc2105564e25ed79eaf848548f4f",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T185938Z-d6c221",
+          "planner_tokens": 94726,
+          "duration_ms": 2606
+        },
+        {
+          "target": "karch4162/sports-management@bc359bfe05f7bc2105564e25ed79eaf848548f4f",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T185957Z-517700",
+          "planner_tokens": 0,
+          "duration_ms": 2587
+        },
+        {
+          "target": "karch4162/sports-management@bc359bfe05f7bc2105564e25ed79eaf848548f4f",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T190000Z-f990fa",
+          "planner_tokens": 0,
+          "duration_ms": 2592
+        },
+        {
+          "target": "karch4162/sports-management@bc359bfe05f7bc2105564e25ed79eaf848548f4f",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T185938Z-a7a4a3",
+          "planner_tokens": 96496,
+          "duration_ms": 2576
+        },
+        {
+          "target": "karch4162/sports-management@bc359bfe05f7bc2105564e25ed79eaf848548f4f",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T185938Z-f37f3c",
+          "planner_tokens": 94383,
+          "duration_ms": 1548
+        },
+        {
+          "target": "karch4162/sports-management@1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T190044Z-ec5138",
+          "planner_tokens": 45228,
+          "duration_ms": 14
+        },
+        {
+          "target": "karch4162/sports-management@1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T190101Z-50f27c",
+          "planner_tokens": 0,
+          "duration_ms": 19
+        },
+        {
+          "target": "karch4162/sports-management@1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T190101Z-704312",
+          "planner_tokens": 0,
+          "duration_ms": 18
+        },
+        {
+          "target": "karch4162/sports-management@1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T190044Z-66d11a",
+          "planner_tokens": 45877,
+          "duration_ms": 12
+        },
+        {
+          "target": "karch4162/sports-management@1f0a91606cca6792eed3e2a88ccc6ce9e3ace2d5",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T190044Z-0c263f",
+          "planner_tokens": 98200,
+          "duration_ms": 13
+        },
+        {
+          "target": "karch4162/sports-management@bde99e6e882e4fc89a8714805be8d5b62d6e21b4",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T190135Z-631d8c",
+          "planner_tokens": 153680,
+          "duration_ms": 14
+        },
+        {
+          "target": "karch4162/sports-management@bde99e6e882e4fc89a8714805be8d5b62d6e21b4",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T190158Z-600668",
+          "planner_tokens": 0,
+          "duration_ms": 19
+        },
+        {
+          "target": "karch4162/sports-management@bde99e6e882e4fc89a8714805be8d5b62d6e21b4",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T190158Z-684760",
+          "planner_tokens": 0,
+          "duration_ms": 19
+        },
+        {
+          "target": "karch4162/sports-management@bde99e6e882e4fc89a8714805be8d5b62d6e21b4",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T190135Z-555721",
+          "planner_tokens": 46103,
+          "duration_ms": 13
+        },
+        {
+          "target": "karch4162/sports-management@bde99e6e882e4fc89a8714805be8d5b62d6e21b4",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T190135Z-fc3239",
+          "planner_tokens": 99305,
+          "duration_ms": 13
+        },
+        {
+          "target": "karch4162/sports-management@c6b34bf48391596e49f8b4b24df29bbc33532f79",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T190232Z-d01fd7",
+          "planner_tokens": 150154,
+          "duration_ms": 2935
+        },
+        {
+          "target": "karch4162/sports-management@c6b34bf48391596e49f8b4b24df29bbc33532f79",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T190316Z-a04553",
+          "planner_tokens": 0,
+          "duration_ms": 2921
+        },
+        {
+          "target": "karch4162/sports-management@c6b34bf48391596e49f8b4b24df29bbc33532f79",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T190319Z-ca9c46",
+          "planner_tokens": 0,
+          "duration_ms": 2921
+        },
+        {
+          "target": "karch4162/sports-management@c6b34bf48391596e49f8b4b24df29bbc33532f79",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T190232Z-7c5fc0",
+          "planner_tokens": 338815,
+          "duration_ms": 2898
+        },
+        {
+          "target": "karch4162/sports-management@c6b34bf48391596e49f8b4b24df29bbc33532f79",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T190232Z-f16a9a",
+          "planner_tokens": 151017,
+          "duration_ms": 2881
+        },
+        {
+          "target": "karch4162/sports-management@a3f447e4ccae7bc49bff63c3a5d691a8b60e90da",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T190402Z-028c13",
+          "planner_tokens": 200001,
+          "duration_ms": 2913
+        },
+        {
+          "target": "karch4162/sports-management@a3f447e4ccae7bc49bff63c3a5d691a8b60e90da",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T190439Z-467c94",
+          "planner_tokens": 0,
+          "duration_ms": 2888
+        },
+        {
+          "target": "karch4162/sports-management@a3f447e4ccae7bc49bff63c3a5d691a8b60e90da",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T190442Z-016bad",
+          "planner_tokens": 0,
+          "duration_ms": 2914
+        },
+        {
+          "target": "karch4162/sports-management@a3f447e4ccae7bc49bff63c3a5d691a8b60e90da",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T190402Z-c5f159",
+          "planner_tokens": 150059,
+          "duration_ms": 2879
+        },
+        {
+          "target": "karch4162/sports-management@a3f447e4ccae7bc49bff63c3a5d691a8b60e90da",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T190402Z-f6afcf",
+          "planner_tokens": 252392,
+          "duration_ms": 2885
+        },
+        {
+          "target": "karch4162/sports-management@fa86d90745c3175c3920da12f381c50431bcac92",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T193721Z-d720ed",
+          "planner_tokens": 154959,
+          "duration_ms": 5256
+        },
+        {
+          "target": "karch4162/sports-management@fa86d90745c3175c3920da12f381c50431bcac92",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T193759Z-717f3e",
+          "planner_tokens": 0,
+          "duration_ms": 5249
+        },
+        {
+          "target": "karch4162/sports-management@fa86d90745c3175c3920da12f381c50431bcac92",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T193805Z-214457",
+          "planner_tokens": 0,
+          "duration_ms": 5231
+        },
+        {
+          "target": "karch4162/sports-management@fa86d90745c3175c3920da12f381c50431bcac92",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T193721Z-888e99",
+          "planner_tokens": 212938,
+          "duration_ms": 5237
+        },
+        {
+          "target": "karch4162/sports-management@fa86d90745c3175c3920da12f381c50431bcac92",
+          "plan": 3,
+          "run": 1,
+          "run_id": null,
+          "planner_tokens": 0,
+          "duration_ms": null
+        },
+        {
+          "target": "karch4162/sports-management@b899ba97b201f14276ae7b624121028eb7d5fc42",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T193852Z-ca7754",
+          "planner_tokens": 209491,
+          "duration_ms": 5294
+        },
+        {
+          "target": "karch4162/sports-management@b899ba97b201f14276ae7b624121028eb7d5fc42",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T193952Z-14e277",
+          "planner_tokens": 0,
+          "duration_ms": 5240
+        },
+        {
+          "target": "karch4162/sports-management@b899ba97b201f14276ae7b624121028eb7d5fc42",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T193957Z-47f0c0",
+          "planner_tokens": 0,
+          "duration_ms": 5254
+        },
+        {
+          "target": "karch4162/sports-management@b899ba97b201f14276ae7b624121028eb7d5fc42",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T193852Z-95317a",
+          "planner_tokens": 495525,
+          "duration_ms": 4052
+        },
+        {
+          "target": "karch4162/sports-management@b899ba97b201f14276ae7b624121028eb7d5fc42",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T193852Z-9dc1bd",
+          "planner_tokens": 268271,
+          "duration_ms": 5256
+        },
+        {
+          "target": "karch4162/sports-management@2b5d6f4939c6126e6f642b76c62eed8a2458d2f6",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T194045Z-b2422a",
+          "planner_tokens": 153706,
+          "duration_ms": 2914
+        },
+        {
+          "target": "karch4162/sports-management@2b5d6f4939c6126e6f642b76c62eed8a2458d2f6",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T194121Z-3f14fb",
+          "planner_tokens": 0,
+          "duration_ms": 2857
+        },
+        {
+          "target": "karch4162/sports-management@2b5d6f4939c6126e6f642b76c62eed8a2458d2f6",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T194124Z-ff6654",
+          "planner_tokens": 0,
+          "duration_ms": 2885
+        },
+        {
+          "target": "karch4162/sports-management@2b5d6f4939c6126e6f642b76c62eed8a2458d2f6",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T194045Z-797628",
+          "planner_tokens": 153763,
+          "duration_ms": 2884
+        },
+        {
+          "target": "karch4162/sports-management@2b5d6f4939c6126e6f642b76c62eed8a2458d2f6",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T194045Z-f3067d",
+          "planner_tokens": 206149,
+          "duration_ms": 2852
+        },
+        {
+          "target": "karch4162/sports-management@7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T194206Z-9d868d",
+          "planner_tokens": 149427,
+          "duration_ms": 3084
+        },
+        {
+          "target": "karch4162/sports-management@7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T194552Z-08fd73",
+          "planner_tokens": 0,
+          "duration_ms": 2891
+        },
+        {
+          "target": "karch4162/sports-management@7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T194555Z-b73942",
+          "planner_tokens": 0,
+          "duration_ms": 2868
+        },
+        {
+          "target": "karch4162/sports-management@7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T194206Z-196633",
+          "planner_tokens": 149886,
+          "duration_ms": 2874
+        },
+        {
+          "target": "karch4162/sports-management@7fc15a44c3f8b9e9c6caf69278e62c78fe1a7e2a",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T194206Z-d2c886",
+          "planner_tokens": 150261,
+          "duration_ms": 2900
+        },
+        {
+          "target": "karch4162/sports-management@7e3052af52d372513f86c9e9811587c6f816e3c9",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T194641Z-580ce1",
+          "planner_tokens": 204025,
+          "duration_ms": 5017
+        },
+        {
+          "target": "karch4162/sports-management@7e3052af52d372513f86c9e9811587c6f816e3c9",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T194717Z-2db76b",
+          "planner_tokens": 0,
+          "duration_ms": 4992
+        },
+        {
+          "target": "karch4162/sports-management@7e3052af52d372513f86c9e9811587c6f816e3c9",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T194722Z-55cf6e",
+          "planner_tokens": 0,
+          "duration_ms": 4987
+        },
+        {
+          "target": "karch4162/sports-management@7e3052af52d372513f86c9e9811587c6f816e3c9",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T194641Z-dc9879",
+          "planner_tokens": 153378,
+          "duration_ms": 4964
+        },
+        {
+          "target": "karch4162/sports-management@7e3052af52d372513f86c9e9811587c6f816e3c9",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T194641Z-5d7986",
+          "planner_tokens": 259941,
+          "duration_ms": 4957
+        },
+        {
+          "target": "karch4162/sports-management@53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T194810Z-37e6b2",
+          "planner_tokens": 145896,
+          "duration_ms": 2585
+        },
+        {
+          "target": "karch4162/sports-management@53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T194845Z-63c62a",
+          "planner_tokens": 0,
+          "duration_ms": 2617
+        },
+        {
+          "target": "karch4162/sports-management@53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T194848Z-687f82",
+          "planner_tokens": 0,
+          "duration_ms": 2563
+        },
+        {
+          "target": "karch4162/sports-management@53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T194810Z-e6e55d",
+          "planner_tokens": 203732,
+          "duration_ms": 3915
+        },
+        {
+          "target": "karch4162/sports-management@53ef4af70c3d84ddd338e240131af2f5ed9543ca",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T194810Z-7bbf69",
+          "planner_tokens": 208498,
+          "duration_ms": 3944
+        },
+        {
+          "target": "karch4162/sports-management@6c5788a58870e13e63dcd02f37f8b267020afcbd",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T194932Z-0c057a",
+          "planner_tokens": 158362,
+          "duration_ms": 11161
+        },
+        {
+          "target": "karch4162/sports-management@6c5788a58870e13e63dcd02f37f8b267020afcbd",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T195039Z-3cc7fe",
+          "planner_tokens": 0,
+          "duration_ms": 10753
+        },
+        {
+          "target": "karch4162/sports-management@6c5788a58870e13e63dcd02f37f8b267020afcbd",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T195050Z-640a1f",
+          "planner_tokens": 0,
+          "duration_ms": 10504
+        },
+        {
+          "target": "karch4162/sports-management@6c5788a58870e13e63dcd02f37f8b267020afcbd",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T194932Z-04c458",
+          "planner_tokens": 101383,
+          "duration_ms": 10693
+        },
+        {
+          "target": "karch4162/sports-management@6c5788a58870e13e63dcd02f37f8b267020afcbd",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T194932Z-e4a884",
+          "planner_tokens": 159015,
+          "duration_ms": 7079
+        },
+        {
+          "target": "karch4162/sports-management@ecaaa23c2f582933d81415f6e1ec26fb7d6f323a",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T195227Z-059dee",
+          "planner_tokens": 100836,
+          "duration_ms": 10481
+        },
+        {
+          "target": "karch4162/sports-management@ecaaa23c2f582933d81415f6e1ec26fb7d6f323a",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T195336Z-745ac7",
+          "planner_tokens": 0,
+          "duration_ms": 10293
+        },
+        {
+          "target": "karch4162/sports-management@ecaaa23c2f582933d81415f6e1ec26fb7d6f323a",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T195346Z-ae3a52",
+          "planner_tokens": 0,
+          "duration_ms": 10909
+        },
+        {
+          "target": "karch4162/sports-management@ecaaa23c2f582933d81415f6e1ec26fb7d6f323a",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T195227Z-876151",
+          "planner_tokens": 100880,
+          "duration_ms": 11033
+        },
+        {
+          "target": "karch4162/sports-management@ecaaa23c2f582933d81415f6e1ec26fb7d6f323a",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T195227Z-650648",
+          "planner_tokens": 161432,
+          "duration_ms": 10960
+        },
+        {
+          "target": "karch4162/sports-management@c90e4125ac1955057164c4cdd125f816424ea31b",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T195525Z-18cb6f",
+          "planner_tokens": 145299,
+          "duration_ms": 5283
+        },
+        {
+          "target": "karch4162/sports-management@c90e4125ac1955057164c4cdd125f816424ea31b",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T195626Z-8140b8",
+          "planner_tokens": 0,
+          "duration_ms": 5194
+        },
+        {
+          "target": "karch4162/sports-management@c90e4125ac1955057164c4cdd125f816424ea31b",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T195631Z-6fa6a9",
+          "planner_tokens": 0,
+          "duration_ms": 5616
+        },
+        {
+          "target": "karch4162/sports-management@c90e4125ac1955057164c4cdd125f816424ea31b",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T195525Z-fbbcca",
+          "planner_tokens": 96136,
+          "duration_ms": 8655
+        },
+        {
+          "target": "karch4162/sports-management@c90e4125ac1955057164c4cdd125f816424ea31b",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T195525Z-abfa77",
+          "planner_tokens": 96189,
+          "duration_ms": 10586
+        },
+        {
+          "target": "karch4162/sports-management@0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T195800Z-9f6a83",
+          "planner_tokens": 96456,
+          "duration_ms": 8517
+        },
+        {
+          "target": "karch4162/sports-management@0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T195903Z-a423b8",
+          "planner_tokens": 0,
+          "duration_ms": 9459
+        },
+        {
+          "target": "karch4162/sports-management@0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T195913Z-0b6e67",
+          "planner_tokens": 0,
+          "duration_ms": 9881
+        },
+        {
+          "target": "karch4162/sports-management@0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T195800Z-512233",
+          "planner_tokens": 94007,
+          "duration_ms": 8793
+        },
+        {
+          "target": "karch4162/sports-management@0de9d8de947e43b0fa590bfdb4f80253597f5e30",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T195800Z-a2b84e",
+          "planner_tokens": 145123,
+          "duration_ms": 7061
+        },
+        {
+          "target": "karch4162/sports-management@871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T200045Z-0300c6",
+          "planner_tokens": 148246,
+          "duration_ms": 60
+        },
+        {
+          "target": "karch4162/sports-management@871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T200140Z-a05e10",
+          "planner_tokens": 0,
+          "duration_ms": 83
+        },
+        {
+          "target": "karch4162/sports-management@871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T200140Z-f357b1",
+          "planner_tokens": 0,
+          "duration_ms": 91
+        },
+        {
+          "target": "karch4162/sports-management@871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T200045Z-0eb8d0",
+          "planner_tokens": 97468,
+          "duration_ms": 62
+        },
+        {
+          "target": "karch4162/sports-management@871ee5087ce9b9e4bf5aa92b7136fb1fb35243b2",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T200045Z-4ab422",
+          "planner_tokens": 202063,
+          "duration_ms": 66
+        },
+        {
+          "target": "karch4162/sports-management@9412137596634ccf5fc471375c5958dd57a19687",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T200246Z-8a8851",
+          "planner_tokens": 152138,
+          "duration_ms": 75
+        },
+        {
+          "target": "karch4162/sports-management@9412137596634ccf5fc471375c5958dd57a19687",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T200339Z-0afc8c",
+          "planner_tokens": 0,
+          "duration_ms": 104
+        },
+        {
+          "target": "karch4162/sports-management@9412137596634ccf5fc471375c5958dd57a19687",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T200339Z-3d2edf",
+          "planner_tokens": 0,
+          "duration_ms": 105
+        },
+        {
+          "target": "karch4162/sports-management@9412137596634ccf5fc471375c5958dd57a19687",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T200246Z-6538d2",
+          "planner_tokens": 97453,
+          "duration_ms": 64
+        },
+        {
+          "target": "karch4162/sports-management@9412137596634ccf5fc471375c5958dd57a19687",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T200246Z-33f65b",
+          "planner_tokens": 97526,
+          "duration_ms": 60
+        },
+        {
+          "target": "karch4162/sports-management@6a24639555ea630f8c514fcd14228e72f92389fb",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T200442Z-a9592b",
+          "planner_tokens": 142651,
+          "duration_ms": 4526
+        },
+        {
+          "target": "karch4162/sports-management@6a24639555ea630f8c514fcd14228e72f92389fb",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T200537Z-8e40bb",
+          "planner_tokens": 0,
+          "duration_ms": 4386
+        },
+        {
+          "target": "karch4162/sports-management@6a24639555ea630f8c514fcd14228e72f92389fb",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T200542Z-5eaf6c",
+          "planner_tokens": 0,
+          "duration_ms": 4020
+        },
+        {
+          "target": "karch4162/sports-management@6a24639555ea630f8c514fcd14228e72f92389fb",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T200442Z-c6eda2",
+          "planner_tokens": 147339,
+          "duration_ms": 4636
+        },
+        {
+          "target": "karch4162/sports-management@6a24639555ea630f8c514fcd14228e72f92389fb",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T200442Z-6094c6",
+          "planner_tokens": 147413,
+          "duration_ms": 4459
+        },
+        {
+          "target": "karch4162/sports-management@49700390d9ed782c9508f4957648eae90e11b456",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T200633Z-b51e1a",
+          "planner_tokens": 196193,
+          "duration_ms": 4364
+        },
+        {
+          "target": "karch4162/sports-management@49700390d9ed782c9508f4957648eae90e11b456",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T200730Z-551028",
+          "planner_tokens": 0,
+          "duration_ms": 4704
+        },
+        {
+          "target": "karch4162/sports-management@49700390d9ed782c9508f4957648eae90e11b456",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T200735Z-3ffdc2",
+          "planner_tokens": 0,
+          "duration_ms": 4627
+        },
+        {
+          "target": "karch4162/sports-management@49700390d9ed782c9508f4957648eae90e11b456",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T200633Z-8bb8f4",
+          "planner_tokens": 147378,
+          "duration_ms": 4377
+        },
+        {
+          "target": "karch4162/sports-management@49700390d9ed782c9508f4957648eae90e11b456",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T200633Z-f3c75f",
+          "planner_tokens": 198722,
+          "duration_ms": 4887
+        },
+        {
+          "target": "karch4162/sports-management@d507d546108ca9123c5b15600b7171d6dbf13db0",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T200831Z-223612",
+          "planner_tokens": 91209,
+          "duration_ms": 1850
+        },
+        {
+          "target": "karch4162/sports-management@d507d546108ca9123c5b15600b7171d6dbf13db0",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T200916Z-83b129",
+          "planner_tokens": 0,
+          "duration_ms": 1782
+        },
+        {
+          "target": "karch4162/sports-management@d507d546108ca9123c5b15600b7171d6dbf13db0",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T200918Z-4cd0cc",
+          "planner_tokens": 0,
+          "duration_ms": 3066
+        },
+        {
+          "target": "karch4162/sports-management@d507d546108ca9123c5b15600b7171d6dbf13db0",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T200831Z-9c4c44",
+          "planner_tokens": 91798,
+          "duration_ms": 3675
+        },
+        {
+          "target": "karch4162/sports-management@d507d546108ca9123c5b15600b7171d6dbf13db0",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T200831Z-2d2669",
+          "planner_tokens": 90922,
+          "duration_ms": 3417
+        },
+        {
+          "target": "karch4162/sports-management@e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T201003Z-eb7306",
+          "planner_tokens": 91714,
+          "duration_ms": 3017
+        },
+        {
+          "target": "karch4162/sports-management@e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T201050Z-f07c45",
+          "planner_tokens": 0,
+          "duration_ms": 4734
+        },
+        {
+          "target": "karch4162/sports-management@e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T201054Z-bebc52",
+          "planner_tokens": 0,
+          "duration_ms": 3439
+        },
+        {
+          "target": "karch4162/sports-management@e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T201003Z-83416e",
+          "planner_tokens": 93854,
+          "duration_ms": 3248
+        },
+        {
+          "target": "karch4162/sports-management@e9e03c2ad8e03689040bbd014de89fcf16e5d73d",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T201003Z-85b808",
+          "planner_tokens": 91031,
+          "duration_ms": 3324
+        },
+        {
+          "target": "karch4162/sports-management@04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T202824Z-d039fd",
+          "planner_tokens": 92273,
+          "duration_ms": 26120
+        },
+        {
+          "target": "karch4162/sports-management@04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T210417Z-e6322c",
+          "planner_tokens": 0,
+          "duration_ms": 1358
+        },
+        {
+          "target": "karch4162/sports-management@04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T210418Z-25756f",
+          "planner_tokens": 0,
+          "duration_ms": 1347
+        },
+        {
+          "target": "karch4162/sports-management@04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T202824Z-935bbc",
+          "planner_tokens": 204610,
+          "duration_ms": 12
+        },
+        {
+          "target": "karch4162/sports-management@04e53e88992763e34c9fd3ed30a94a6b9989a6a4",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T202824Z-c75fee",
+          "planner_tokens": 91676,
+          "duration_ms": 1340
+        },
+        {
+          "target": "karch4162/sports-management@9e70556e86205670ea04b4f49da5fd5ef95e2fba",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T220605Z-7234e0",
+          "planner_tokens": 92316,
+          "duration_ms": 1389
+        },
+        {
+          "target": "karch4162/sports-management@9e70556e86205670ea04b4f49da5fd5ef95e2fba",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T220719Z-0d13d3",
+          "planner_tokens": 0,
+          "duration_ms": 1333
+        },
+        {
+          "target": "karch4162/sports-management@9e70556e86205670ea04b4f49da5fd5ef95e2fba",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T220720Z-c37454",
+          "planner_tokens": 0,
+          "duration_ms": 1340
+        },
+        {
+          "target": "karch4162/sports-management@9e70556e86205670ea04b4f49da5fd5ef95e2fba",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T220605Z-bcf182",
+          "planner_tokens": 144545,
+          "duration_ms": 1333
+        },
+        {
+          "target": "karch4162/sports-management@9e70556e86205670ea04b4f49da5fd5ef95e2fba",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T220605Z-aad3ec",
+          "planner_tokens": 92309,
+          "duration_ms": 1331
+        },
+        {
+          "target": "karch4162/sports-management@126eadc82819a30558b14f0dbb646f506a2c70e4",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T222039Z-a6cb4d",
+          "planner_tokens": 196270,
+          "duration_ms": 5769
+        },
+        {
+          "target": "karch4162/sports-management@126eadc82819a30558b14f0dbb646f506a2c70e4",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T223710Z-840fcf",
+          "planner_tokens": 0,
+          "duration_ms": 5273
+        },
+        {
+          "target": "karch4162/sports-management@126eadc82819a30558b14f0dbb646f506a2c70e4",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T223715Z-11d5d3",
+          "planner_tokens": 0,
+          "duration_ms": 5248
+        },
+        {
+          "target": "karch4162/sports-management@126eadc82819a30558b14f0dbb646f506a2c70e4",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T222039Z-bc0bae",
+          "planner_tokens": 249432,
+          "duration_ms": 5202
+        },
+        {
+          "target": "karch4162/sports-management@126eadc82819a30558b14f0dbb646f506a2c70e4",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T222039Z-e39385",
+          "planner_tokens": 144901,
+          "duration_ms": 5286
+        },
+        {
+          "target": "karch4162/sports-management@72045ecb6d38c3fe1138993706351ce8671dbcbb",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T225446Z-6ada48",
+          "planner_tokens": 139203,
+          "duration_ms": 28786
+        },
+        {
+          "target": "karch4162/sports-management@72045ecb6d38c3fe1138993706351ce8671dbcbb",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261121T233904Z-945f46",
+          "planner_tokens": 0,
+          "duration_ms": 5437
+        },
+        {
+          "target": "karch4162/sports-management@72045ecb6d38c3fe1138993706351ce8671dbcbb",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261121T233910Z-27820f",
+          "planner_tokens": 0,
+          "duration_ms": 6836
+        },
+        {
+          "target": "karch4162/sports-management@72045ecb6d38c3fe1138993706351ce8671dbcbb",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T225446Z-847ecd",
+          "planner_tokens": 198235,
+          "duration_ms": 5502
+        },
+        {
+          "target": "karch4162/sports-management@72045ecb6d38c3fe1138993706351ce8671dbcbb",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261121T225446Z-d22a7c",
+          "planner_tokens": 298318,
+          "duration_ms": 4830
+        },
+        {
+          "target": "karch4162/sports-management@7571b0c7a2f8d98ea2ae4be269c14f266949dad6",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261121T235748Z-68b44c",
+          "planner_tokens": 250287,
+          "duration_ms": 26925
+        },
+        {
+          "target": "karch4162/sports-management@7571b0c7a2f8d98ea2ae4be269c14f266949dad6",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T002339Z-c2c051",
+          "planner_tokens": 0,
+          "duration_ms": 2662
+        },
+        {
+          "target": "karch4162/sports-management@7571b0c7a2f8d98ea2ae4be269c14f266949dad6",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T002342Z-fefd6b",
+          "planner_tokens": 0,
+          "duration_ms": 2727
+        },
+        {
+          "target": "karch4162/sports-management@7571b0c7a2f8d98ea2ae4be269c14f266949dad6",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261121T235748Z-dbcfab",
+          "planner_tokens": 198453,
+          "duration_ms": 3150
+        },
+        {
+          "target": "karch4162/sports-management@7571b0c7a2f8d98ea2ae4be269c14f266949dad6",
+          "plan": 3,
+          "run": 1,
+          "run_id": null,
+          "planner_tokens": 0,
+          "duration_ms": null
+        },
+        {
+          "target": "karch4162/sports-management@e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261122T004106Z-fef747",
+          "planner_tokens": 304216,
+          "duration_ms": 4203
+        },
+        {
+          "target": "karch4162/sports-management@e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T005926Z-ef1de8",
+          "planner_tokens": 0,
+          "duration_ms": 6493
+        },
+        {
+          "target": "karch4162/sports-management@e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T005932Z-c4c7d1",
+          "planner_tokens": 0,
+          "duration_ms": 6236
+        },
+        {
+          "target": "karch4162/sports-management@e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T004106Z-8f2af2",
+          "planner_tokens": 251874,
+          "duration_ms": 9694
+        },
+        {
+          "target": "karch4162/sports-management@e0359a6b5eedd79d9e124333afaa7ec9e117ae90",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T004106Z-435de7",
+          "planner_tokens": 251357,
+          "duration_ms": 9098
+        },
+        {
+          "target": "karch4162/sports-management@f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261122T021532Z-30174e",
+          "planner_tokens": 251984,
+          "duration_ms": 2881
+        },
+        {
+          "target": "karch4162/sports-management@f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T022012Z-b8033f",
+          "planner_tokens": 0,
+          "duration_ms": 2929
+        },
+        {
+          "target": "karch4162/sports-management@f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T022015Z-ded9e1",
+          "planner_tokens": 0,
+          "duration_ms": 2960
+        },
+        {
+          "target": "karch4162/sports-management@f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T021532Z-96689f",
+          "planner_tokens": 274242,
+          "duration_ms": 2801
+        },
+        {
+          "target": "karch4162/sports-management@f8a7c8228d64ad5df39b5e4db2b4f9dc59cddf16",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T021532Z-f57d94",
+          "planner_tokens": 267863,
+          "duration_ms": 2817
+        },
+        {
+          "target": "karch4162/sports-management@ec0794422d88fb996973e6f26079fc7068d541c1",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261122T022058Z-4c8b98",
+          "planner_tokens": 272578,
+          "duration_ms": 2867
+        },
+        {
+          "target": "karch4162/sports-management@ec0794422d88fb996973e6f26079fc7068d541c1",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T022133Z-9967f6",
+          "planner_tokens": 0,
+          "duration_ms": 2833
+        },
+        {
+          "target": "karch4162/sports-management@ec0794422d88fb996973e6f26079fc7068d541c1",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T022136Z-001223",
+          "planner_tokens": 0,
+          "duration_ms": 2880
+        },
+        {
+          "target": "karch4162/sports-management@ec0794422d88fb996973e6f26079fc7068d541c1",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T022058Z-5f91a3",
+          "planner_tokens": 255289,
+          "duration_ms": 2872
+        },
+        {
+          "target": "karch4162/sports-management@ec0794422d88fb996973e6f26079fc7068d541c1",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T022058Z-63e2fd",
+          "planner_tokens": 153111,
+          "duration_ms": 2834
+        },
+        {
+          "target": "karch4162/sports-management@267652c8c0d9f2c874a2bd0e20b9ba958733b59a",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261122T022218Z-5f5453",
+          "planner_tokens": 205028,
+          "duration_ms": 3937
+        },
+        {
+          "target": "karch4162/sports-management@267652c8c0d9f2c874a2bd0e20b9ba958733b59a",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T022253Z-425537",
+          "planner_tokens": 0,
+          "duration_ms": 3889
+        },
+        {
+          "target": "karch4162/sports-management@267652c8c0d9f2c874a2bd0e20b9ba958733b59a",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T022257Z-dee0c2",
+          "planner_tokens": 0,
+          "duration_ms": 3897
+        },
+        {
+          "target": "karch4162/sports-management@267652c8c0d9f2c874a2bd0e20b9ba958733b59a",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T022218Z-833ea9",
+          "planner_tokens": 147107,
+          "duration_ms": 3778
+        },
+        {
+          "target": "karch4162/sports-management@267652c8c0d9f2c874a2bd0e20b9ba958733b59a",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T022218Z-6145b9",
+          "planner_tokens": 202296,
+          "duration_ms": 3896
+        },
+        {
+          "target": "karch4162/sports-management@d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261122T022342Z-e68660",
+          "planner_tokens": 304367,
+          "duration_ms": 3918
+        },
+        {
+          "target": "karch4162/sports-management@d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T022420Z-e30103",
+          "planner_tokens": 0,
+          "duration_ms": 3906
+        },
+        {
+          "target": "karch4162/sports-management@d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T022424Z-d49f2d",
+          "planner_tokens": 0,
+          "duration_ms": 3896
+        },
+        {
+          "target": "karch4162/sports-management@d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T022342Z-6f4630",
+          "planner_tokens": 198208,
+          "duration_ms": 3735
+        },
+        {
+          "target": "karch4162/sports-management@d57e3822f78abe9f91f4dad6101a20b5c8efa8ea",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T022342Z-7edf74",
+          "planner_tokens": 202313,
+          "duration_ms": 3740
+        },
+        {
+          "target": "karch4162/sports-management@887bf8cb97584b342c2fc9929ad2b7c4a9d794e6",
+          "plan": 1,
+          "run": 1,
+          "run_id": "20261122T022509Z-43d002",
+          "planner_tokens": 148184,
+          "duration_ms": 2575
+        },
+        {
+          "target": "karch4162/sports-management@887bf8cb97584b342c2fc9929ad2b7c4a9d794e6",
+          "plan": 1,
+          "run": 2,
+          "run_id": "20261122T022534Z-a3cf6b",
+          "planner_tokens": 0,
+          "duration_ms": 2593
+        },
+        {
+          "target": "karch4162/sports-management@887bf8cb97584b342c2fc9929ad2b7c4a9d794e6",
+          "plan": 1,
+          "run": 3,
+          "run_id": "20261122T022537Z-99571b",
+          "planner_tokens": 0,
+          "duration_ms": 2566
+        },
+        {
+          "target": "karch4162/sports-management@887bf8cb97584b342c2fc9929ad2b7c4a9d794e6",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T022509Z-405632",
+          "planner_tokens": 96838,
+          "duration_ms": 3981
+        },
+        {
+          "target": "karch4162/sports-management@887bf8cb97584b342c2fc9929ad2b7c4a9d794e6",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T022509Z-c7e062",
+          "planner_tokens": 97011,
+          "duration_ms": 2571
+        },
+        {
+          "target": "karch4162/sports-management@fc0b8296a74a0b3112f8d2183f7b33668c0b710a",
+          "plan": 1,
+          "run": 1,
+          "run_id": null,
+          "planner_tokens": 0,
+          "duration_ms": null
+        },
+        {
+          "target": "karch4162/sports-management@fc0b8296a74a0b3112f8d2183f7b33668c0b710a",
+          "plan": 2,
+          "run": 1,
+          "run_id": "20261122T022620Z-67fa43",
+          "planner_tokens": 96546,
+          "duration_ms": 2590
+        },
+        {
+          "target": "karch4162/sports-management@fc0b8296a74a0b3112f8d2183f7b33668c0b710a",
+          "plan": 3,
+          "run": 1,
+          "run_id": "20261122T022620Z-481897",
+          "planner_tokens": 148296,
+          "duration_ms": 4042
+        }
+      ],
+      "totals": {
+        "planner_tokens": 19182623,
+        "duration_ms": 826520
+      },
+      "gate": {
+        "verdict": "not met",
+        "failed": [
+          "known-FAIL denominator 21 is below the floor 60 (FLOORS.held_out_fail)",
+          "abstention 0.5873 > 0.2"
+        ]
+      }
+    }
+  ]
+}
