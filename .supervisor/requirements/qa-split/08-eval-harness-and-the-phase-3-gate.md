@@ -1,6 +1,7 @@
 # Selvedge's held-out false-PASS and abstention rates are measured by our own harness and published with their intervals
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/973
 
 > Phase 2, item 08 of `qa-split/00-plan.md` (rev 2, approved 2026-11-12). Decision D16; non-goals N6, N7;
 > Q5, Q7; §8. Shares Phase 2's 3-week time-box with item 07; at most two engine revisions.
@@ -119,3 +120,9 @@ selvedge/README.md
 selvedge/CHANGELOG.md
 selvedge/.claude-plugin/plugin.json
 .claude-plugin/marketplace.json
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-22T12:34:18Z
+- **Brief:** .supervisor/jobs/done/2026-11-21-qa-split-08-eval-harness.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/973
