@@ -51,7 +51,7 @@ STEP="start"
 
 step() { STEP="$1"; echo "target-driver: step: $1" >&2; }
 fail() { echo "target-driver: FAIL step '$STEP': $*" >&2; exit 1; }
-usage() { echo "usage: target-driver.sh up <target.json> <workdir> | down <workdir> | stop <dir>" >&2; exit 2; }
+usage() { echo "usage: target-driver.sh up <target.json> <workdir> | down <workdir> | stop <dir> | fonts <clone> <out.js>" >&2; exit 2; }
 
 clone_dir() { printf '%s\n' "${SELVEDGE_EVAL_CLONE_DIR:-${TMPDIR:-/tmp}/selvedge-eval-sm/clone}"; }
 jget() { node -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]]; process.stdout.write(v===undefined||v===null?"":String(v))' "$1" "$2"; }
@@ -161,9 +161,15 @@ for (const f of files) {
   }
 }
 const mocks = {};
+// Google serves the same URL as fonts.gstatic.com/l/ files now and then (about 1 request in 15 for
+// MuseoModerno, measured 2026-11-23), whatever the user agent: ask again, up to FONT_TRIES times.
+const FONT_TRIES = 5;
 for (const u of urls) {
-  mocks[u] = execFileSync('curl', ['-fsSL', '--max-time', '60', '-A', ua, u], { encoding: 'utf8' });
-  if (mocks[u].includes('fonts.gstatic.com/l/')) throw new Error(`${u} was served as fonts.gstatic.com/l/ files, which Turbopack refuses`);
+  for (let i = 1; ; i++) {
+    mocks[u] = execFileSync('curl', ['-fsSL', '--max-time', '60', '-A', ua, u], { encoding: 'utf8' });
+    if (!mocks[u].includes('fonts.gstatic.com/l/')) break;
+    if (i === FONT_TRIES) throw new Error(`${u} was served as fonts.gstatic.com/l/ files ${FONT_TRIES} times in a row, which Turbopack refuses`);
+  }
 }
 fs.writeFileSync(out, `module.exports = ${JSON.stringify(mocks, null, 2)};\n`);
 process.stdout.write(`${urls.size}\n`);
@@ -300,7 +306,7 @@ EOF
   } >"$envfile" || fail "cannot write $envfile"
 
   step "NEXT_FONT_GOOGLE_MOCKED_RESPONSES"
-  n="$(fonts_mock "$clone" "$work/font-mocks.js" 2>"$work/fonts.err")" || fail "$(tail -n 3 "$work/fonts.err")"
+  n="$(fonts_mock "$clone" "$work/font-mocks.js" 2>"$work/fonts.err")" || fail "$(grep -m1 '^Error' "$work/fonts.err" || tail -n 3 "$work/fonts.err")"
   echo "target-driver: $n next/font/google stylesheet(s) mocked" >&2
 
   step "next dev -p $PORT"
@@ -339,6 +345,13 @@ case "${1:-}" in
     [ "$#" -eq 2 ] || usage
     stop_pidfile "$2/next.pid"
     stop_pidfile "$2/app.pid"
+    exit 0
+    ;;
+  fonts)
+    # fonts <clone> <out.js>: the font step alone (what `up` runs for a commit), for the tests.
+    [ "$#" -eq 3 ] || usage
+    STEP="NEXT_FONT_GOOGLE_MOCKED_RESPONSES"
+    fonts_mock "$2" "$3" || exit 1
     exit 0
     ;;
   stop)

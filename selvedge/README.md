@@ -1022,6 +1022,18 @@ Phase 3 gate: **not met** (known-FAIL denominator 21 is below the floor 60 (FLOO
 
 model-judged criteria, counted apart: 0. Runner flips: 1 of 126 case(s) over 3 run(s) of one frozen plan; planner flips: 37 of 126 case(s) over 3 fresh plan(s).
 
+**Tuning set — selvedge 0.10.0, planner sonnet, 2026-11-22, 72 case(s).**
+
+Phase 3 gate: not evaluated (the gate reads held-out reports only).
+
+| Rate | Numerator / denominator | Point estimate | 95% interval (Clopper-Pearson) |
+|---|---|---|---|
+| false-PASS (PASS on known-FAIL) | 0 / 12 | 0.0000 | 0.0000 – 0.2646 |
+| false-FAIL (FAIL on known-PASS) | 0 / 60 | 0.0000 | 0.0000 – 0.0596 |
+| abstention (BLOCKED + NOT_VERIFIABLE) | 43 / 72 | 0.5972 | 0.4750 – 0.7112 |
+
+model-judged criteria, counted apart: 0. Runner flips: 0 of 60 case(s) over 1 run(s) of one frozen plan; planner flips: 0 of 72 case(s) over 1 fresh plan(s).
+
 <!-- selvedge-eval-results:end -->
 
 ## Releasing
