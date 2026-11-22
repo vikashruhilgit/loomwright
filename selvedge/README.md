@@ -517,8 +517,9 @@ A plan is `{"schema_version": 1, "target": "web", "criteria_sha256", "plan_revis
 "steps_by_criterion": {"<id>": {"interpretation", "polarity", "unverified_assumptions", "steps"}},
 "not_planned"?: [{"id", "reason", "rewrite"?, "detail"?}]}`. `polarity` is `positive` or
 `negative`; each assumption is `{"text", "material"}`; a `not_planned` reason is
-`criterion_not_testable` (with a non-empty `rewrite`), `side_effect_not_observable` or
-`exploration_budget`. The JSON Schema is [`schemas/plan.schema.json`](schemas/plan.schema.json).
+`criterion_not_testable` (with a non-empty `rewrite`), `side_effect_not_observable` (with a
+non-empty `detail` naming the pages looked at) or `exploration_budget`. The JSON Schema is
+[`schemas/plan.schema.json`](schemas/plan.schema.json).
 
 Step types (no field beyond these is accepted):
 
@@ -557,7 +558,7 @@ Plan-lint problems (the codes after `plan_invalid:`):
 - `criteria_sha_mismatch` — `criteria_sha256` is not the hash of the run folder's `criteria.json`.
 - `prefix_step_not_allowed` — a snapshot prefix holds a `read` or `expect` step.
 - `prefix_too_long` — a snapshot prefix has more than 15 steps.
-- `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, or `criterion_not_testable` without a rewrite.
+- `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, `criterion_not_testable` without a rewrite, or `side_effect_not_observable` without a detail.
 - `plan_schema_violation` — the plan or a step is malformed: not JSON, a missing or wrongly typed value, an unknown `op`, `state` or `read` property.
 
 ## `run` and `verdict`
@@ -709,6 +710,8 @@ out), the short plan sha256 and revision, then one collapsed block per criterion
 the verdict, the planner's interpretation, its unverified assumptions (material ones marked), the
 plan's steps as type and locator, the expected value (op and value from the plan), whether it
 matched, the evidence class, and for BLOCKED / NOT_VERIFIABLE the reason with a hint to unblock it.
+For a criterion the plan did not plan, the block also shows the planner's own `detail` (the pages
+it looked at) and `rewrite` when the plan has them, redacted like a read value.
 
 **What it never shows.** No link: a `goto` shows its URL's path only, and every URL in the criterion
 text, interpretation, assumptions or expected value is cut to its path (no origin, no query string).
@@ -964,7 +967,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `run_interrupted` | BLOCKED | `evidence.jsonl` has no end line for a planned criterion: the run stopped before the criterion finished |
 | `needs_auth` | BLOCKED | `auth.signed_in_check` did not match (no session, or an expired one) and nobody could sign in; run `selvedge auth setup` (or `--headed`) |
 | `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
-| `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action; it is not planned |
+| `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action, on any page the planner looked at; it is not planned, and its detail names those pages |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
 | `no_value_read` | NOT_VERIFIABLE | the criterion's final `read` gave an empty value (`""` or none), so nothing was verified, even when the `expect` would hold |
 | `material_assumption` | NOT_VERIFIABLE | the `expect` held, but the plan records an assumption marked `material: true` for the criterion; `verdict.json` carries its text |

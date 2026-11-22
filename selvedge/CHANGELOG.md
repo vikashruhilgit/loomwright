@@ -8,6 +8,24 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.10.0 — 2026-11-22
+
+- The planner prompt (`prompts/planner.md`, rule 3) now tells the planner to look for the page
+  that shows a negative criterion's side effect before giving up on it: a list or count, a
+  counter or total, the touched record's detail page, a history page, or the same page opened
+  again. It shows the cross-page shape (read the baseline on that page, `goto` the action's page
+  and act, `goto` back and read again), which the lint already accepted because `goto` is not an
+  action. On the 0.9.0 held-out run, 49 of 126 criteria were `side_effect_not_observable`; this
+  change has not been measured against that set yet.
+- Stricter lint: a `not_planned` entry with reason `side_effect_not_observable` needs a non-empty
+  `detail` naming the pages looked at, or the plan is rejected `invalid_not_planned`. A plan that
+  omitted it was accepted before. README, the plan schema's description and
+  `tests/test-plan-validate.sh` say so, and the cross-page negative shape is pinned as accepted.
+- The PR comment now shows that note. For a criterion under `not_planned`, `lib/comment-render.mjs`
+  adds a `Planner note` line (the `detail`) and a `Suggested rewrite` line (the `rewrite`) under
+  its reason, each redacted like a read value. Before, both stayed in `plan.json` inside the run
+  folder, and the comment showed only the generic hint.
+
 ## 0.9.1 — 2026-11-22
 
 - `selvedge/eval/harness.mjs`: a target whose plan does not freeze is no longer replayed. Its

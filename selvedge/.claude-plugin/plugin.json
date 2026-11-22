@@ -1,6 +1,6 @@
 {
   "name": "selvedge",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Selvedge checks finished work against its brief and reports an evidenced PASS/FAIL per acceptance criterion. Target safety: a committed selvedge.json origin allowlist, user-approved env hooks, a browser guard that refuses unlisted origins, and a sign-in kept outside the repo. criteria, snapshot and plan freeze a linted plan by sha256; run executes it with no model (--replay, a redacted --trace); verdict derives each criterion from evidence alone; comment posts one text-only PR comment, updated in place. /selvedge:verify runs it all in a separate Bash+Read verifier subagent.",
   "author": {
     "name": "vikash ruhil"

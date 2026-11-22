@@ -236,8 +236,12 @@ validate "p.not_planned.push({ id: 'c-111111111111', reason: 'exploration_budget
 want_problem "a not_planned id that is not in criteria.json is rejected invalid_not_planned" "c-111111111111" invalid_not_planned
 validate "p.not_planned[0].reason = 'too_hard';"
 want_problem "an unknown not_planned reason is rejected invalid_not_planned" "$c2" invalid_not_planned
+validate "delete p.steps_by_criterion[c3]; p.not_planned.push({ id: c3, reason: 'side_effect_not_observable', detail: 'looked at /mail and /outbox; the send is an email no page lists' });"
+[ "$rc" -eq 0 ] && ok "a negative criterion under not_planned side_effect_not_observable with a detail (no rewrite needed) is accepted" || ko "side_effect_not_observable: rc=$rc err='$err'"
 validate "delete p.steps_by_criterion[c3]; p.not_planned.push({ id: c3, reason: 'side_effect_not_observable' });"
-[ "$rc" -eq 0 ] && ok "a negative criterion under not_planned side_effect_not_observable (no rewrite needed) is accepted" || ko "side_effect_not_observable: rc=$rc err='$err'"
+want_problem "side_effect_not_observable with no detail is rejected invalid_not_planned" "$c3" invalid_not_planned
+validate "delete p.steps_by_criterion[c3]; p.not_planned.push({ id: c3, reason: 'side_effect_not_observable', detail: ' ' });"
+want_problem "side_effect_not_observable with a blank detail is rejected invalid_not_planned" "$c3" invalid_not_planned
 
 echo "-- negative criteria (AC12)"
 validate "steps(c3).splice(1, 1);"
@@ -248,6 +252,8 @@ validate "steps(c3).splice(3, 2, { type: 'wait_for', locator: { role: 'button', 
 want_problem "AC12 a negative whose last check is wait_for hidden is rejected negative_absence_only" "$c3" negative_absence_only
 validate "crit(c1).polarity = 'negative'; steps(c1).splice(1, 0, { type: 'read', property: 'text', locator: { testid: 'total' } });"
 [ "$rc" -eq 0 ] && ok "AC12 a negative with a baseline read and a value check is accepted" || ko "AC12 negative ok: rc=$rc err='$err'"
+validate "steps(c3).splice(0, 5, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'goto', url: 'http://localhost:4100/mail' }, { type: 'click', locator: { role: 'button', name: 'Save draft' } }, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'expect', op: 'changed_from', value: false });"
+[ "$rc" -eq 0 ] && ok "a negative that reads its baseline on another page, acts, then goes back and reads again is accepted (the prompt's cross-page shape)" || ko "cross-page negative: rc=$rc err='$err'"
 
 echo "-- interpretation, polarity, assumptions, coverage, criteria_sha256 (AC13)"
 validate "delete crit(c1).interpretation;"

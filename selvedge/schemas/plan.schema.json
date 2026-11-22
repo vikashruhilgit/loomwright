@@ -62,7 +62,7 @@
         "id": { "type": "string", "pattern": "^c-[0-9a-f]{12}$" },
         "reason": { "enum": ["criterion_not_testable", "side_effect_not_observable", "exploration_budget"] },
         "rewrite": { "description": "Required (non-empty) for criterion_not_testable.", "type": "string" },
-        "detail": { "type": "string" }
+        "detail": { "description": "Required (non-empty) for side_effect_not_observable: the pages looked at.", "type": "string" }
       },
       "additionalProperties": false
     },

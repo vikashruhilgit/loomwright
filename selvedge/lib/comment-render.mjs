@@ -8,7 +8,8 @@
 // <details> block per criterion: the criterion text, the verdict cell (with the per-criterion revision
 // history), interpretation, unverified assumptions (material ones marked), the plan's steps as type +
 // locator only, the expected value (op + value from the plan), matched yes/no, evidence class, the
-// reason and its unblock hint (BLOCKED / NOT_VERIFIABLE), the read value only when the caller says it
+// reason and its unblock hint (BLOCKED / NOT_VERIFIABLE) with, for a criterion the plan lists under
+// not_planned, the planner's detail and rewrite (redacted), the read value only when the caller says it
 // may be shown (always after redaction), and the short plan sha256 + revision.
 //
 // What the body never carries: an http:// or https:// URL (a goto shows its URL's path only, and every
@@ -196,6 +197,8 @@ export function renderComment({ verdict, plan = {}, criteria = [], history = {},
   const revision = Number.isInteger(verdict.plan_revision) ? verdict.plan_revision : null;
   const sha = shortSha(verdict.plan_sha256);
   const stepsBy = isPlainObject(plan.steps_by_criterion) ? plan.steps_by_criterion : {};
+  const notPlannedBy = new Map((Array.isArray(plan.not_planned) ? plan.not_planned : [])
+    .filter((np) => isPlainObject(np) && typeof np.id === 'string').map((np) => [np.id, np]));
   const ownOf = (id) => (Array.isArray(history[id]) ? history[id] : []);
 
   const revised = new Set();
@@ -246,6 +249,17 @@ export function renderComment({ verdict, plan = {}, criteria = [], history = {},
     if (c.verdict === VERDICTS.BLOCKED || c.verdict === VERDICTS.NOT_VERIFIABLE) {
       const hint = UNBLOCK_HINTS[c.reason];
       lines.push(`- **Reason:** \`${freeText(c.reason)}\`${hint ? ` — ${hint}` : ''}`);
+      // The planner's own words for a criterion it did not plan (the pages it looked at, or the
+      // rewrite it suggests), redacted like a read value: they can quote what a snapshot showed. URLs
+      // become paths before redaction, as for the read value, so a redaction never splits a URL.
+      const np = notPlannedBy.get(id);
+      const note = (label, v) => {
+        if (typeof v === 'string' && v.trim() !== '') lines.push(`- **${label}:** ${freeText(redactValue(urlsToPaths(v), patterns))}`);
+      };
+      if (np && np.reason === c.reason) {
+        note('Planner note', np.detail);
+        note('Suggested rewrite', np.rewrite);
+      }
     }
     let shown = c.read_value === null || c.read_value === undefined ? null : redactValue(urlsToPaths(c.read_value), patterns);
     if (!readValues) shown = null;
