@@ -118,6 +118,9 @@ out(mj.rates.false_pass.numerator === 0 && mj.rates.false_pass.denominator === 5
   out(JSON.stringify(R.runner.flips) === JSON.stringify([{ case_id: 'x', verdicts: ['FAIL', 'PASS', 'FAIL'] }]) && R.runner.repeats === 3 && R.runner.flipped === 1, 'AC5 runner flips: the case whose 3 runs of one frozen plan differ, listed on its own', JSON.stringify(R.runner));
   out(JSON.stringify(R.planner.flips) === JSON.stringify([{ case_id: 'y', verdicts: ['PASS', 'BLOCKED', 'PASS'] }]) && R.planner.repeats === 3 && R.planner.flipped === 1, 'AC5 planner flips: the case whose 3 fresh plans differ, listed on its own', JSON.stringify(R.planner));
   out(r.rates.false_pass.denominator === 1 && r.rates.false_fail.denominator === 2 && r.rates.abstention.denominator === 3 && r.rates.false_pass.numerator === 0 && r.rates.abstention.numerator === 0, 'AC5 the main denominators equal the case counts, unchanged by the repeats', JSON.stringify(r.rates));
+  // A target whose plan 1 never froze is not replayed: its case is BLOCKED in the main rates, out of the runner series, no flip.
+  const nr = S.buildReport({ set: 'tuning', engine: { selvedge_version: '1', planner_model: 'm' }, ts: 't', cases, plans: [v('FAIL', 'PASS', 'BLOCKED')], replays: [{ x: v('FAIL').x, y: v('', 'PASS').y }], not_replayed: ['z'] });
+  out(nr.repeatability.runner.flipped === 0 && nr.repeatability.runner.cases === 2 && nr.rates.abstention.numerator === 1 && nr.rates.abstention.denominator === 3, 'not replayed: a never-frozen case is no runner flip and still counts in the main rates', JSON.stringify({ runner: nr.repeatability.runner, ab: nr.rates.abstention }));
 }
 // AC9 — the report schema: false-FAIL with its interval, groups per defect and per app, runs.
 {

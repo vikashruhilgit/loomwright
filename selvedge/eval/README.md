@@ -151,8 +151,10 @@ All take `--repo <dir>`, `--results <file>` and (readme, check-readme) `--readme
 **Repeats.** `--planner-repeats N` makes N fresh plans per target: plan 1 gives the main verdicts,
 plans 2 to N only feed the planner-flip number. `--runner-repeats N` runs plan 1 N times in all (the
 first run, then `selvedge run --replay` of it): runs 2 to N only feed the runner-flip number. A case
-flips when its verdicts across those repeats are not all equal. The main rates' denominators are the
-case counts, whatever the repeats.
+flips when its verdicts across those repeats are not all equal. A target whose plan 1 does not
+freeze is never replayed: its cases keep their BLOCKED main verdicts but are left out of the runner
+series, so the runner `cases` count can be lower than the case count. The main rates' denominators
+are the case counts, whatever the repeats.
 
 **Work dir and targets.** Every run folder, workspace, clone and log lives in the work dir, outside
 this repository (default under `${TMPDIR}`; a work dir inside the repository is refused). A run

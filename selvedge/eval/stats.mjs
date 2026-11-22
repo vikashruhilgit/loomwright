@@ -143,9 +143,12 @@ function repeatability(cases, series) {
 //   input.plans      [plan 1, plan 2, …], each {<case_id>: {verdict, evidence_class, reason}}: the
 //                    first run of each fresh plan
 //   input.replays    [replay 1, …] of plan 1, same shape
+//   input.not_replayed [case_id, …] whose plan 1 never froze, so it was never replayed: left out of
+//                    the runner series (a missing replay is not a flip); the main rates still count it
 //   input.runs       [{target, plan, run, planner_tokens, duration_ms}] (tokens and duration per run)
 export function buildReport(input) {
-  const { set, engine, ts, cases, plans, replays = [], runs = [] } = input;
+  const { set, engine, ts, cases, plans, replays = [], not_replayed: notReplayed = [], runs = [] } = input;
+  const skipReplay = new Set(notReplayed);
   const main = plans[0];
   const tally = emptyTally();
   const modelJudged = emptyTally();
@@ -194,7 +197,7 @@ export function buildReport(input) {
     per_group: grouped(byGroup, 'group_id'),
     per_app: grouped(byApp, 'app'),
     repeatability: {
-      runner: repeatability(cases, [main, ...replays]),
+      runner: repeatability(cases.filter((c) => !skipReplay.has(c.case_id)), [main, ...replays]),
       planner: repeatability(cases, plans),
     },
     runs,
