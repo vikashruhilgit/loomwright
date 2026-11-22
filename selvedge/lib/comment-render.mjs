@@ -250,10 +250,11 @@ export function renderComment({ verdict, plan = {}, criteria = [], history = {},
       const hint = UNBLOCK_HINTS[c.reason];
       lines.push(`- **Reason:** \`${freeText(c.reason)}\`${hint ? ` — ${hint}` : ''}`);
       // The planner's own words for a criterion it did not plan (the pages it looked at, or the
-      // rewrite it suggests), redacted like a read value: they can quote what a snapshot showed.
+      // rewrite it suggests), redacted like a read value: they can quote what a snapshot showed. URLs
+      // become paths before redaction, as for the read value, so a redaction never splits a URL.
       const np = notPlannedBy.get(id);
       const note = (label, v) => {
-        if (typeof v === 'string' && v.trim() !== '') lines.push(`- **${label}:** ${freeText(redactValue(v, patterns))}`);
+        if (typeof v === 'string' && v.trim() !== '') lines.push(`- **${label}:** ${freeText(redactValue(urlsToPaths(v), patterns))}`);
       };
       if (np && np.reason === c.reason) {
         note('Planner note', np.detail);

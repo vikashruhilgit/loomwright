@@ -503,12 +503,17 @@ const plan = { steps_by_criterion: {}, not_planned: [
   { id: "c-000000000002", reason: "criterion_not_testable", rewrite: "The page shows the heading \"Welcome\"" },
   { id: "c-000000000003", reason: "exploration_budget", detail: "  " } ] };
 const b = R.renderComment({ verdict, plan, redact: ["secret-QQ"] });
+// A URL with a query string or a long hex id: the path first, then redaction, never a split URL.
+const one = (detail) => R.renderComment({ verdict: { ...verdict, criteria: { "c-000000000001": nv("side_effect_not_observable") } }, plan: { not_planned: [{ id: "c-000000000001", reason: "side_effect_not_observable", detail }] } }).split("\n").find((l) => l.includes("Planner note"));
+const q = one("looked at https://shop.test/search?token=abc123");
+const h = one("looked at https://shop.test/orders/0123456789abcdef0123456789abcdef01234567 and /outbox");
 const blocks = b.split("<details>").slice(1);
 const ok = blocks[0].includes("- **Planner note:** looked at /orders and /outbox; the send is an email, [redacted]")
   && !b.includes("secret-QQ") && !b.includes("https://")
   && blocks[1].includes("- **Suggested rewrite:** The page shows the heading \"Welcome\"")
-  && !blocks[1].includes("Planner note") && !blocks[2].includes("Planner note") && !blocks[2].includes("Suggested rewrite");
-process.stdout.write(ok ? "yes" : "no\n" + b);')"
+  && !blocks[1].includes("Planner note") && !blocks[2].includes("Planner note") && !blocks[2].includes("Suggested rewrite")
+  && q === "- **Planner note:** looked at /search" && h.endsWith(" and /outbox") && !h.includes("/]") && !h.includes("abc123") && !/0123456789abcdef0123/.test(h);
+process.stdout.write(ok ? "yes" : "no\n" + q + "\n" + h + "\n" + b);')"
 [ "$out" = yes ] && ok "a not_planned criterion shows the planner's detail (URL as path, redacted) and rewrite under its reason; a blank detail adds nothing" || ko "planner note: $out"
 
 echo "-- no reason is a string literal in the comment modules"
