@@ -29,8 +29,9 @@
 #                                          local NEXTAUTH_SECRET, dummy Stripe test keys,
 #                                          EMAIL_FROM, BETA_CLUB_CAP=0
 #   NEXT_FONT_GOOGLE_MOCKED_RESPONSES: …   the commit's own next/font/google CSS URLs (computed with
-#                                          the commit's own next), fetched once with a desktop
-#                                          Chrome user agent
+#                                          the commit's own next), fetched with a desktop
+#                                          Chrome user agent, again (up to five tries) when
+#                                          Google serves one as fonts.gstatic.com/l/ files
 #   rm -rf .next; next dev -p 3471 …       a fresh dev server per commit (also for the recorded
 #   next dev -p 3471, already running …    "already running" lines), up when /login answers
 #   sign in as …                           a probe step of item 07, not a revival step: skipped
@@ -113,7 +114,8 @@ for (const line of Array.isArray(t.setup) ? t.setup : []) {
 process.exit(bad);' "$1"
 }
 
-# fonts_mock <clone> <out.js> — the commit's next/font/google CSS URLs, each fetched once.
+# fonts_mock <clone> <out.js> — the commit's next/font/google CSS URLs, each fetched (again, up to
+# FONT_TRIES times, while Google serves it as fonts.gstatic.com/l/ files).
 fonts_mock() {
   node - "$1" "$2" "$CHROME_UA" <<'EOF'
 const fs = require('fs');
