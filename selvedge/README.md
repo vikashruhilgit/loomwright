@@ -518,7 +518,8 @@ A plan is `{"schema_version": 1, "target": "web", "criteria_sha256", "plan_revis
 "not_planned"?: [{"id", "reason", "rewrite"?, "detail"?}]}`. `polarity` is `positive` or
 `negative`; each assumption is `{"text", "material"}`; a `not_planned` reason is
 `criterion_not_testable` (with a non-empty `rewrite`), `side_effect_not_observable` (with a
-non-empty `detail` naming the pages looked at) or `exploration_budget`. The JSON Schema is [`schemas/plan.schema.json`](schemas/plan.schema.json).
+non-empty `detail` naming the pages looked at) or `exploration_budget`. The JSON Schema is
+[`schemas/plan.schema.json`](schemas/plan.schema.json).
 
 Step types (no field beyond these is accepted):
 
@@ -709,6 +710,8 @@ out), the short plan sha256 and revision, then one collapsed block per criterion
 the verdict, the planner's interpretation, its unverified assumptions (material ones marked), the
 plan's steps as type and locator, the expected value (op and value from the plan), whether it
 matched, the evidence class, and for BLOCKED / NOT_VERIFIABLE the reason with a hint to unblock it.
+For a criterion the plan did not plan, the block also shows the planner's own `detail` (the pages
+it looked at) and `rewrite` when the plan has them, redacted like a read value.
 
 **What it never shows.** No link: a `goto` shows its URL's path only, and every URL in the criterion
 text, interpretation, assumptions or expected value is cut to its path (no origin, no query string).

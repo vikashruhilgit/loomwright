@@ -492,6 +492,25 @@ run -- comment "$MAIN" --pr abc --yes
 run -- comment --pr 42 --yes
 [ "$rc" -eq 2 ] && ok "no <run-dir> is a usage error (exit 2)" || ko "no run-dir: rc=$rc"
 
+echo "-- the planner's note for a not_planned criterion"
+out="$(node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const R = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/comment-render.mjs").href);
+const nv = (reason) => ({ verdict: "NOT_VERIFIABLE", evidence_class: "structured-read", read_value: null, matched: null, expected: null, reason, failed_step: null, interpretation: null, unverified_assumptions: [], steps: [] });
+const verdict = { plan_sha256: "a".repeat(64), plan_revision: 1, criteria: { "c-000000000001": nv("side_effect_not_observable"), "c-000000000002": nv("criterion_not_testable"), "c-000000000003": nv("exploration_budget") } };
+const plan = { steps_by_criterion: {}, not_planned: [
+  { id: "c-000000000001", reason: "side_effect_not_observable", detail: "looked at https://shop.test/orders and /outbox; the send is an email, secret-QQ" },
+  { id: "c-000000000002", reason: "criterion_not_testable", rewrite: "The page shows the heading \"Welcome\"" },
+  { id: "c-000000000003", reason: "exploration_budget", detail: "  " } ] };
+const b = R.renderComment({ verdict, plan, redact: ["secret-QQ"] });
+const blocks = b.split("<details>").slice(1);
+const ok = blocks[0].includes("- **Planner note:** looked at /orders and /outbox; the send is an email, [redacted]")
+  && !b.includes("secret-QQ") && !b.includes("https://")
+  && blocks[1].includes("- **Suggested rewrite:** The page shows the heading \"Welcome\"")
+  && !blocks[1].includes("Planner note") && !blocks[2].includes("Planner note") && !blocks[2].includes("Suggested rewrite");
+process.stdout.write(ok ? "yes" : "no\n" + b);')"
+[ "$out" = yes ] && ok "a not_planned criterion shows the planner's detail (URL as path, redacted) and rewrite under its reason; a blank detail adds nothing" || ko "planner note: $out"
+
 echo "-- no reason is a string literal in the comment modules"
 lit="$(grep -nE "'(read_values_public_repo|comment_requires_yes|verdict_missing|plan_modified|not_frozen|base_config_unreadable)'" "$PLUGIN_DIR/lib/comment.mjs" "$PLUGIN_DIR/lib/comment-render.mjs" || true)"
 [ -z "$lit" ] && ok "comment.mjs / comment-render.mjs name reasons through REASONS only" || ko "reason literals: $lit"

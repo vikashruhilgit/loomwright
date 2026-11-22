@@ -21,6 +21,10 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   `detail` naming the pages looked at, or the plan is rejected `invalid_not_planned`. A plan that
   omitted it was accepted before. README, the plan schema's description and
   `tests/test-plan-validate.sh` say so, and the cross-page negative shape is pinned as accepted.
+- The PR comment now shows that note. For a criterion under `not_planned`, `lib/comment-render.mjs`
+  adds a `Planner note` line (the `detail`) and a `Suggested rewrite` line (the `rewrite`) under
+  its reason, each redacted like a read value. Before, both stayed in `plan.json` inside the run
+  folder, and the comment showed only the generic hint.
 
 ## 0.9.1 — 2026-11-22
 
