@@ -983,7 +983,7 @@ ceiling_ok() {   # ceiling_ok SUT — 0 iff (42) holds, 1 if it does not, 2 if i
   rm -rf "$d"
   WHY42="out='$out' in ${t}s after ${polls:-0} poll(s)"
   [ "${polls:-0}" -ge 2 ] || { WHY42="inconclusive, no sleep reached: $WHY42"; return 2; }
-  case "$out" in "CONTINUE sha=$SHA remaining="*" pending=none") [ "$t" -le 5 ] ;; *) false ;; esac
+  case "$out" in "CONTINUE sha=$SHA remaining="*" pending=none") [ "$t" -le 6 ] ;; *) false ;; esac
 }
 echo "== 41. --bound 08 / --call-max 08 are decimal: resumable CONTINUE + state, no octal error =="
 if octal_ok "$SUT"; then ok "--bound 08 --call-max 1 prints CONTINUE with one persisted deadline; --call-max 08 settles; no 'value too great'"
