@@ -29,7 +29,14 @@
 // Reason tokens, printed `harness: FAIL <token>: <detail>` on stderr. Each token sits on exactly one
 // code line, the line that records that failure, so a test can pin it:
 //   target_unavailable, results_invalid, readme_results_out_of_sync, readme_markers_missing,
-//   work_dir_invalid, run_incomplete
+//   work_dir_invalid, run_incomplete, browser_unavailable
+//
+// Before the first target is brought up (and before anything is written to the work dir), `run`
+// checks the browser: it loads the Playwright that every `selvedge run` child would load (the
+// selvedge CLI's own resolvePlaywright, with the child's environment and a workspace as root and
+// working directory, so SELVEDGE_PLAYWRIGHT_MODULE is honoured exactly as the child honours it),
+// launches chromium headless and closes it. A Playwright whose browser build is not installed would
+// otherwise BLOCK every criterion playwright_unavailable only after every plan's tokens were spent.
 //
 // Exit codes: 0 ok (a report was written, whatever the gate says), 1 a named failure, 2 usage error
 // or cannot run. Node >= 18, standard library only.
@@ -44,6 +51,7 @@ import { buildReport, GATE, revisionRule } from './stats.mjs';
 import { DEFAULT_PLANNER_MODEL } from '../lib/plan-planner.mjs';
 import { isMain } from '../lib/env-config.mjs';
 import { realpathOrResolve } from '../lib/env-approvals.mjs';
+import { firstLine, resolvePlaywright } from '../lib/snapshot-playwright.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(HERE, '..');
@@ -87,6 +95,7 @@ const resultsInvalid = (detail) => new Failure([`results_invalid: ${detail}`]);
 const outOfSync = (detail) => new Failure([`readme_results_out_of_sync: ${detail}`]);
 const markersMissing = (detail) => new Failure([`readme_markers_missing: ${detail}`]);
 const workDirInvalid = (detail) => new Failure([`work_dir_invalid: ${detail}`]);
+const browserUnavailable = (detail) => new Failure([`browser_unavailable: ${detail}`]);
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const say = (s) => process.stdout.write(`${s}\n`);
@@ -420,6 +429,29 @@ async function runTarget(g, tdir, opts) {
   }
 }
 
+// The browser preflight: loads the Playwright a `selvedge run` child started in workspace `ws` would
+// load, launches chromium headless and closes it. Throws browser_unavailable (writing nothing) when
+// either step fails; the detail leads with the error's first line.
+async function browserPreflight(ws) {
+  let pw;
+  try {
+    pw = await resolvePlaywright({ root: ws, env: childEnv(), cwd: ws });
+  } catch (e) {
+    throw browserUnavailable(`${firstLine(e)} — checked before any target was brought up; nothing was planned or written`);
+  }
+  let browser;
+  try {
+    browser = await pw.chromium.launch({ headless: true });
+  } catch (e) {
+    throw browserUnavailable(`${firstLine(e)} — playwright ${pw.version || '(version unknown)'} from ${pw.path} cannot launch chromium; install its browser (npx playwright install chromium) or point SELVEDGE_PLAYWRIGHT_MODULE at a Playwright whose browser is installed; nothing was planned or written`);
+  }
+  try {
+    await browser.close();
+  } catch {
+    // It launched; a failed close says nothing about whether the runs can launch.
+  }
+}
+
 // --- run / score --------------------------------------------------------------------------------
 
 function insideRepo(repo, dir) {
@@ -513,14 +545,18 @@ async function cmdRun(opts) {
   if (insideRepo(opts.repo, workDir)) throw workDirInvalid(`${workDir} is inside the repository ${opts.repo}; run folders, clones and logs live outside it`);
   const meta = { set: opts.set, engine, planner_repeats: opts.plannerRepeats, runner_repeats: opts.runnerRepeats, case_ids_sha256: caseIdsHash(cases) };
   const metaFile = join(workDir, 'meta.json');
-  if (existsSync(metaFile)) {
+  const resumed = existsSync(metaFile);
+  if (resumed) {
     const old = readJsonFile(metaFile);
     if (!opts.resume || JSON.stringify(old) !== JSON.stringify(meta)) {
       const why = opts.resume ? ` of another set, engine, repeat count or case list (${JSON.stringify(old)})` : '; pass --resume to finish it, or name a new --work-dir';
       throw workDirInvalid(`${workDir} already holds a run${why}`);
     }
-  } else writeAtomic(metaFile, jsonText(meta));
+  }
   const groups = groupTargets(cases, opts.set, opts.repo, outside);
+  // Each target's workspace is <work dir>/targets/<slug>/ws (runTarget); any one stands for all.
+  await browserPreflight(join(workDir, 'targets', groups.length ? groups[0].slug : 'none', 'ws'));
+  if (!resumed) writeAtomic(metaFile, jsonText(meta));
   note(`work dir ${workDir}: ${cases.length} case(s) on ${groups.length} target(s), set ${opts.set}, selvedge ${engine.selvedge_version}, planner ${engine.planner_model}`);
   try {
     for (const g of groups) {
