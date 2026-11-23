@@ -127,7 +127,7 @@ be committed, even briefly), then run `split <file>`, `manifest write`, `check-l
 | `manifest_extra_file` | the outside folder holds a file the manifest does not list |
 | `held_out_answers_incomplete` | the outside `answers.json` is missing, or its keys are not exactly the held-out `case_id`s, or an answer is not PASS or FAIL |
 | `start_folder_not_clean` | the start folder holds a file that is not one of the two allowed copies, or lacks one of them |
-| `planted_import_invalid` | the planted-defect session's `out/` folder is not as the brief asks: a `cases.jsonl` line with other fields, a bad slug or answer, an empty or repeated criterion, a group with no FAIL criterion, a variant folder with no cases (or cases with none), a variant without `app-server.mjs` or with a non-regular file, or a variant already imported with other bytes |
+| `planted_import_invalid` | the planted-defect session's `out/` folder is not as the brief asks: a `cases.jsonl` line with other fields, a bad slug or answer, an empty or repeated criterion, a group with no FAIL criterion, a variant folder with no cases (or cases with none), a variant folder holding anything but exactly `app-server.mjs` and `servers.mjs`, or a non-regular file, or a variant already imported with other bytes |
 
 These are the eval tool's own reasons; the CLI's verdict and config reasons are listed in
 `selvedge/README.md`.

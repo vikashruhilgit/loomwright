@@ -577,7 +577,10 @@ export function importPlanted(repo, outDir, ctx, outside = heldOutDir()) {
       continue;
     }
     const files = listFiles(src);
-    if (!files.includes('app-server.mjs')) bad(`${slug}/ has no app-server.mjs`);
+    // Exactly the two app files: anything else (a note, the servers.json a test start writes) would
+    // be copied as-is, into the committed tuning tree for a tuning group.
+    for (const n of START_FOLDER_FILES) if (!files.includes(n)) bad(`${slug}/ has no ${n}`);
+    for (const f of files) if (!START_FOLDER_FILES.includes(f)) bad(`${slug}/${f} is not one of ${START_FOLDER_FILES.join(', ')}`);
     for (const f of files) if (!lstatSync(join(src, f)).isFile()) bad(`${slug}/${f} is not a regular file`);
     const id = plantedGroupId(slug);
     if (ids.has(id)) bad(`${slug} and ${ids.get(id)} hash to the same group id ${id}`);

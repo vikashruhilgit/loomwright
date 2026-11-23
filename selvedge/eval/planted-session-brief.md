@@ -38,7 +38,9 @@ out/BUGS.md                      one line per variant: what you planted and wher
 `<slug>`: lowercase letters, digits and `-`, unique, describing the bug (`pd-cart-total-off-by-one`).
 
 Each variant must start the same way the original does: `node app-server.mjs serve <servers.json>`
-writes `servers.json` with the app's port. Start every variant once and check that it serves.
+writes `servers.json` with the app's port. Start every variant once and check that it serves, with
+the `servers.json` path outside `out/`. A variant folder holds exactly those two files and nothing
+else, or the import refuses it.
 
 ## Rules
 

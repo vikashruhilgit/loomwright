@@ -414,6 +414,8 @@ refuse "a slug that is not pd-<slug>" "group_id is not pd-<slug>" "echo '{\"grou
 refuse "a repeated criterion" "already has this criterion" "head -n 1 \"\$O/cases.jsonl\" >>\"\$O/cases.jsonl\""
 refuse "a symlink in a variant" "is not a regular file" "ln -s /etc/hosts \"\$O/$PT/hosts.mjs\""
 refuse "a variant without app-server.mjs" "has no app-server.mjs" "rm \"\$O/$PH/app-server.mjs\""
+refuse "a variant without servers.mjs" "has no servers.mjs" "rm \"\$O/$PT/servers.mjs\""
+refuse "a stray file in a variant (here the servers.json a test start writes)" "servers.json is not one of app-server.mjs, servers.mjs" "echo '{}' >\"\$O/$PT/servers.json\""
 refuse "a changed variant over an imported one" "already holds a different variant" "echo changed >>\"\$O/$PH/app-server.mjs\""
 refuse "a missing cases.jsonl" "cases.jsonl does not exist" "rm \"\$O/cases.jsonl\""
 refuse "an answer that is not PASS or FAIL" "answer is not PASS or FAIL" "sed -i.bak '1s/\"answer\":\"FAIL\"/\"answer\":\"fail\"/' \"\$O/cases.jsonl\""
