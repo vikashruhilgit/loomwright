@@ -68,5 +68,13 @@ fonts 99
   && grep -qxF "target-driver: FAIL step 'NEXT_FONT_GOOGLE_MOCKED_RESPONSES': Error: https://fonts.googleapis.com/css2?family=MuseoModerno:wght@400;700&display=swap was served as fonts.gstatic.com/l/ files 5 times in a row, which Turbopack refuses" <<<"$err"; } \
   && ok "/l/ every time: five tries, then exit 1 with ONE FAIL line carrying the Error line (no stack), no mock file written" || ko "give up: rc=$rc calls=$calls err='$err'"
 
+# Any other error class (here a TypeError from the next internals) is reported by its own line too.
+C2="$TMP/clone-typeerror"; cp -R "$C" "$C2"
+echo 'exports.validateGoogleFontFunctionCall = () => { throw new TypeError("unknown font option"); };' > "$C2/node_modules/next/dist/compiled/@next/font/dist/google/validate-google-font-function-call.js"
+err="$(PATH="$TMP/bin:$PATH" bash "$DRIVER" fonts "$C2" "$TMP/mocks2.js" 2>&1 >/dev/null)"; rc=$?
+{ [ "$rc" -eq 1 ] && [ "$(wc -l <<<"$err" | tr -d ' ')" = 1 ] \
+  && grep -qxF "target-driver: FAIL step 'NEXT_FONT_GOOGLE_MOCKED_RESPONSES': TypeError: unknown font option" <<<"$err"; } \
+  && ok "a TypeError is reported by its own line, not the stack's tail" || ko "TypeError line: rc=$rc err='$err'"
+
 echo "test-target-driver-fonts: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

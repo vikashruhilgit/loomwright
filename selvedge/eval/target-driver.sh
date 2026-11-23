@@ -182,10 +182,11 @@ EOF
 }
 
 # fonts_step <clone> <out.js> <err file> — the font step as `up` and `fonts` run it: prints the
-# number of stylesheets mocked, or fails the step with the error's own line (not the stack's tail).
+# number of stylesheets mocked, or fails the step with the error's own line (Error, TypeError,
+# SyntaxError, …: not the stack's tail).
 fonts_step() {
   local n
-  n="$(fonts_mock "$1" "$2" 2>"$3")" || fail "$(grep -m1 '^Error' "$3" || tail -n 3 "$3")"
+  n="$(fonts_mock "$1" "$2" 2>"$3")" || fail "$(grep -m1 -E '^[A-Za-z]*Error(:|$)' "$3" || tail -n 3 "$3")"
   echo "$n"
 }
 
