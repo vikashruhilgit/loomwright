@@ -5,11 +5,11 @@
 # results block and its sync check (AC6), the two-revision stop (AC8), the report schema (AC9),
 # tuning never feeding the gate (AC10), a results file check-leak accepts (AC11), the manifest
 # refusal that runs and writes nothing (AC2), SELVEDGE_PLANNER_TOKEN_BUDGET stripped from every
-# selvedge child, target_unavailable, the work dir rules, and each harness reason token on exactly
-# one code line. Every arm turns red under its row of the brief's pin-mutation table.
+# selvedge child, target_unavailable, the browser preflight (browser_unavailable before any target or
+# planner call), the work dir rules, and each harness reason token on exactly one code line. Every arm turns red under its row of the brief's pin-mutation table.
 #
 # Hermetic: a temp HOME, SELVEDGE_EVAL_HELD_OUT in a temp folder, fixture sets in temp git repos, a
-# stub selvedge CLI and a stub target driver (tests/fixtures/eval-harness/); no network, no Docker,
+# stub selvedge CLI, a stub target driver and a stub Playwright (tests/fixtures/eval-harness/); no network, no Docker,
 # no browser, no model. Needs node (>= 18) and git; a missing one is a FAIL, never a skip.
 set -uo pipefail
 
@@ -41,7 +41,9 @@ export SELVEDGE_EVAL_SELVEDGE_BIN="bash $FIX/stub-selvedge.sh"
 export SELVEDGE_EVAL_TARGET_DRIVER="bash $FIX/stub-driver.sh"
 export STUB_LOG="$TMP/stub"
 export SELVEDGE_PLANNER="true" # never a real planner, even if the stub were bypassed
-unset SELVEDGE_PLANNER_TOKEN_BUDGET STUB_VERDICT STUB_FLIP_CALL STUB_DRIVER_FAIL 2>/dev/null || true
+unset SELVEDGE_PLANNER_TOKEN_BUDGET STUB_VERDICT STUB_FLIP_CALL STUB_DRIVER_FAIL STUB_PW_LAUNCH_FAIL 2>/dev/null || true
+# The browser preflight loads this before any target: a stub whose chromium launches (logs to $STUB_LOG/browser.log).
+export SELVEDGE_PLAYWRIGHT_MODULE="$FIX/stub-playwright.mjs"
 SEED="harness-seed"
 
 # The stub CLI is a command line, not a path: the harness runs it with spawn, so wrap it in a file.
@@ -305,6 +307,31 @@ STUB_DRIVER_FAIL=1 h run --repo "$R" --set held-out --work-dir "$W"
 expect_fail "run: a target the driver cannot bring up stops the run" target_unavailable "step 'npm ci'"
 [ ! -e "$R/selvedge/eval/results.json" ] && ! grep -q '^plan ' "$STUB_LOG/calls.log" 2>/dev/null && ok "target_unavailable: no plan, no results written" || ko "target_unavailable: something was written or planned"
 
+# --- browser preflight: a Playwright that cannot launch stops the run before any target or planner call ---
+fresh nobrowser
+printf '{"schema_version": 1, "reports": []}\n' >"$R/selvedge/eval/results.json"
+cp "$R/selvedge/eval/results.json" "$TMP/results.before"
+STUB_PW_LAUNCH_FAIL=1 h run --repo "$R" --set tuning --work-dir "$W"
+expect_fail "browser preflight: a chromium that does not launch stops the run with the launch error's first line" browser_unavailable "Executable doesn't exist at /stub/ms-playwright/chromium_headless_shell-1194"
+grep -q '^harness: FAIL browser_unavailable: browserType.launch: ' <<<"$err" && ! grep -qF 'CALL-LOG-SECOND-LINE' <<<"$err" \
+  && ok "browser preflight: the FAIL line carries the error's first line only" || ko "browser preflight FAIL line: $err"
+[ "$(cat "$STUB_LOG/browser.log" 2>/dev/null)" = 'launch {"headless":true}' ] && [ ! -e "$STUB_LOG/driver.log" ] && [ ! -e "$STUB_LOG/calls.log" ] \
+  && ok "browser preflight: chromium tried headless once; no driver up, no selvedge (planner) call" || ko "browser preflight: browser=$(cat "$STUB_LOG/browser.log" 2>/dev/null) driver=$(cat "$STUB_LOG/driver.log" 2>/dev/null) calls=$(cat "$STUB_LOG/calls.log" 2>/dev/null)"
+[ ! -e "$W" ] && cmp -s "$TMP/results.before" "$R/selvedge/eval/results.json" \
+  && ok "browser preflight: no work dir written, results.json byte-identical" || ko "browser preflight: wrote $(ls -R "$W" 2>/dev/null | head -n 5) / results changed"
+
+fresh nopwmodule
+SELVEDGE_PLAYWRIGHT_MODULE="$TMP/no-such-playwright.mjs" h run --repo "$R" --set tuning --work-dir "$W"
+expect_fail "browser preflight: a SELVEDGE_PLAYWRIGHT_MODULE that does not load stops the run" browser_unavailable "does not load"
+[ ! -e "$STUB_LOG/driver.log" ] && [ ! -e "$STUB_LOG/calls.log" ] && [ ! -e "$W" ] && [ ! -e "$R/selvedge/eval/results.json" ] \
+  && ok "browser preflight (module does not load): no target, no planner call, nothing written" || ko "browser preflight (module): something ran or was written"
+
+fresh browserok
+h run --repo "$R" --set tuning --work-dir "$W"
+expect_ok "browser preflight: a chromium that launches lets the run go on"
+[ "$(cat "$STUB_LOG/browser.log" 2>/dev/null | tr '\n' '|')" = 'launch {"headless":true}|close|' ] && grep -q '^up ' "$STUB_LOG/driver.log" && grep -q '^plan ' "$STUB_LOG/calls.log" \
+  && ok "browser preflight: launched headless and closed once, then targets came up and were planned" || ko "browser preflight ok: browser=$(cat "$STUB_LOG/browser.log" 2>/dev/null) driver=$(cat "$STUB_LOG/driver.log" 2>/dev/null)"
+
 # --- AC10: a tuning run is marked tuning and never gated ------------------------------------------
 fresh tuning
 h run --repo "$R" --set tuning --work-dir "$W"
@@ -366,7 +393,7 @@ h run --repo "$B" --set held-out --planner-repeats 0
 [ "$rc" -eq 2 ] && ok "run: --planner-repeats 0 is a usage error" || ko "--planner-repeats 0: rc=$rc"
 
 # --- each harness reason token on exactly one code line; listed in the header and eval/README.md --------
-TOKENS="target_unavailable results_invalid readme_results_out_of_sync readme_markers_missing work_dir_invalid run_incomplete"
+TOKENS="target_unavailable results_invalid readme_results_out_of_sync readme_markers_missing work_dir_invalid run_incomplete browser_unavailable"
 for t in $TOKENS; do
   n="$(grep -vE '^[[:space:]]*//' "$HARNESS" | grep -cE "(^|[^a-z_])${t}([^a-z_]|$)")"
   hd="$(grep -E '^//' "$HARNESS" | grep -cE "(^|[^a-z_])${t}([^a-z_]|$)")"

@@ -221,6 +221,7 @@ Printed `harness: FAIL <token>: <detail>` on stderr (exit 1). A failing set chec
 | `readme_markers_missing` | `selvedge/README.md` has one block marker without the other, or no markers and no "Measuring Selvedge" section to put them in |
 | `work_dir_invalid` | the work dir is inside the repository, already holds a run (without `--resume`), or holds a run of another set, engine, repeat count or case list |
 | `run_incomplete` | `score` (or the end of `run`) found a target with no finished result in the work dir |
+| `browser_unavailable` | `run`'s browser preflight failed: the Playwright every `selvedge run` child would load (`SELVEDGE_PLAYWRIGHT_MODULE`, resolved as the selvedge CLI does) does not load, or its chromium does not launch headless (typically its browser build is not installed). Checked after the set check and before any target is brought up, so no planner tokens are spent and nothing is written to the work dir or `results.json`; the detail leads with the error's first line |
 
 ## The planted-defect author session (open)
 

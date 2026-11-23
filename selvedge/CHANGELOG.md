@@ -8,6 +8,20 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.11.1 — 2026-11-23
+
+- `node selvedge/eval/harness.mjs run` now checks the browser before it brings any target up or
+  makes any planner call: it loads the Playwright every `selvedge run` child would load (the CLI's
+  own resolver, with the child's environment and a workspace as root and working directory, so
+  `SELVEDGE_PLAYWRIGHT_MODULE` is honoured exactly as the child honours it), launches chromium
+  headless and closes it. When either step fails it prints `harness: FAIL browser_unavailable:
+  <the error's first line> — …`, exits 1 and writes nothing to the work dir or `results.json`.
+  Before, a Playwright whose browser build was not in the cache (1.56.1 wants build 1194; the cache
+  held only 1255) still planned every target and ended every criterion `BLOCKED
+  playwright_unavailable`: about 4.5M planner tokens and 30 minutes for a 72/72-abstained report.
+  New harness reason token `browser_unavailable` (`selvedge/eval/README.md`). The engine is
+  unchanged.
+
 ## 0.11.0 — 2026-11-23
 
 - A new plan step, `request` (requirement qa-split/08b; owner decisions of 2026-11-23: D6 gains the
