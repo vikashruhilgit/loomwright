@@ -113,6 +113,13 @@ await scenario('proxy_only_unlisted', { config: ({ A }) => ({ origins: [A.origin
   return { r: await send(page, guard, { type: 'request', method: 'GET', url: `${U.origin}/api/x` }) };
 });
 
+// A listed, same-origin request whose connection drops mid-reply: no guard layer refused it, so
+// the step throws a plain Error (not GuardRefusal) and the guard records no block.
+await scenario('network_drop', { names: ['A'], config: ({ A }) => ({ origins: [A.origin] }) }, async ({ page, ...guard }, { A }) => {
+  await page.goto(`${A.origin}/`);
+  return { r: await send(page, guard, { type: 'request', method: 'GET', url: `${A.origin}/drop` }), want: `${A.origin}/drop` };
+});
+
 // The probe: Playwright's APIRequestContext never reaches the route layer (so the runner never
 // uses it). The proxy still refuses the unlisted port here, so U records nothing either way.
 await scenario('probe_context_request', { config: ({ A }) => ({ origins: [A.origin] }) }, async ({ context }, { U }) => {
@@ -185,6 +192,17 @@ await execute('exec_remote_post', {
   steps: ({ R }) => [
     { type: 'goto', url: `${remoteOf(R)}/` },
     { type: 'request', method: 'POST', url: `${remoteOf(R)}/api/login`, json: { email: 'a@b.c' } },
+    { type: 'read', property: 'response_status' },
+    { type: 'expect', op: 'equals', value: 200 },
+  ],
+});
+
+await execute('exec_network_drop', {
+  names: ['A'],
+  config: ({ A }) => ({ origins: [A.origin] }),
+  steps: ({ A }) => [
+    { type: 'goto', url: `${A.origin}/` },
+    { type: 'request', method: 'GET', url: `${A.origin}/drop` },
     { type: 'read', property: 'response_status' },
     { type: 'expect', op: 'equals', value: 200 },
   ],

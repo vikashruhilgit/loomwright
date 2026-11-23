@@ -14,6 +14,8 @@
 //   /r307?to=U        307 to U (the browser re-sends the POST)
 //   /r301, /r302, /r303, /r308 ?to=U   that status to U
 //   /sw.js            a service worker script
+//   /drop             200 headers promising 100 bytes, 7 sent, then the socket is destroyed (a
+//                     network failure no guard layer causes)
 //   anything else     200 text naming the server, method and path
 // A WebSocket upgrade is recorded and then refused (the socket is destroyed).
 import http from 'node:http';
@@ -63,6 +65,12 @@ export async function startServer(name, logDir) {
             '<script>document.getElementById("f").submit()</script>',
         ),
       );
+      return;
+    }
+    if (url.pathname === '/drop') {
+      res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '100' });
+      res.write('partial');
+      setTimeout(() => req.socket.destroy(), 50);
       return;
     }
     if (url.pathname === '/sw.js') {

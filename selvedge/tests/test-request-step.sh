@@ -141,12 +141,16 @@ if node "$TESTS_DIR/fixtures/request-driver.mjs" "$LIB" "$TMP/logs" browser >"$B
     'const a = R.proxy_remote_get; a.r.guard === true && a.r.reason === "remote_resolves_private" && a.blocks.some((b) => b.layer === "proxy") && zero(a.logs.R)'
   jcheck "$B" "with the route layer off (test-only), the proxy alone refuses the unlisted origin and the request step finds its record (host_not_allowed)" \
     'const a = R.proxy_only_unlisted; a.r.guard === true && a.r.reason === "host_not_allowed" && a.blocks.length === 1 && a.blocks[0].layer === "proxy" && zero(a.logs.U)'
+  jcheck "$B" "a listed request whose connection drops mid-reply throws a plain Error (not GuardRefusal) naming the failure; no guard layer records a block, and the host did receive it" \
+    'const a = R.network_drop; a.r.ok === false && a.r.guard === false && a.r.reason === null && a.r.error.includes("the request failed") && a.r.error.includes(a.want) && a.blocks.length === 0 && !zero(a.logs.A)'
   jcheck "$B" "the probe: Playwright's context.request is never seen by the route layer (the reason the runner never uses it)" \
     'const a = R.probe_context_request; Array.isArray(a.seen) && a.seen.length === 0 && zero(a.logs.U)'
   jcheck "$B" "Acceptance 2 (executeCriterion): the criterion ends BLOCKED host_not_allowed at the request step (failed_step 1, a failed request line, no read), the host records nothing" \
     'const a = R.exec_unlisted; a.end.outcome === "blocked" && a.end.reason === "host_not_allowed" && a.end.failed_step === 1 && a.lines.length === 2 && a.lines[1].type === "request" && a.lines[1].outcome === "failed" && a.lines[1].request.status === null && zero(a.logs.U)'
   jcheck "$B" "Acceptance 3 (executeCriterion): a remote request POST ends BLOCKED remote_mutation_refused at the request step; the remote records nothing" \
     'const a = R.exec_remote_post; a.end.outcome === "blocked" && a.end.reason === "remote_mutation_refused" && a.end.failed_step === 1 && a.lines[1].type === "request" && a.lines[1].outcome === "failed" && zero(a.logs.R)'
+  jcheck "$B" "executeCriterion: a request whose connection drops ends step_failed (not BLOCKED) at the request step, with a failed request line and no read" \
+    'const a = R.exec_network_drop; a.end.outcome === "step_failed" && a.end.reason === "step_failed" && a.end.failed_step === 1 && a.lines.length === 2 && a.lines[1].type === "request" && a.lines[1].outcome === "failed" && a.lines[1].request.status === null'
 else
   ko "request-driver.mjs ran: $(tail -n 5 "$B.err") $(head -c 400 "$B")"
 fi
