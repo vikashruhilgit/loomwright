@@ -8,6 +8,20 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.10.2 — 2026-11-23
+
+- `selvedge/eval/eval-set.mjs import-planted <out-dir>` adds the planted-defect session's output to
+  the known-answer set. That output is `out/cases.jsonl` plus one `out/pd-<slug>/` variant folder per
+  bug. A slug names its bug, so the import gives each group an opaque id (`pd-` and 10 hex of
+  `sha256("planted:" + slug)`) and keeps the slug-to-id list in the session's own folder. The cases go
+  in through `split`, so a refusal writes nothing. Each variant is then copied to its side: tuning
+  variants into the repo, held-out ones to the outside folder only. A malformed output is refused as
+  `planted_import_invalid`. `tests/test-eval-set.sh` pins the import, its refusals and the opaque ids,
+  and each arm was checked red under a mutation.
+- `selvedge/eval/planted-session-brief.md` is the committed brief for that session. It is given as
+  the session's first message, since the start folder may hold only the two app files. The eval
+  README gives the start command and the import steps.
+
 ## 0.10.1 — 2026-11-23
 
 - `selvedge/eval/target-driver.sh`: the font step asks Google again, up to five tries in all, when it

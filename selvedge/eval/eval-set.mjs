@@ -12,6 +12,9 @@
 //   node selvedge/eval/eval-set.mjs side <group_id>…          the side the recorded rule gives each group
 //   node selvedge/eval/eval-set.mjs manifest write|check      the outside folder vs held-out/manifest.sha256
 //   node selvedge/eval/eval-set.mjs check-start-folder <dir>  the planted-defect author's start folder
+//   node selvedge/eval/eval-set.mjs import-planted <out-dir>  the planted-defect session's out/ folder:
+//                                                            opaque group ids, variants filed by side,
+//                                                            cases added as split does
 //
 // Every command takes --repo <dir> (the repository top level; default: the checkout this file is in).
 // The outside folder is $SELVEDGE_EVAL_HELD_OUT, default ~/.claude/selvedge-eval/held-out/.
@@ -25,14 +28,14 @@
 //   split_unreadable, defect_on_both_sides, case_on_wrong_side, case_invalid,
 //   held_out_answer_committed, real_bug_entry_incomplete, no_tracked_files, manifest_empty,
 //   manifest_invalid, manifest_mismatch, manifest_missing_file, manifest_extra_file,
-//   held_out_answers_incomplete, start_folder_not_clean
+//   held_out_answers_incomplete, start_folder_not_clean, planted_import_invalid
 //
 // Exit codes: 0 ok, 1 a named failure, 2 usage error or cannot run. Node >= 18, standard library
 // only; criterion ids come from selvedge/lib/criteria.mjs, never a second copy.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { criterionId, normalizeCriterionText } from '../lib/criteria.mjs';
@@ -49,6 +52,9 @@ const SHA1_RE = /^[0-9a-f]{40}$/;
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 // A case_id is a plain token: it becomes a key of answers.json, so `__proto__`-style names are out.
 const CASE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// The planted-defect session's slugs and cases.jsonl lines (selvedge/eval/planted-session-brief.md).
+const PLANTED_SLUG_RE = /^pd-[a-z0-9][a-z0-9-]*$/;
+const PLANTED_FIELDS = Object.freeze(['answer', 'criterion', 'group_id', 'variant']);
 const DEFAULT_REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const USAGE = `Usage: node selvedge/eval/eval-set.mjs <command> [--repo <dir>]
@@ -61,6 +67,7 @@ Commands:
   side <group_id>...        the side the recorded rule gives each group
   manifest write|check      the outside folder against ${MANIFEST_REL}
   check-start-folder <dir>  <dir> holds only copies of tests/fixtures/app-server.mjs and servers.mjs
+  import-planted <out-dir>  add the planted-defect session's variants and cases (opaque group ids)
 
 The outside folder is $SELVEDGE_EVAL_HELD_OUT (default ~/.claude/selvedge-eval/held-out/).
 Exit codes: 0 ok, 1 a named failure on stderr, 2 usage error or cannot run.`;
@@ -516,6 +523,100 @@ export function splitCases(repo, inputFile, ctx, outside = heldOutDir()) {
   return { tuning: next.tuning.length, heldOut: next.heldOut.length };
 }
 
+// plantedGroupId(slug) — the group id a planted slug gets in the set. The slug describes the bug,
+// so in held-out/cases.json beside the criteria it would give the answers away; only this hash goes
+// in, and the slug-to-id list stays in the session's own folder (imported-ids.tsv).
+export function plantedGroupId(slug) {
+  return `pd-${sha256Hex(`planted:${slug}`).slice(0, 10)}`;
+}
+
+// importPlanted: read <out>/cases.jsonl and <out>/pd-<slug>/ (the planted-defect session's output),
+// give each slug its opaque group id, add the cases through splitCases (so every split rule applies
+// and a refusal writes nothing), then copy each variant to its side: committed under
+// tuning/variants/<id>/, or to the outside folder's variants/<id>/. Prints counts only.
+export function importPlanted(repo, outDir, ctx, outside = heldOutDir()) {
+  const bad = (m) => ctx.problems.push(`planted_import_invalid: ${m}`);
+  const split = readSplit(repo, ctx);
+  if (!split) return null;
+  const out = resolve(outDir);
+  const jsonl = join(out, 'cases.jsonl');
+  if (!existsSync(jsonl)) {
+    bad(`${jsonl} does not exist`);
+    return null;
+  }
+  const bySlug = new Map();
+  readFileSync(jsonl, 'utf8').split('\n').forEach((line, i) => {
+    if (!line.trim()) return;
+    const at = `cases.jsonl line ${i + 1}`;
+    let c;
+    try {
+      c = JSON.parse(line);
+    } catch {
+      return bad(`${at} is not JSON`);
+    }
+    if (!isObj(c) || Object.keys(c).sort().join(',') !== PLANTED_FIELDS.join(',')) return bad(`${at} needs exactly the fields ${PLANTED_FIELDS.join(', ')}`);
+    if (!(typeof c.group_id === 'string' && PLANTED_SLUG_RE.test(c.group_id))) return bad(`${at}: group_id is not pd-<slug> (lowercase letters, digits, -)`);
+    if (c.variant !== c.group_id) return bad(`${at}: variant is not its group_id`);
+    if (!ANSWERS.includes(c.answer)) return bad(`${at}: answer is not PASS or FAIL`);
+    const text = nonEmpty(c.criterion) ? normalizeCriterionText(c.criterion) : '';
+    if (!text) return bad(`${at}: criterion is empty`);
+    if (!bySlug.has(c.group_id)) bySlug.set(c.group_id, []);
+    const list = bySlug.get(c.group_id);
+    if (list.some((x) => x.text === text)) return bad(`${at}: ${c.group_id} already has this criterion`);
+    list.push({ text, answer: c.answer });
+  });
+  const folders = readdirSync(out, { withFileTypes: true }).filter((d) => d.name.startsWith('pd-')).map((d) => d.name).sort();
+  for (const f of folders) if (!bySlug.has(f)) bad(`variant folder ${f} has no case in cases.jsonl`);
+  const ids = new Map();
+  const plans = [];
+  for (const [slug, list] of [...bySlug].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (!list.some((x) => x.answer === 'FAIL')) bad(`${slug} has no FAIL criterion, so it plants nothing`);
+    const src = join(out, slug);
+    if (!(existsSync(src) && lstatSync(src).isDirectory())) {
+      bad(`${slug} has cases but no variant folder ${slug}/`);
+      continue;
+    }
+    const files = listFiles(src);
+    if (!files.includes('app-server.mjs')) bad(`${slug}/ has no app-server.mjs`);
+    for (const f of files) if (!lstatSync(join(src, f)).isFile()) bad(`${slug}/${f} is not a regular file`);
+    const id = plantedGroupId(slug);
+    if (ids.has(id)) bad(`${slug} and ${ids.get(id)} hash to the same group id ${id}`);
+    ids.set(id, slug);
+    const side = sideOf(split.seed, id);
+    const dest = side === 'tuning' ? join(repo, EVAL_REL, 'tuning', 'variants', id) : join(outside, 'variants', id);
+    const there = listFiles(dest);
+    if (there.length && (there.join('\n') !== files.join('\n') || files.some((f) => fileSha(join(src, f)) !== fileSha(join(dest, f))))) {
+      bad(`${slug}: ${dest} already holds a different variant`);
+    }
+    plans.push({ slug, id, side, src, dest, files, list });
+  }
+  if (flush(ctx).length) return null;
+  const cases = plans.flatMap((p) =>
+    p.list.map((x) => {
+      const cid = criterionId(x.text);
+      return { case_id: `${p.id}.${cid.slice(2)}`, group_id: p.id, source: 'planted', criterion: { id: cid, text: x.text }, target: { kind: 'variant', path: `variants/${p.id}` }, answer: x.answer };
+    }),
+  );
+  const tmp = mkdtempSync(join(tmpdir(), 'selvedge-import-planted-'));
+  let r;
+  try {
+    writeFileSync(join(tmp, 'cases.json'), jsonText({ schema_version: 1, cases }));
+    r = splitCases(repo, join(tmp, 'cases.json'), ctx, outside);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+  if (!r) return null;
+  for (const p of plans) {
+    for (const f of p.files) {
+      mkdirSync(dirname(join(p.dest, f)), { recursive: true });
+      copyFileSync(join(p.src, f), join(p.dest, f));
+    }
+  }
+  writeAtomic(join(out, 'imported-ids.tsv'), plans.map((p) => `${p.slug}\t${p.id}\t${p.side}\n`).join(''));
+  const n = (side, what) => plans.filter((p) => p.side === side).reduce((a, p) => a + (what === 'groups' ? 1 : p.list.length), 0);
+  return { groups: { tuning: n('tuning', 'groups'), heldOut: n('held-out', 'groups') }, cases: { tuning: n('tuning', 'cases'), heldOut: n('held-out', 'cases') }, ids: join(out, 'imported-ids.tsv') };
+}
+
 export function checkStartFolder(repo, dir, ctx) {
   const tracked = trackedFiles(repo, 'selvedge', ctx);
   const fixtures = new Map(START_FOLDER_FILES.map((n) => [n, `selvedge/tests/fixtures/${n}`]));
@@ -646,6 +747,14 @@ export function main(argv) {
       need(1, 'one <dir>');
       checkStartFolder(repo, rest[0], ctx);
       return finish(ctx, `eval-set: OK — ${rest[0]} holds only copies of tests/fixtures/${START_FOLDER_FILES.join(' and ')}`);
+    }
+    case 'import-planted': {
+      need(1, 'one <out-dir>');
+      const r = importPlanted(repo, rest[0], ctx);
+      if (!r) return finish(ctx);
+      process.stdout.write(`eval-set: OK — planted groups: tuning ${r.groups.tuning} (${r.cases.tuning} case(s)), held-out ${r.groups.heldOut} (${r.cases.heldOut} case(s)); slug-to-id list in ${r.ids}\n`);
+      process.stdout.write(`next: node selvedge/eval/eval-set.mjs manifest write, then check-leak and count; commit ${EVAL_REL}/tuning/, ${EVAL_REL}/held-out/cases.json and the manifest\n`);
+      return 0;
     }
     case 'count': {
       need(0, 'no arguments');
