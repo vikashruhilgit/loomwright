@@ -409,7 +409,7 @@
     "loomwright/scripts/guard-finalize-publish.sh": 8,
     "loomwright/scripts/test-guard-finalize-publish.sh": 1,
     "loomwright/scripts/check-permission-files.sh": 16,
-    "loomwright/scripts/test-check-permission-files.sh": 20,
+    "loomwright/scripts/test-check-permission-files.sh": 21,
     "loomwright/scripts/automate-lanes.sh": 10,
     "loomwright/scripts/automate-lanes.d/common.sh": 1,
     "loomwright/scripts/automate-lanes.d/create.sh": 2,

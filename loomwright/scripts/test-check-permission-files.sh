@@ -143,6 +143,25 @@ run_g "$R" "git push origin HEAD"
 run_g "$R" "gh pr create --fill"; [ "$RC" = 2 ] && ok "gh pr create with the commit unpushed -> denied" || no "pr create rc=$RC"
 run_g "$R" "cd /tmp && git -C $R push"; [ "$RC" = 2 ] && ok "git -C <repo> push from elsewhere -> denied (the publish's own checkout)" || no "-C rc=$RC $GERR"
 
+echo "== guard step (iv-a) without jq / with an unparseable payload, no live run =="
+# A PATH holding git, grep and cat but no jq: the checker needs no jq, so (iii)'s fallback still runs it.
+mkdir -p "$TMP/nojq"
+for t in git grep cat; do ln -sf "$(command -v "$t")" "$TMP/nojq/$t"; done
+run_nojq() {
+  local p; p="$(jq -n --arg c "$2" --arg d "$1" '{session_id:"cc-1",cwd:$d,tool_name:"Bash",tool_input:{command:$c}}')"
+  GERR="$(CLAUDE_PROJECT_DIR="$1" PATH="$TMP/nojq" "$BASH" "$GUARD" <<<"$p" 2>&1 >/dev/null)"; RC=$?
+}
+run_nojq "$R" "git push origin HEAD"
+[ "$RC" = 2 ] && case "$GERR" in *permission_file*) true ;; *) false ;; esac \
+  && ok "no jq: the incident push -> still denied permission_file" || no "no-jq incident rc=$RC $GERR"
+GERR="$(CLAUDE_PROJECT_DIR="$R" "$BASH" "$GUARD" <<<'not json: git push' 2>&1 >/dev/null)"; RC=$?
+[ "$RC" = 2 ] && ok "unparseable payload mentioning push -> still denied permission_file" || no "unparseable rc=$RC $GERR"
+R2="$(new_repo)"
+run_nojq "$R2" "git push"; [ "$RC" = 0 ] && ok "no jq: a clean push -> allowed" || no "no-jq clean rc=$RC $GERR"
+local_settings "$R2"
+run_nojq "$R2" "git add -f .claude/settings.local.json && git commit -m x && git push"
+[ "$RC" = 2 ] && ok "no jq: force-add + commit + push -> denied (--pending read from the raw payload)" || no "no-jq one-liner rc=$RC $GERR"
+
 mkdir -p "$TMP/g"; cp "$GUARD" "$HERE/loom-log-owner.sh" "$HERE/host-mode.sh" "$TMP/g/" 2>/dev/null
 run_g "$R" "git push" "$TMP/g/guard-finalize-publish.sh"
 [ "$RC" = 2 ] && case "$GERR" in *"check-permission-files.sh missing"*) true ;; *) false ;; esac \
