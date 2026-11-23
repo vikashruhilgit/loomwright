@@ -47,8 +47,9 @@
 #  41. zero-padded --bound 08 / --call-max 08 read as decimal: the resumable
 #      path (CONTINUE + one persisted deadline), no `value too great for base`;
 #      mutation control (normalisation removed).
-#  42. the poll sleep is cut to the remaining --call-max budget: --call-max 1
-#      --interval 8 prints CONTINUE within 4 s; mutation control (clamp removed).
+#  42. the poll sleep is cut to the remaining --call-max budget: --call-max 3
+#      --interval 8 prints CONTINUE within 6 s after 2 polls; fewer polls is
+#      inconclusive, retried up to 3 times; mutation control (clamp removed).
 #  49-59. (drain-named-required-checks) --named-required <json>: stands in only
 #      where the protection read yields no list (paid-plan, unreadable, 404 with
 #      no ruleset check); a readable read (200 — even an empty list, or with an
