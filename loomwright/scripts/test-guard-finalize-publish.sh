@@ -531,7 +531,7 @@ REDIRECT_ALLOW_CASES=(
 for c in "${REDIRECT_ALLOW_CASES[@]}"; do run_guard "$RS" "$c"; expect "[$c] -> allowed" 0; done
 
 echo "== (m) mutation controls for the F2-F4 hardening =="
-cp "$HERE/loom-log-owner.sh" "$TMP/" ; cp "$HERE/check-children-settled.sh" "$TMP/"
+cp "$HERE/loom-log-owner.sh" "$TMP/" ; cp "$HERE/check-children-settled.sh" "$HERE/check-permission-files.sh" "$TMP/"
 # mutant <name> <sed program> — writes $TMP/<name>.sh; MUTOK=1 only when sed changed the guard
 mutant() { MUTF="$TMP/$1.sh"; sed "$2" "$GUARD" > "$MUTF"; if cmp -s "$MUTF" "$GUARD"; then MUTOK=0; else MUTOK=1; fi; }
 # F2: drop the session-log existence refusal -> a missing log writes a marker again
@@ -609,7 +609,7 @@ f4_mut "redirect tokens" "s/^        '>'|'<'|\"\$AMP\")\$/        no-redirect-ch
   "git >/dev/null push" "git 2>err.log push" "git > /dev/null push" "git push>/dev/null"
 
 # scope / owner (2026-11-12): each of the two root causes, restored alone, re-denies the incident
-cp "$HERE/loom-log-owner.sh" "$HERE/check-children-settled.sh" "$TMP/" 2>/dev/null
+cp "$HERE/loom-log-owner.sh" "$HERE/check-children-settled.sh" "$HERE/check-permission-files.sh" "$TMP/" 2>/dev/null
 RMI="$(new_repo running)"; MWT="$TMP/wt-foreign-m.$$"
 ( cd "$RMI" && git worktree add -q -b fix/unrelated "$MWT" ) >/dev/null 2>&1
 MINC="cd $MWT && git push -q -u origin fix/unrelated; gh pr create --head fix/unrelated --fill"
@@ -701,7 +701,7 @@ grep -q 'loom_main_root' "$GUARD" && grep -q 'loom_main_root' "$HERE/emit-lifecy
 echo "== (m) mutation control =="
 MUT="$TMP/mutant.sh"
 sed 's/^\[ -f "\$MARKER" \] || deny/[ -f "$MARKER" ] || allow #/' "$GUARD" > "$MUT"
-cp "$HERE/loom-log-owner.sh" "$TMP/" ; cp "$HERE/check-children-settled.sh" "$TMP/"
+cp "$HERE/loom-log-owner.sh" "$TMP/" ; cp "$HERE/check-children-settled.sh" "$HERE/check-permission-files.sh" "$TMP/"
 if cmp -s "$MUT" "$GUARD"; then
   no "mutation control: marker-check line not found, control inconclusive"
 else

@@ -126,6 +126,12 @@ jobs:
       - name: Check the capability contract is current (capabilities.json staleness gate)
         run: bash loomwright/scripts/build-capabilities.sh --check
 
+      # No Claude Code permission file is tracked: never a `.claude/settings.local.json`, never a
+      # `.claude/settings.json` holding a secret-shaped value. The same checker the publish guard runs
+      # before every push (check-permission-files.sh header). No `|| true`: fail-CLOSED gate.
+      - name: Check no Claude Code permission file or saved secret is tracked
+        run: bash loomwright/scripts/check-permission-files.sh --check
+
       # scripts/ci-local.sh is the local mirror of the static + suite jobs (it derives its gate list from the
       # `bash scripts/…` lines and the `bash loomwright/scripts/<x>.sh --check` lines in THIS file). Its self-test drives fixture repos only, never the
       # real suite. Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence explicit.
