@@ -143,6 +143,22 @@ run_g "$R" "git push origin HEAD"
 run_g "$R" "gh pr create --fill"; [ "$RC" = 2 ] && ok "gh pr create with the commit unpushed -> denied" || no "pr create rc=$RC"
 run_g "$R" "cd /tmp && git -C $R push"; [ "$RC" = 2 ] && ok "git -C <repo> push from elsewhere -> denied (the publish's own checkout)" || no "-C rc=$RC $GERR"
 
+echo "== guard step (iv-a) during a live Supervisor run =="
+# Same leaking repo, now with a live run on its branch: (iv-a) must deny permission_file BEFORE the
+# FINALIZE gates would deny for the missing marker.
+mkdir -p "$R/.supervisor"
+printf '## Session\n- session_id: plug-1\n- status: running\n- branch: main\n' > "$R/.supervisor/state.md"
+run_g "$R" "git push origin HEAD"
+[ "$RC" = 2 ] && case "$GERR" in *permission_file*) true ;; *) false ;; esac \
+  && ok "live run: the incident push -> denied permission_file (not the FINALIZE marker)" || no "live-run incident rc=$RC $GERR"
+rm -f "$R/.supervisor/state.md"
+# control: the same state.md really reads as a live run — a clean repo's push meets the FINALIZE gate
+R3="$(new_repo)"; mkdir -p "$R3/.supervisor"
+printf '## Session\n- session_id: plug-1\n- status: running\n- branch: main\n' > "$R3/.supervisor/state.md"
+run_g "$R3" "git push origin HEAD"
+[ "$RC" = 2 ] && case "$GERR" in *"FINALIZE point 5"*) true ;; *) false ;; esac \
+  && ok "live-run control: a clean push in that state meets the FINALIZE marker gate" || no "live-run control rc=$RC $GERR"
+
 echo "== guard step (iv-a) without jq / with an unparseable payload, no live run =="
 # A PATH holding git, grep and cat but no jq: the checker needs no jq, so (iii)'s fallback still runs it.
 mkdir -p "$TMP/nojq"
