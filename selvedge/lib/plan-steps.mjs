@@ -11,7 +11,7 @@
 // Node >= 18, standard library only.
 import { EnvError, REASONS, isOriginAllowed, parseOrigin } from './env-config.mjs';
 
-export const STEP_TYPES = Object.freeze(['goto', 'click', 'fill', 'select', 'check', 'press', 'wait_for', 'read', 'expect']);
+export const STEP_TYPES = Object.freeze(['goto', 'click', 'fill', 'select', 'check', 'press', 'wait_for', 'request', 'read', 'expect']);
 
 // Per step type: the fields it must carry and the ones it may carry (besides `type`).
 export const STEP_FIELDS = Object.freeze({
@@ -22,6 +22,7 @@ export const STEP_FIELDS = Object.freeze({
   check: Object.freeze({ required: Object.freeze(['locator']), optional: Object.freeze(['checked']) }),
   press: Object.freeze({ required: Object.freeze(['key']), optional: Object.freeze(['locator']) }),
   wait_for: Object.freeze({ required: Object.freeze(['locator', 'state']), optional: Object.freeze([]) }),
+  request: Object.freeze({ required: Object.freeze(['method', 'url']), optional: Object.freeze(['json']) }),
   read: Object.freeze({ required: Object.freeze(['property']), optional: Object.freeze(['locator']) }),
   expect: Object.freeze({ required: Object.freeze(['op', 'value']), optional: Object.freeze([]) }),
 });
@@ -35,21 +36,58 @@ export const LOCATOR_FORMS = Object.freeze({
   testid: Object.freeze(['testid']),
 });
 
-// The steps that change app state (a plan-time action when a snapshot prefix runs them).
+// The steps that change app state (a plan-time action when a snapshot prefix runs them). A
+// `request` whose method is not GET is an action too (isActionStep): REQUEST_ACTION_METHODS.
 export const ACTION_TYPES = Object.freeze(['click', 'fill', 'select', 'check', 'press']);
 
+// A `request` step: one fetch from inside the page (runner/steps.mjs), to the origin of the page
+// the criterion is on. GET reads; every other method is an action. `json` is a plain object (a
+// non-GET body), its string leaves literals or {{NAME}}.
+export const REQUEST_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+export const REQUEST_ACTION_METHODS = Object.freeze(REQUEST_METHODS.filter((m) => m !== 'GET'));
+// How deep a `json` body may nest, and how many leaves it may hold.
+export const REQUEST_JSON_MAX_DEPTH = 6;
+export const REQUEST_JSON_MAX_LEAVES = 64;
+
+// isActionStep(step) → true for a step that can change app state: ACTION_TYPES, or a `request`
+// whose method is not GET.
+export function isActionStep(step) {
+  if (!isPlainObject(step)) return false;
+  if (ACTION_TYPES.includes(step.type)) return true;
+  return step.type === 'request' && REQUEST_ACTION_METHODS.includes(step.method);
+}
+
 export const WAIT_STATES = Object.freeze(['attached', 'detached', 'visible', 'hidden']);
-export const READ_PROPERTIES = Object.freeze(['text', 'value', 'checked', 'count', 'url']);
+export const READ_PROPERTIES = Object.freeze(['text', 'value', 'checked', 'count', 'url', 'response_status', 'response_text']);
 export const READ_ATTRIBUTE_PATTERN = '^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$';
+// response_json:<RFC 6901 pointer> into the last reply's parsed body (at least one reference
+// token; `~` only as ~0 or ~1).
+export const READ_RESPONSE_JSON_PATTERN = '^response_json:(/([^~/]|~[01])*)+$';
+// cookie:<name>: a fingerprint of the context's cookie of that name, never its value.
+export const READ_COOKIE_PATTERN = '^cookie:[A-Za-z0-9_.-]+$';
+// The reads about the last reply of a `request` step (response_without_request without one).
+export const RESPONSE_READ_PREFIX = 'response_';
+// The reads that take no locator.
+export function readTakesNoLocator(p) {
+  return p === 'url' || isResponseRead(p) || isCookieRead(p);
+}
+export function isResponseRead(p) {
+  return typeof p === 'string' && (p === 'response_status' || p === 'response_text' || new RegExp(READ_RESPONSE_JSON_PATTERN).test(p));
+}
+export function isCookieRead(p) {
+  return typeof p === 'string' && new RegExp(READ_COOKIE_PATTERN).test(p);
+}
 export const EXPECT_OPS = Object.freeze(['equals', 'contains', 'matches', 'gt', 'lt', 'changed_from']);
 
-// A snapshot prefix: the plan step types except read/expect, at most PREFIX_MAX_STEPS of them.
+// A snapshot prefix: the plan step types except read/expect, at most PREFIX_MAX_STEPS of them. A
+// `request` in a prefix must be a GET (prefix_mutation_refused): looking never changes the app.
 export const PREFIX_STEP_TYPES = Object.freeze(STEP_TYPES.filter((t) => t !== 'read' && t !== 'expect'));
 export const PREFIX_MAX_STEPS = 15;
 
-// `{{NAME}}` — an environment variable resolved at run time; allowed only in a fill/select value.
+// `{{NAME}}` — an environment variable resolved at run time; allowed only in a fill/select value
+// and in a string leaf of a request's `json`.
 const PLACEHOLDER_RE = /\{\{([A-Z_][A-Z0-9_]*)\}\}/g;
-const PLACEHOLDER_FIELDS = Object.freeze({ fill: 'value', select: 'value' });
+const PLACEHOLDER_FIELDS = Object.freeze({ fill: 'value', select: 'value', request: 'json' });
 
 // Anything that looks like code, in any string field of a step. A step is data; a model that writes
 // script into one is refused, not interpreted.
@@ -80,7 +118,67 @@ export function isCodeLike(s) {
 }
 
 export function isReadProperty(p) {
-  return typeof p === 'string' && (READ_PROPERTIES.includes(p) || new RegExp(READ_ATTRIBUTE_PATTERN).test(p));
+  return typeof p === 'string' && (READ_PROPERTIES.includes(p) || new RegExp(READ_ATTRIBUTE_PATTERN).test(p)
+    || isResponseRead(p) || isCookieRead(p));
+}
+
+// The origin of an http(s) URL through the one origin parser, or null.
+export function urlOrigin(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    const o = parseOrigin(u.origin);
+    return o ? o.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+// A request's `json` problem, or null: a plain object of objects, arrays and scalar leaves, at most
+// REQUEST_JSON_MAX_DEPTH deep and REQUEST_JSON_MAX_LEAVES leaves.
+function jsonBodyProblem(body) {
+  if (!isPlainObject(body)) return 'json must be a plain JSON object';
+  let leaves = 0;
+  const walk = (v, depth) => {
+    if (depth > REQUEST_JSON_MAX_DEPTH) return `json nests deeper than ${REQUEST_JSON_MAX_DEPTH}`;
+    if (Array.isArray(v) || isPlainObject(v)) {
+      for (const x of Object.values(v)) {
+        const p = walk(x, depth + 1);
+        if (p) return p;
+      }
+      return null;
+    }
+    leaves += 1;
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return null;
+    return 'json leaves must be strings, finite numbers, booleans or null';
+  };
+  const p = walk(body, 1);
+  if (p) return p;
+  if (leaves > REQUEST_JSON_MAX_LEAVES) return `json holds ${leaves} leaves; at most ${REQUEST_JSON_MAX_LEAVES}`;
+  return null;
+}
+
+// Every object key in a value (a request's json keys get the code-like check too).
+function keysOf(v, outList = []) {
+  if (Array.isArray(v)) v.forEach((x) => keysOf(x, outList));
+  else if (isPlainObject(v)) for (const [k, x] of Object.entries(v)) { outList.push(k); keysOf(x, outList); }
+  return outList;
+}
+
+// Every string leaf of a value (the `json` placeholder walk).
+function stringLeaves(v, outList = []) {
+  if (typeof v === 'string') outList.push(v);
+  else if (Array.isArray(v) || isPlainObject(v)) for (const x of Object.values(v)) stringLeaves(x, outList);
+  return outList;
+}
+
+// A copy of a value with every string leaf passed through fn.
+function mapStrings(v, fn) {
+  if (typeof v === 'string') return fn(v);
+  if (Array.isArray(v)) return v.map((x) => mapStrings(x, fn));
+  if (isPlainObject(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mapStrings(x, fn)]));
+  return v;
 }
 
 // Every string in a value (a step, a locator), with its dotted path, for the code-like check.
@@ -133,12 +231,21 @@ function checkFieldValues(step, at, add) {
     case 'wait_for':
       if (!WAIT_STATES.includes(step.state)) add('plan_schema_violation', `${at}.state must be one of ${WAIT_STATES.join(', ')}`);
       break;
+    case 'request':
+      if (!REQUEST_METHODS.includes(step.method)) add('plan_schema_violation', `${at}.method must be one of ${REQUEST_METHODS.join(', ')}`);
+      if (!nonEmptyString(step.url)) add('plan_schema_violation', `${at}.url must be a non-empty string`);
+      if ('json' in step) {
+        const p = jsonBodyProblem(step.json);
+        if (p) add('plan_schema_violation', `${at}: ${p}`);
+        else if (step.method === 'GET') add('plan_schema_violation', `${at}: a GET request carries no json body`);
+      }
+      break;
     case 'read':
       if (!isReadProperty(step.property)) {
-        add('plan_schema_violation', `${at}.property must be one of ${READ_PROPERTIES.join(', ')} or attribute:<name>`);
-      } else if (step.property === 'url' && 'locator' in step) {
-        add('plan_schema_violation', `${at}: read url takes no locator`);
-      } else if (step.property !== 'url' && !('locator' in step)) {
+        add('plan_schema_violation', `${at}.property must be one of ${READ_PROPERTIES.join(', ')}, attribute:<name>, response_json:<JSON Pointer> or cookie:<name>`);
+      } else if (readTakesNoLocator(step.property) && 'locator' in step) {
+        add('plan_schema_violation', `${at}: read ${step.property} takes no locator`);
+      } else if (!readTakesNoLocator(step.property) && !('locator' in step)) {
         add('plan_schema_violation', `${at}: read ${step.property} needs a locator`);
       }
       break;
@@ -172,10 +279,15 @@ function checkFieldValues(step, at, add) {
 //  - config: a loaded selvedge.json (loadConfig().config); every goto origin must be allowed by it
 //    (isOriginAllowed). No config allows nothing: the check fails closed.
 //  - origins: when an array, every goto origin must also be one of these (the plan's `origins`).
-//  - prefix: a snapshot prefix — only PREFIX_STEP_TYPES, at most PREFIX_MAX_STEPS steps.
+//  - prefix: a snapshot prefix — only PREFIX_STEP_TYPES, at most PREFIX_MAX_STEPS steps, and a
+//    request only as a GET (prefix_mutation_refused).
+//  - pageOrigin: the origin of the page before the first step (a snapshot's <url>), or null.
+// A request's url must pass the same origin checks as a goto, and its origin must equal the origin
+// of the page at that point: the last goto before it (else pageOrigin). A cross-origin fetch would
+// depend on the app's CORS policy, not on Selvedge.
 // Codes are plan-lint problem codes (PLAN_PROBLEMS in plan-validate.mjs). `index` is 0-based, or
 // null for a problem with the whole list.
-export function validateSteps(steps, { config, origins, prefix = false } = {}) {
+export function validateSteps(steps, { config, origins, prefix = false, pageOrigin = null } = {}) {
   const problems = [];
   if (!Array.isArray(steps)) {
     problems.push({ index: null, code: 'plan_schema_violation', detail: 'steps must be an array' });
@@ -184,6 +296,7 @@ export function validateSteps(steps, { config, origins, prefix = false } = {}) {
   if (prefix && steps.length > PREFIX_MAX_STEPS) {
     problems.push({ index: null, code: 'prefix_too_long', detail: `a prefix has ${steps.length} steps; at most ${PREFIX_MAX_STEPS}` });
   }
+  let onOrigin = pageOrigin;
   steps.forEach((step, index) => {
     const at = `steps[${index}]`;
     const add = (code, detail) => problems.push({ index, code, detail });
@@ -199,6 +312,9 @@ export function validateSteps(steps, { config, origins, prefix = false } = {}) {
     if (prefix && !PREFIX_STEP_TYPES.includes(t)) {
       add('prefix_step_not_allowed', `${at}: ${t} is not allowed in a snapshot prefix (allowed: ${PREFIX_STEP_TYPES.join(', ')})`);
     }
+    if (prefix && t === 'request' && step.method !== 'GET') {
+      add('prefix_mutation_refused', `${at}: a snapshot prefix sends only GET requests (looking never changes the app); this one is ${JSON.stringify(step.method)}`);
+    }
     const { required, optional } = STEP_FIELDS[t];
     for (const k of Object.keys(step)) {
       if (k !== 'type' && !required.includes(k) && !optional.includes(k)) {
@@ -212,38 +328,41 @@ export function validateSteps(steps, { config, origins, prefix = false } = {}) {
     for (const [p, s] of stringsOf(step, at, [])) {
       if (isCodeLike(s)) add('code_like_content', `${p} looks like code (${JSON.stringify(s.slice(0, 60))})`);
     }
-    if (t === 'goto' && typeof step.url === 'string' && !isCodeLike(step.url)) {
-      let origin = null;
-      try {
-        const u = new URL(step.url);
-        origin = parseOrigin(u.origin) ? u.origin : null;
-      } catch {
-        origin = null;
-      }
+    if (t === 'request') {
+      for (const k of keysOf(step.json)) if (isCodeLike(k)) add('code_like_content', `${at}.json key ${JSON.stringify(k.slice(0, 60))} looks like code`);
+    }
+    if ((t === 'goto' || t === 'request') && typeof step.url === 'string' && !isCodeLike(step.url)) {
+      const origin = urlOrigin(step.url);
       if (!origin || !isOriginAllowed(config, step.url)) {
         add('origin_not_allowed', `${at}.url ${JSON.stringify(step.url)}: origin ${origin || '(none)'} is not allowed by selvedge.json`);
       } else if (Array.isArray(origins) && !isOriginAllowed({ origins }, step.url)) {
         add('origin_not_allowed', `${at}.url ${JSON.stringify(step.url)}: origin ${origin} is not in the plan's origins`);
+      } else if (t === 'request' && origin !== onOrigin) {
+        add('origin_not_allowed', `${at}.url ${JSON.stringify(step.url)}: a request goes to the origin of the page it is sent from (${onOrigin || 'no page yet: goto that origin first'}), never across origins`);
       }
     }
+    if (t === 'goto') onOrigin = typeof step.url === 'string' ? urlOrigin(step.url) : null;
   });
   return problems;
 }
 
-// The `{{NAME}}` placeholders a step list uses, in first-use order (only fill/select values).
+// The `{{NAME}}` placeholders a step list uses, in first-use order (only fill/select values and
+// a request's json string leaves).
 export function placeholderNames(steps) {
   const names = [];
   if (!Array.isArray(steps)) return names;
   for (const step of steps) {
     const field = isPlainObject(step) ? PLACEHOLDER_FIELDS[step.type] : undefined;
-    if (!field || typeof step[field] !== 'string') continue;
-    for (const m of step[field].matchAll(PLACEHOLDER_RE)) if (!names.includes(m[1])) names.push(m[1]);
+    if (!field || !(field in step)) continue;
+    for (const leaf of stringLeaves(step[field])) {
+      for (const m of leaf.matchAll(PLACEHOLDER_RE)) if (!names.includes(m[1])) names.push(m[1]);
+    }
   }
   return names;
 }
 
 // resolvePlaceholders(steps, env) → a new step list with every `{{NAME}}` in a fill/select value
-// replaced by env[NAME]. The input is never changed (callers log the given steps, never the values).
+// (and a request's json string leaves) replaced by env[NAME]. The input is never changed (callers log the given steps, never the values).
 // Any unset name throws EnvError placeholder_unset (blocked) naming every unset one: an unset value
 // is never resolved to an empty string.
 export function resolvePlaceholders(steps, env = process.env) {
@@ -255,7 +374,7 @@ export function resolvePlaceholders(steps, env = process.env) {
   }
   return steps.map((step) => {
     const field = isPlainObject(step) ? PLACEHOLDER_FIELDS[step.type] : undefined;
-    if (!field || typeof step[field] !== 'string') return step;
-    return { ...step, [field]: step[field].replace(PLACEHOLDER_RE, (_, n) => env[n]) };
+    if (!field || !(field in step)) return step;
+    return { ...step, [field]: mapStrings(step[field], (v) => v.replace(PLACEHOLDER_RE, (_, n) => env[n])) };
   });
 }

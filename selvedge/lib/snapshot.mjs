@@ -3,8 +3,10 @@
 //   selvedge snapshot <url> [--steps <prefix.json>] [--run-dir <dir>] [--base <ref>]
 //
 // Opens <url> in a guarded Chromium (openGuardedContext, item 02's proxy + route layer), runs an
-// optional prefix of plan steps (a JSON array: goto, click, fill, select, check, press, wait_for —
-// never read or expect, at most 15, checked by validateSteps in prefix mode), and prints the
+// optional prefix of plan steps (a JSON array: goto, click, fill, select, check, press, wait_for,
+// request — never read or expect, at most 15, checked by validateSteps in prefix mode; a request
+// only as a GET to the origin of the page it is sent from, so looking never changes the app:
+// a POST, PUT, PATCH or DELETE is plan_invalid prefix_mutation_refused), and prints the
 // accessibility tree of the page body. A planner uses it to see a page in the state a criterion
 // needs (a dialog open, a form filled) before it writes locators.
 //
@@ -34,7 +36,10 @@
 // stdout on a browser run (exit 0, or 1 when a prefix step or the page itself failed — the tree
 // as it was then is still printed): one JSON object
 //   {schema_version: 1, url, steps_run, failed_step: null | <0-based prefix index>,
-//    error: null | <the error's first line>, aria_snapshot}
+//    error: null | <the error's first line>, aria_snapshot[, replies]}
+// `replies` is there only when the prefix holds a request: one {step, method, url, status,
+// content_type, body, truncated} per request that replied, body the first SNAPSHOT_REPLY_BYTES
+// bytes of the reply text (redacted like aria_snapshot), so a planner can see a reply's shape.
 // failed_step is null with a non-null error when <url> itself did not load. A navigation (<url> or a
 // prefix goto) answered with an HTTP status >= 400 has failed: the guard's proxy answers an
 // unreachable listed origin with its own 502 page, which must not read as the app's page.
@@ -67,7 +72,7 @@ import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { authEnvValues } from './auth-state.mjs';
 import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
-import { ACTION_TYPES, placeholderNames, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
+import { isActionStep, placeholderNames, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
 import { problemLine } from './plan-validate.mjs';
 import { openGuardedContext } from './runner/route-guard.mjs';
 import { navigate, runStep } from './runner/steps.mjs';
@@ -79,6 +84,8 @@ export const BUDGET_ENV = 'SELVEDGE_SNAPSHOT_BUDGET';
 export const DEFAULT_SNAPSHOT_BUDGET = 20;
 export const STEP_TIMEOUT_MS = 5000;
 export const NAVIGATION_TIMEOUT_MS = 15000;
+// How much of a prefix request's reply a snapshot prints.
+export const SNAPSHOT_REPLY_BYTES = 2048;
 
 // The outcome a snapshots.jsonl line records.
 export const OUTCOMES = Object.freeze({
@@ -101,7 +108,9 @@ const USAGE = `Usage: selvedge snapshot <url> [--steps <prefix.json>] [--run-dir
 
 Print the accessibility tree of <url> (an origin selvedge.json allows), opened in the guarded
 browser, after an optional prefix of plan steps (a JSON array of goto, click, fill, select, check,
-press, wait_for; at most 15; a fill/select value may use {{NAME}} from the environment).
+press, wait_for, request; at most 15; a fill/select value may use {{NAME}} from the environment).
+A request in a prefix is a GET only; its status and the first 2 KiB of its reply are printed under
+"replies".
 
   --run-dir <dir>   the run folder (or SELVEDGE_RUN_DIR); required: each call appends one line to
                     <dir>/snapshots.jsonl and counts against SELVEDGE_SNAPSHOT_BUDGET (default 20).
@@ -242,11 +251,23 @@ export function redactValues(text, secrets) {
 // A prefix step runs through the one executor (runner/steps.mjs). read and expect are never a
 // prefix step: validateSteps (prefix mode) refuses them before launch, and this refuses rather than
 // skips should one reach it.
-async function runPrefixStep(page, step) {
+async function runPrefixStep(page, step, ctx) {
   if (step.type === 'read' || step.type === 'expect') {
     throw new Error(`step type ${JSON.stringify(step.type)} cannot run in a snapshot prefix`);
   }
-  await runStep(page, step);
+  if (step.type === 'request' && step.method !== 'GET') {
+    throw new Error(`a snapshot prefix sends only GET requests (${JSON.stringify(step.method)} refused)`);
+  }
+  return runStep(page, step, ctx);
+}
+
+// The first `bytes` UTF-8 bytes of a text, never splitting a character.
+function firstBytes(text, bytes) {
+  const buf = Buffer.from(String(text), 'utf8');
+  if (buf.length <= bytes) return String(text);
+  let end = bytes;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1;
+  return buf.subarray(0, end).toString('utf8');
 }
 
 // The prefix file: a JSON array of steps, or plan_invalid problems when it cannot be read as one.
@@ -360,9 +381,12 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
   // the auth.env values (auth-state.mjs): a page that shows a credential hands the planner {{NAME}}
   secrets.push(...authEnvValues(config, env));
 
-  // 1. the prefix: the one step validator, prefix mode. An unlisted goto is the origin check's.
-  const problems = readProblems.length ? readProblems : validateSteps(steps, { config, prefix: true });
-  if (problems.some((p) => p.code !== ORIGIN_PROBLEM)) {
+  // 1. the prefix: the one step validator, prefix mode. An unlisted goto or request origin is the
+  //    origin check's (BLOCKED); a request to an allowed origin other than its page's is plan_invalid.
+  const problems = readProblems.length ? readProblems : validateSteps(steps, { config, prefix: true, pageOrigin: originOf(url) });
+  const blockedOrigin = (p) => p.code === ORIGIN_PROBLEM
+    && !(Number.isInteger(p.index) && steps[p.index] && steps[p.index].type === 'request' && isOriginAllowed(config, steps[p.index].url));
+  if (problems.some((p) => !blockedOrigin(p))) {
     for (const p of problems) warn(problemLine({ id: PREFIX_SCOPE, code: p.code, detail: p.detail }));
     warn(`${problems.length} problem(s) in the prefix ${flags.steps}; nothing was launched`);
     record.outcome = OUTCOMES.invalid;
@@ -374,9 +398,9 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
     throw blocked(REASONS.host_not_allowed, `${url}: origin ${record.origin || '(none)'} is not in selvedge.json's origins (config source: ${source}); nothing was launched`);
   }
 
-  // 3. every prefix goto's origin, before any browser exists.
+  // 3. every prefix goto's and request's origin, before any browser exists.
   for (const [i, step] of steps.entries()) {
-    if (step.type === 'goto' && !isOriginAllowed(config, step.url)) {
+    if ((step.type === 'goto' || step.type === 'request') && !isOriginAllowed(config, step.url)) {
       throw blocked(REASONS.host_not_allowed, `steps[${i}].url ${JSON.stringify(step.url)}: origin ${originOf(step.url) || '(none)'} is not in selvedge.json's origins; nothing was launched`);
     }
   }
@@ -408,9 +432,11 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
     },
   };
   const result = { schema_version: SNAPSHOT_SCHEMA_VERSION, url, steps_run: 0, failed_step: null, error: null, aria_snapshot: null };
+  const replies = [];
   const guard = await openGuardedContext({ chromium, config });
   try {
     const { page } = guard;
+    const ctx = { state: { reply: null }, blocks: guard.blocks };
     page.setDefaultTimeout(STEP_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     try {
@@ -420,9 +446,12 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
     }
     if (result.error === null) {
       for (const [i, step] of resolved.entries()) {
-        if (ACTION_TYPES.includes(step.type)) record.plan_time_actions += 1;
+        if (isActionStep(step)) record.plan_time_actions += 1;
         try {
-          await runPrefixStep(page, step);
+          const reply = await runPrefixStep(page, step, ctx);
+          if (step.type === 'request') {
+            replies.push({ step: i, method: steps[i].method, url: steps[i].url, status: reply.status, content_type: reply.content_type, body: firstBytes(reply.text, SNAPSHOT_REPLY_BYTES), truncated: reply.truncated || Buffer.byteLength(reply.text, 'utf8') > SNAPSHOT_REPLY_BYTES });
+          }
           result.steps_run += 1;
         } catch (e) {
           result.failed_step = i;
@@ -449,6 +478,9 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
   // url is the caller's own argument (it holds no {{NAME}}).
   result.aria_snapshot = result.aria_snapshot === null ? null : redactValues(result.aria_snapshot, secrets);
   result.error = result.error === null ? null : redactValues(result.error, secrets);
+  if (steps.some((st) => st && st.type === 'request')) {
+    result.replies = replies.map((r) => ({ ...r, content_type: r.content_type === null ? null : redactValues(r.content_type, secrets), body: redactValues(r.body, secrets) }));
+  }
   say(JSON.stringify(result, null, 2));
   if (result.failed_step !== null) {
     record.failed_step = result.failed_step;

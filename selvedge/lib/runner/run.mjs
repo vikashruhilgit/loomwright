@@ -46,8 +46,8 @@
 // variable joins the redaction list, written back as {{NAME}}. With `auth` but no signed_in_check, a
 // stored session file Playwright would not load (auth-state.mjs stateFileProblem) makes every
 // criterion BLOCKED needs_auth before any browser opens.
-// Per criterion, before launch: a goto origin selvedge.json no longer allows is BLOCKED
-// host_not_allowed; an unset {{NAME}} is BLOCKED placeholder_unset; Playwright that does not resolve
+// Per criterion, before launch: a goto or request origin selvedge.json no longer allows is BLOCKED
+// host_not_allowed (a request the guard refuses while it runs is BLOCKED with the guard's reason); an unset {{NAME}} is BLOCKED placeholder_unset; Playwright that does not resolve
 // makes every criterion still to run BLOCKED playwright_unavailable.
 //
 // Every criterion runs in its own fresh guarded context (runner/execute.mjs). SELVEDGE_RUN_BUDGET_MS
@@ -285,10 +285,10 @@ function runHooks(config, root, env) {
   return { ran, blockedReason: null };
 }
 
-// The goto origin of a criterion selvedge.json no longer allows, or null.
+// The first goto / request of a criterion whose origin selvedge.json no longer allows ({type, url}), or null.
 function refusedGoto(config, steps) {
-  const bad = steps.find((s) => isPlainObject(s) && s.type === 'goto' && !isOriginAllowed(config, s.url));
-  return bad ? bad.url : null;
+  const bad = steps.find((s) => isPlainObject(s) && (s.type === 'goto' || s.type === 'request') && !isOriginAllowed(config, s.url));
+  return bad ? { type: bad.type, url: bad.url } : null;
 }
 
 // runPlan(runDir, { env, started, replayOf, trace, interactive }) → Promise<exit code>. Writes the CLI's stdout /
@@ -378,9 +378,9 @@ async function claimedRun({ runDir, env, started, replayOf, trace, interactive, 
       ends.set(id, { outcome: blockAll.outcome, reason: blockAll.reason });
       continue;
     }
-    const url = refusedGoto(config, c.steps);
-    if (url !== null) {
-      err(`${id}: ${REASONS.host_not_allowed}: goto ${JSON.stringify(url)} is not an origin selvedge.json allows`);
+    const refused = refusedGoto(config, c.steps);
+    if (refused !== null) {
+      err(`${id}: ${REASONS.host_not_allowed}: ${refused.type} ${JSON.stringify(refused.url)} is not an origin selvedge.json allows`);
       ends.set(id, { outcome: CRITERION_OUTCOMES.blocked, reason: REASONS.host_not_allowed });
       continue;
     }

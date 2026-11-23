@@ -347,7 +347,10 @@ const checks = {
       && d["locator_" + k].additionalProperties === false && eq(d["locator_" + k].required, [k])),
   ops: eq(d.step_expect.properties.op.enum, S.EXPECT_OPS),
   states: eq(d.step_wait_for.properties.state.enum, S.WAIT_STATES),
-  read: eq(d.step_read.properties.property.anyOf[0].enum, S.READ_PROPERTIES) && d.step_read.properties.property.anyOf[1].pattern === S.READ_ATTRIBUTE_PATTERN,
+  read: eq(d.step_read.properties.property.anyOf[0].enum, S.READ_PROPERTIES) && d.step_read.properties.property.anyOf[1].pattern === S.READ_ATTRIBUTE_PATTERN
+    && d.step_read.properties.property.anyOf[2].pattern === S.READ_RESPONSE_JSON_PATTERN && d.step_read.properties.property.anyOf[3].pattern === S.READ_COOKIE_PATTERN
+    && d.step_read.properties.property.anyOf.length === 4,
+  request: eq(d.step_request.properties.method.enum, S.REQUEST_METHODS),
   criterion: eq(Object.keys(d.criterion_plan.properties), V.CRITERION_PLAN_KEYS) && d.criterion_plan.additionalProperties === false
     && eq(d.criterion_plan.properties.polarity.enum, V.POLARITIES)
     && eq(Object.keys(d.assumption.properties), V.ASSUMPTION_KEYS) && d.assumption.additionalProperties === false,

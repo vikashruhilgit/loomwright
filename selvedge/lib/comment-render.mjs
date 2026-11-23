@@ -10,7 +10,8 @@
 // locator only, the expected value (op + value from the plan), matched yes/no, evidence class, the
 // reason and its unblock hint (BLOCKED / NOT_VERIFIABLE) with, for a criterion the plan lists under
 // not_planned, the planner's detail and rewrite (redacted), the read value only when the caller says it
-// may be shown (always after redaction), and the short plan sha256 + revision.
+// may be shown (always after redaction; never for a criterion whose plan reads a cookie:<name>,
+// whose value is a fingerprint), and the short plan sha256 + revision.
 //
 // What the body never carries: an http:// or https:// URL (a goto shows its URL's path only, and every
 // free-text field has each URL rewritten to its path, so no origin and no query string), the header
@@ -109,6 +110,8 @@ export function redactValue(value, patterns = []) {
   return out;
 }
 
+const COOKIE_READ_PREFIX = 'cookie:';
+
 // A plan-step locator as `role "button" name "Save"` / `label "Email"` / `text "…"` / `testid "…"`.
 function locatorText(loc) {
   if (!isPlainObject(loc)) return '';
@@ -120,13 +123,15 @@ function locatorText(loc) {
   return parts.join(' ');
 }
 
-// One plan step as type + locator only: a goto shows its URL's path, a read its property, an expect
-// its op. A fill / select value and a press key are never shown.
+// One plan step as type + locator only: a goto shows its URL's path, a request its method and URL
+// path, a read its property, an expect its op. A fill / select value, a request's json body and a
+// press key are never shown.
 function stepText(step) {
   if (!isPlainObject(step)) return '`?`';
   const type = typeof step.type === 'string' ? step.type.replace(/[^a-z_]/g, '') : '?';
   const parts = [`\`${type}\``];
-  if (type === 'goto') {
+  if (type === 'request' && typeof step.method === 'string') parts.push(escapeHtml(step.method.replace(/[^A-Z]/g, '')));
+  if (type === 'goto' || type === 'request') {
     let p = '/';
     try {
       p = new URL(String(step.url)).pathname;
@@ -261,9 +266,13 @@ export function renderComment({ verdict, plan = {}, criteria = [], history = {},
         note('Suggested rewrite', np.rewrite);
       }
     }
+    // A cookie:<name> read is a fingerprint, never shown (even with read_values on): a criterion
+    // whose plan reads a cookie publishes no read value at all.
+    const readsCookie = steps.some((s) => isPlainObject(s) && s.type === 'read' && typeof s.property === 'string' && s.property.startsWith(COOKIE_READ_PREFIX));
     let shown = c.read_value === null || c.read_value === undefined ? null : redactValue(urlsToPaths(c.read_value), patterns);
-    if (!readValues) shown = null;
+    if (!readValues || readsCookie) shown = null;
     if (shown !== null) lines.push(`- **Read value:** "${freeText(shown)}"`);
+    else if (readsCookie) lines.push('- **Read value:** not published (a cookie read is never published)');
     else lines.push(`- **Read value:** not published${readValues ? ' (nothing was read)' : ' (`comment.read_values` is off)'}`);
     lines.push(`- **Plan:** \`${sha}\` · revision ${revision === null ? 'unknown' : revision}`);
     lines.push('', '</details>', '');

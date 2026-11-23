@@ -8,6 +8,38 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.11.0 — 2026-11-23
+
+- A new plan step, `request` (requirement qa-split/08b; owner decisions of 2026-11-23: D6 gains the
+  step, it is part of the web adapter rather than a new target, and it spends Phase 2's first engine
+  revision). `{"type": "request", "method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "url", "json"?}`
+  sends one request to the origin of the page the criterion is on (its last `goto`; the lint refuses
+  any other origin as `origin_not_allowed`). `json` is a plain object whose string leaves may be
+  `{{NAME}}`; there is no headers field and no raw body. A non-GET request is an action, so the
+  read-after-the-last-action and negative-baseline rules apply to it.
+- The runner sends it as a `fetch` from inside the page: one fixed, runner-owned function run by
+  `page.evaluate`, with the method, URL and body passed as arguments. So both guard layers check it,
+  and a refusal is BLOCKED with the guard's reason (`host_not_allowed`, `remote_mutation_refused`, …).
+  Playwright's `context.request` is never used: a probe with Playwright 1.65.1 showed it bypasses
+  `context.route`, so the route layer's checks would not apply to it. Neither is a Node HTTP client.
+- New reads with no locator: `response_status`, `response_text` (the reply kept up to 64 KiB) and
+  `response_json:<RFC 6901 pointer>` of the criterion's last reply, and `cookie:<name>`, a fingerprint
+  of the context's cookie (`sha256:` and 16 hex digits), never its value. New lint codes:
+  `response_without_request` (a reply read with no request before it) and `prefix_mutation_refused`
+  (a snapshot prefix request that is not GET). An expect on a cookie read must be `changed_from`
+  against a baseline read of the same cookie (`existence_only_expect` otherwise).
+- Evidence: a request step line carries `request: {method, url, json_keys, status}`, never the body.
+  The comment shows a request's method and path, and never publishes a read value for a criterion
+  whose plan reads a cookie. `selvedge snapshot` accepts a GET request in a prefix and prints each
+  reply's status and first 2 KiB under `replies`.
+- The planner prompt has a section on the request step, with one positive and one negative example;
+  `side_effect_not_observable` is now for an effect that neither a page nor a reply shows.
+- `tests/test-request-step.sh` pins all of it, including the probe as a fixture: a request step to an
+  unlisted origin and a remote POST without `allow_remote_mutation` are refused by the route layer,
+  and `context.request` is not seen by it. Every arm was checked red under its own mutation. The
+  tuning-set eval run that would measure group A (requirement acceptance, last bullet) has not been
+  run in this release.
+
 ## 0.10.2 — 2026-11-23
 
 - `selvedge/eval/eval-set.mjs import-planted <out-dir>` adds the planted-defect session's output to

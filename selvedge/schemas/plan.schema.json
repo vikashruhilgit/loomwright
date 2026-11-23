@@ -67,7 +67,7 @@
       "additionalProperties": false
     },
     "step_type": {
-      "enum": ["goto", "click", "fill", "select", "check", "press", "wait_for", "read", "expect"]
+      "enum": ["goto", "click", "fill", "select", "check", "press", "wait_for", "request", "read", "expect"]
     },
     "step": {
       "oneOf": [
@@ -78,6 +78,7 @@
         { "$ref": "#/$defs/step_check" },
         { "$ref": "#/$defs/step_press" },
         { "$ref": "#/$defs/step_wait_for" },
+        { "$ref": "#/$defs/step_request" },
         { "$ref": "#/$defs/step_read" },
         { "$ref": "#/$defs/step_expect" }
       ]
@@ -144,16 +145,33 @@
       },
       "additionalProperties": false
     },
+    "step_request": {
+      "description": "One fetch from inside the page to the origin of the page it is on (the last goto before it). GET reads; any other method is an action. No headers, no raw body.",
+      "type": "object",
+      "required": ["type", "method", "url"],
+      "properties": {
+        "type": { "const": "request" },
+        "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+        "url": { "type": "string", "minLength": 1 },
+        "json": {
+          "description": "A non-GET JSON body: a plain object whose string leaves are literals or {{NAME}} resolved from the environment at run time. Never written to evidence (only its keys).",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
     "step_read": {
       "type": "object",
       "required": ["type", "property"],
       "properties": {
         "type": { "const": "read" },
         "property": {
-          "description": "url takes no locator; every other property needs one.",
+          "description": "url, response_status, response_text, response_json:<JSON Pointer> and cookie:<name> take no locator; every other property needs one. response_* read the last reply of a request step; cookie:<name> reads a fingerprint (sha256 prefix) of the cookie, never its value.",
           "anyOf": [
-            { "enum": ["text", "value", "checked", "count", "url"] },
-            { "type": "string", "pattern": "^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$" }
+            { "enum": ["text", "value", "checked", "count", "url", "response_status", "response_text"] },
+            { "type": "string", "pattern": "^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$" },
+            { "type": "string", "pattern": "^response_json:(/([^~/]|~[01])*)+$" },
+            { "type": "string", "pattern": "^cookie:[A-Za-z0-9_.-]+$" }
           ]
         },
         "locator": { "$ref": "#/$defs/locator" }

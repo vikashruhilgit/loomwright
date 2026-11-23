@@ -7,8 +7,8 @@
 // A run folder's evidence.jsonl holds, in this order:
 //   {"kind":"run_start", ts, run_id, plan_sha256, playwright_version, data_state, hooks_run,
 //    plan_time_actions, replay_of}                                       exactly one, the first line
-//   {"kind":"step", criterion, step, type, locator, outcome, value, duration_ms[, error][, stable_wait]}
-//                                                                        one per executed step
+//   {"kind":"step", criterion, step, type, locator, outcome, value, duration_ms[, error][, stable_wait]
+//    [, request]}                                                        one per executed step
 //   {"kind":"criterion_end", criterion, outcome, reason, failed_step, screenshot}
 //                                                                        at most one per criterion
 //   {"kind":"run_end", ts, duration_ms}                                  at most one, the last line
@@ -16,6 +16,12 @@
 // (a {{NAME}} kept as written) and null otherwise; an `expect` line's outcome is matched or
 // mismatched, every other step's ok or failed. A criterion_end line's reason is null for a
 // completed criterion and one of REASONS otherwise.
+// A `request` step line carries `request`: {method, url, json_keys, status} — the plan's method and
+// url, the top-level keys of its json body (sorted; null without one), and the reply's HTTP status
+// (null when no reply came). The body itself is never written, as given or resolved. Its reply is
+// evidence only through the reads after it (response_status / response_text / response_json:…).
+// A `cookie:<name>` read's value is the cookie's fingerprint (steps.mjs cookieFingerprint), never
+// the cookie's value.
 //
 // A criterion with no criterion_end line was cut short (an interrupted run): the reader keeps it as
 // it is, and the verdict says BLOCKED run_interrupted. Anything else the reader cannot trust — the
@@ -56,7 +62,7 @@ export const EVIDENCE_FIELDS = Object.freeze({
   }),
   [EVIDENCE_KINDS.step]: Object.freeze({
     required: Object.freeze(['criterion', 'step', 'type', 'locator', 'outcome', 'value', 'duration_ms']),
-    optional: Object.freeze(['error', 'stable_wait']),
+    optional: Object.freeze(['error', 'stable_wait', 'request']),
   }),
   [EVIDENCE_KINDS.criterion_end]: Object.freeze({
     required: Object.freeze(['criterion', 'outcome', 'reason', 'failed_step', 'screenshot']),
@@ -122,6 +128,9 @@ const FIELD_CHECKS = Object.freeze({
     duration_ms: isDuration,
     error: isString,
     stable_wait: (v) => typeof v === 'boolean',
+    request: (v) => isPlainObject(v) && Object.keys(v).sort().join() === 'json_keys,method,status,url'
+      && isNonEmpty(v.method) && isNonEmpty(v.url) && (v.status === null || isWhole(v.status))
+      && (v.json_keys === null || (Array.isArray(v.json_keys) && v.json_keys.every(isString))),
   },
   [EVIDENCE_KINDS.criterion_end]: {
     criterion: isNonEmpty,
@@ -156,6 +165,7 @@ export function evidenceLineProblem(line) {
     const isExpect = line.type === 'expect';
     const expectOutcome = line.outcome === STEP_OUTCOMES.matched || line.outcome === STEP_OUTCOMES.mismatched;
     if (isExpect !== expectOutcome) return `step: outcome ${line.outcome} does not fit a ${line.type} step`;
+    if ((line.type === 'request') !== ('request' in line)) return `step: a request field fits a request step only, and a request step needs one`;
   }
   if (line.kind === EVIDENCE_KINDS.criterion_end) {
     const completed = line.outcome === CRITERION_OUTCOMES.completed;
@@ -226,12 +236,24 @@ function redactDeep(value, secrets) {
   return value;
 }
 
-// stepLine({ criterion, index, step, outcome, value, durationMs, error, stableWait }) → a step line.
+// requestRecord(step, status) → a request step line's `request` field (the header): never the body.
+export function requestRecord(step, status = null) {
+  return {
+    method: String(step.method),
+    url: String(step.url),
+    json_keys: isPlainObject(step.json) ? Object.keys(step.json).sort() : null,
+    status: Number.isInteger(status) ? status : null,
+  };
+}
+
+// stepLine({ criterion, index, step, outcome, value, durationMs, error, stableWait, status }) → a
+// step line.
 //   step   the plan step AS GIVEN (never the resolved copy): its type, locator and, for fill /
-//          select, its value ({{NAME}} kept)
+//          select, its value ({{NAME}} kept); a request's method, url and json keys (requestRecord)
 //   value  the value a read step read (ignored for every other type)
+//   status a request step's reply status (null: no reply)
 // error and stableWait are written only when given.
-export function stepLine({ criterion, index, step, outcome, value = null, durationMs, error, stableWait }) {
+export function stepLine({ criterion, index, step, outcome, value = null, durationMs, error, stableWait, status = null }) {
   let written = null;
   if (step.type === 'read') written = value;
   else if (step.type === 'fill' || step.type === 'select') written = step.value;
@@ -247,6 +269,7 @@ export function stepLine({ criterion, index, step, outcome, value = null, durati
   };
   if (error !== undefined) line.error = error;
   if (stableWait !== undefined) line.stable_wait = stableWait;
+  if (step.type === 'request') line.request = requestRecord(step, status);
   return line;
 }
 

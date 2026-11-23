@@ -116,7 +116,7 @@
             "required": ["step", "type", "outcome", "duration_ms"],
             "properties": {
               "step": { "type": "integer", "minimum": 0 },
-              "type": { "enum": ["goto", "click", "fill", "select", "check", "press", "wait_for", "read", "expect"] },
+              "type": { "enum": ["goto", "click", "fill", "select", "check", "press", "wait_for", "request", "read", "expect"] },
               "outcome": { "enum": ["ok", "failed", "matched", "mismatched"] },
               "duration_ms": { "type": "number", "minimum": 0 }
             },

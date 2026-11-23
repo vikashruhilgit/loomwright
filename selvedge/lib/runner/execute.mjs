@@ -16,7 +16,14 @@
 //   stuck_screen  STUCK_SCREEN_ACTIONS consecutive action steps each left the page exactly as it
 //                 was (same url and accessibility tree); failed_step is the last of them
 //   blocked       the guarded context could not be opened (its reason; needs_auth when Playwright
-//                 refused the stored session; else playwright_unavailable)
+//                 refused the stored session; else playwright_unavailable); or a request step was
+//                 refused by a guard layer (its reason: host_not_allowed, remote_mutation_refused,
+//                 ...; failed_step is that step)
+//
+// Request steps (steps.mjs sendRequest): the criterion keeps its last reply (status, text, content
+// type) for the response_* reads after it; the next request replaces it, and nothing carries to the
+// next criterion. A request is neither counted as an action nor resets the stuck-screen count: it
+// does not change the screen.
 //
 // Stable wait: every expect after a read waits before it is judged, whether its first read would
 // match or not (a negative check such as `changed_from` would otherwise PASS on a read taken before
@@ -48,7 +55,7 @@ import { NAVIGATION_TIMEOUT_MS, redactValues } from '../snapshot.mjs';
 import { firstLine } from '../snapshot-playwright.mjs';
 import { CRITERION_OUTCOMES, EVIDENCE_KINDS, STEP_OUTCOMES, stepLine } from './evidence.mjs';
 import { openGuardedContext } from './route-guard.mjs';
-import { expectMatches, readEntry, readValue, runStep } from './steps.mjs';
+import { GuardRefusal, expectMatches, readEntry, readValue, runStep } from './steps.mjs';
 import { redactTraceZip } from './trace-redact.mjs';
 
 // Consecutive no-change action steps that make a criterion stuck_screen.
@@ -180,6 +187,8 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
     page.setDefaultTimeout(stepTimeoutMs);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const tracker = trackRequests(page);
+    const state = { reply: null }; // the criterion's last request reply
+    const ctx = { state, blocks: guard.blocks };
     const reads = [];
     let lastRead = -1;
     let before = null; // the screen before the next action (null: take it then)
@@ -197,7 +206,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
       if (step.type === 'read') {
         let value;
         try {
-          value = await readValue(page, step);
+          value = await readValue(page, step, state);
         } catch (e) {
           result = failed(i, t0, e);
           break;
@@ -223,7 +232,7 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
           const tr = Date.now();
           let again;
           try {
-            again = await readValue(page, resolved[lastRead]);
+            again = await readValue(page, resolved[lastRead], state);
           } catch (e) {
             result = failed(lastRead, tr, e);
             break;
@@ -240,6 +249,19 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
           durationMs: Date.now() - t0,
           stableWait: waited,
         }));
+        continue;
+      }
+
+      if (step.type === 'request') {
+        let reply;
+        try {
+          reply = await runStep(page, step, ctx);
+        } catch (e) {
+          write(stepLine({ criterion: id, index: i, step: steps[i], outcome: STEP_OUTCOMES.failed, durationMs: Date.now() - t0, error: firstLine(e) }));
+          result = e instanceof GuardRefusal ? end(CRITERION_OUTCOMES.blocked, e.reason, i) : end(CRITERION_OUTCOMES.step_failed, REASONS.step_failed, i);
+          break;
+        }
+        write(stepLine({ criterion: id, index: i, step: steps[i], outcome: STEP_OUTCOMES.ok, durationMs: Date.now() - t0, status: reply.status }));
         continue;
       }
 
