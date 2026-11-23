@@ -386,8 +386,14 @@ cmp -s "$O/$PT/app-server.mjs" "$R/selvedge/eval/tuning/variants/$IT/app-server.
 printf '%s\t%s\ttuning\n%s\t%s\theld-out\n' "$PT" "$IT" "$PH" "$IH" | sort >"$TMP/ids.want"
 sort "$O/imported-ids.tsv" | diff -q - "$TMP/ids.want" >/dev/null && ok "import-planted: the slug-to-id list stays in the session's folder" || ko "import-planted: imported-ids.tsv: $(cat "$O/imported-ids.tsv")"
 cp -R "$R/selvedge/eval" "$TMP/eval-after-import"; cp -R "$R.outside" "$TMP/outside-after-import"
+# A stage left by an interrupted run (a half-copied variant) is cleared by the next run.
+mkdir -p "$R/selvedge/eval/tuning/variants/.$IT.stage-1" "$R.outside/variants/.$IH.stage-1"
+cp "$O/$PT/app-server.mjs" "$R/selvedge/eval/tuning/variants/.$IT.stage-1/"
+cp "$O/$PH/app-server.mjs" "$R.outside/variants/.$IH.stage-1/"
 run "$R" import-planted "$O"
 expect_ok "import-planted: a replay"
+[ ! -e "$R/selvedge/eval/tuning/variants/.$IT.stage-1" ] && [ ! -e "$R.outside/variants/.$IH.stage-1" ] \
+  && ok "import-planted: a half-copied stage left by an interrupted run is removed on the next run" || ko "import-planted: a stale stage survived"
 diff -r "$TMP/eval-after-import" "$R/selvedge/eval" >/dev/null && diff -r "$TMP/outside-after-import" "$R.outside" >/dev/null \
   && ok "import-planted: a replay writes the same bytes" || ko "import-planted: a replay changed the set"
 run "$R" manifest write

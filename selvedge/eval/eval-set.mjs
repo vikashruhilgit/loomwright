@@ -609,11 +609,18 @@ export function importPlanted(repo, outDir, ctx, outside = heldOutDir()) {
     rmSync(tmp, { recursive: true, force: true });
   }
   if (!r) return null;
+  // Each variant is staged in a sibling folder and renamed into place, so an interrupted run never
+  // leaves half a variant at dest (which a rerun would refuse as "a different variant"). A stage
+  // left by such a run is removed first. A dest already holding this variant was checked equal above.
   for (const p of plans) {
-    for (const f of p.files) {
-      mkdirSync(dirname(join(p.dest, f)), { recursive: true });
-      copyFileSync(join(p.src, f), join(p.dest, f));
-    }
+    const parent = dirname(p.dest);
+    mkdirSync(parent, { recursive: true });
+    for (const d of readdirSync(parent)) if (d.startsWith(`.${p.id}.stage-`)) rmSync(join(parent, d), { recursive: true, force: true });
+    if (existsSync(p.dest)) continue;
+    const stage = join(parent, `.${p.id}.stage-${process.pid}`);
+    mkdirSync(stage);
+    for (const f of p.files) copyFileSync(join(p.src, f), join(stage, f));
+    renameSync(stage, p.dest);
   }
   writeAtomic(join(out, 'imported-ids.tsv'), plans.map((p) => `${p.slug}\t${p.id}\t${p.side}\n`).join(''));
   const n = (side, what) => plans.filter((p) => p.side === side).reduce((a, p) => a + (what === 'groups' ? 1 : p.list.length), 0);

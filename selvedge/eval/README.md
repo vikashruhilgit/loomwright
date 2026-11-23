@@ -270,6 +270,6 @@ read. Each case is `<id>.<criterion id without c->`, with source `planted` and t
 `{"kind": "variant", "path": "variants/<id>"}`. The cases go in through `split`, so the split rules
 apply and a refusal writes nothing. The variants are copied only after that: a tuning variant to
 `tuning/variants/<id>/` (committed), a held-out variant to the outside folder's `variants/<id>/`.
-Running the import again with the same output changes nothing. A variant that differs from the one
+Each variant is copied into a temporary folder next to its destination and then renamed into place in one step, so an interrupted run never leaves half a variant. A temporary folder left by such a run is removed on the next run. Running the import again with the same output changes nothing. A variant that differs from the one
 already imported under its id is refused. The command prints only counts. Its refusals name slugs,
 so run it in your own terminal.
