@@ -416,6 +416,8 @@ refuse "a symlink in a variant" "is not a regular file" "ln -s /etc/hosts \"\$O/
 refuse "a variant without app-server.mjs" "has no app-server.mjs" "rm \"\$O/$PH/app-server.mjs\""
 refuse "a changed variant over an imported one" "already holds a different variant" "echo changed >>\"\$O/$PH/app-server.mjs\""
 refuse "a missing cases.jsonl" "cases.jsonl does not exist" "rm \"\$O/cases.jsonl\""
+refuse "a line that is not JSON" "line 7 is not JSON" "echo '{not json' >>\"\$O/cases.jsonl\""
+refuse "a criterion that normalizes to empty" "criterion is empty" "echo '{\"group_id\":\"$PT\",\"criterion\":\"  [ ]  \",\"answer\":\"FAIL\",\"variant\":\"$PT\"}' >>\"\$O/cases.jsonl\""
 # split's own refusal (here an outside answers.json that is not an object) copies no variant either.
 planted_out "$O"; sed -i.bak "s/$PT/$NEWS/g" "$O/cases.jsonl"; mv "$O/$PT" "$O/$NEWS"; rm -rf "$O/$PH"; grep -v "\"$PH\"" "$O/cases.jsonl" >"$O/c" && mv "$O/c" "$O/cases.jsonl"
 INEW="$(pid "$NEWS")"
