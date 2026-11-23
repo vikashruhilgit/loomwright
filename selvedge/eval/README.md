@@ -264,12 +264,14 @@ node selvedge/eval/eval-set.mjs count
 ```
 
 A slug names its bug, so next to the held-out criteria it would give the answers away. The import
-gives each group an opaque id instead, `pd-` and the first 10 hex of `sha256("planted:" + slug)`. The
-slug-to-id list goes to `<dir>/out/imported-ids.tsv` and never into the set. `out/BUGS.md` is never
-read. Each case is `<id>.<criterion id without c->`, with source `planted` and target
+gives each group an opaque id instead, `pd-` and the first 10 hex of `sha256("planted:" + slug)`.
+The slug-to-id list goes to `<dir>/out/imported-ids.tsv` and never into the set. `out/BUGS.md` is
+never read. Each case is `<id>.<criterion id without c->`, with source `planted` and target
 `{"kind": "variant", "path": "variants/<id>"}`. The cases go in through `split`, so the split rules
 apply and a refusal writes nothing. The variants are copied only after that: a tuning variant to
 `tuning/variants/<id>/` (committed), a held-out variant to the outside folder's `variants/<id>/`.
-Each variant is copied into a temporary folder next to its destination and then renamed into place in one step, so an interrupted run never leaves half a variant. A temporary folder left by such a run is removed on the next run. Running the import again with the same output changes nothing. A variant that differs from the one
-already imported under its id is refused. The command prints only counts. Its refusals name slugs,
-so run it in your own terminal.
+Each variant is copied into a temporary folder next to its destination and then renamed into place
+in one step, so an interrupted run never leaves half a variant. A temporary folder left by such a
+run is removed on the next run. Running the import again with the same output changes nothing. A
+variant that differs from the one already imported under its id is refused. The command prints only
+counts. Its refusals name slugs, so run it in your own terminal.
