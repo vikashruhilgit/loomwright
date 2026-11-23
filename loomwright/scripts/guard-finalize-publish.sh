@@ -71,8 +71,11 @@
 #   (ii)  no `.supervisor/state.md`, no session_id, or status not running|checkpoint
 #         (canonical `- status:` or bold `- **status:**`), AND no `/automate` run spawn pending
 #         (a `.supervisor/automate/*.next-step.json` waiting on run-result, #937)
-#                                                                  -> allow (non-Supervisor / finished)
+#                                                                  -> UNGATED: the FINALIZE gates
+#         below are off, but the walk still runs for (iv-a), then allows. (Before (iv-a) this step
+#         allowed outright.)
 #   (iii) jq missing / payload unparseable                         -> deny guard_unavailable
+#         (UNGATED: allow — outside a run the guard never denies for its own unavailability)
 #   (iv)  no `git push` / `gh pr create` simple command anywhere in the command string -> allow.
 #         Backslash-newlines are joined; segments are cut on && || ; | & ( ) backticks and newlines
 #         (so `$(…)`, subshells, `cmd&` cut) — but NOT on the `&` of a redirection operator (`2>&1`,
@@ -86,6 +89,11 @@
 #         ksh -c <string>` and `eval <words>` are unwrapped (nesting depth <= 3).
 #         The walk also records the directory each publish runs in (payload `cwd`, then `cd` /
 #         `pushd` / `git -C`; `( … )` restores it; anything it cannot resolve is unknown = in scope).
+#   (iv-a) permission files — EVERY publish, gated or not, every session: check-permission-files.sh
+#         outgoing on each publish's checkout -> deny when an outgoing commit or the index adds
+#         `.claude/settings.local.json` or a `.claude/settings.json` holding a secret shape (and, when
+#         the same command also commits, the files on disk); checker missing / exit 3 -> deny
+#         guard_unavailable. No opt-out. Then UNGATED -> allow.
 #   (iv-b) run-spawn gate (#937): a pending `/autonomous run` spawn -> every publish in its run's
 #         checkout is denied `automate_run_unrun` unless a session other than the spawn's floor names
 #         the publish's branch (the spawn's own Supervisor); then no live run -> allow
@@ -513,13 +521,18 @@ for _sc in "$ROOT"/.supervisor/automate/*.next-step.json "$PROJ"/.supervisor/aut
   _c=""; IFS= read -r -d '' _c < "$_sc" || true
   case "$_c" in *'"next": "run-result"'*|*'"next":"run-result"'*) SPAWN_PENDING=1; break ;; esac
 done
+# GATED=0: no live run and no pending spawn. The FINALIZE gates below do not apply, but the walk still
+# runs so step (iv-a)'s permission-file check sees every publish; GATED=0 then allows after it.
+GATED=1
 if [ "$HOST_ON" = 1 ] && { [ "$HOST_HELPER_OK" != 1 ] || [ "$GATE_UNRESOLVED" = 1 ]; }; then HOST_UNRESOLVED=1
 elif read_live_session; then LIVE=1
-elif [ "$SPAWN_PENDING" != 1 ]; then allow; fi
+elif [ "$SPAWN_PENDING" != 1 ]; then GATED=0; fi
 
-# (iii)
-command -v jq >/dev/null 2>&1 || deny "guard_unavailable: jq missing"
-printf '%s' "$PAYLOAD" | jq -e 'type == "object"' >/dev/null 2>&1 || deny "guard_unavailable: payload unparseable"
+# (iii) — with GATED=0 a missing jq or an unparseable payload allows, exactly as step (ii) did before
+# (iv-a) existed: outside a run this guard never denied for its own unavailability.
+command -v jq >/dev/null 2>&1 || { [ "$GATED" = 0 ] && allow; deny "guard_unavailable: jq missing"; }
+printf '%s' "$PAYLOAD" | jq -e 'type == "object"' >/dev/null 2>&1 \
+  || { [ "$GATED" = 0 ] && allow; deny "guard_unavailable: payload unparseable"; }
 CMD="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty' 2>/dev/null)"
 
 # (iv) is any simple command a publish?
@@ -844,6 +857,37 @@ cmd_has_publish "$CMD" 0 || allow
 # a quoted `(` / `)` anywhere: the directory walk is not trusted -> an unknown target, in scope
 [ "$PAREN_UNSURE" = 1 ] && PUB_DIRS[${#PUB_DIRS[@]}]="$UNK"
 [ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
+
+# (iv-a) PERMISSION FILES — every publish, live run or not, every session. check-permission-files.sh
+# refuses an outgoing commit that adds `.claude/settings.local.json` or a `.claude/settings.json`
+# holding a secret-shaped value (its header). Each publish's own checkout is checked; an unknown target
+# is checked at BASE_DIR. A directory that is not a checkout has nothing to publish. The checker missing
+# or unable to tell (exit 3) denies (fail CLOSED): this is a correctness gate, and there is no opt-out.
+# A command that ALSO makes a commit (`git add -f x && git commit -m y && git push`) runs this hook
+# before that commit exists, so the checker is told to judge the files on disk too (`--pending`):
+# `force` when the command force-adds. Read from the raw command text, deny-leaning — a commit word
+# inside a quoted message counts too; the price is only a look at two files.
+RE_PERM_COMMIT='(^|[^A-Za-z0-9_.-])git([[:space:]]+[^;&|]*)?[[:space:]](commit|am|cherry-pick|merge|pull|rebase|revert|stash)([[:space:]]|$)'
+RE_PERM_FORCE='(^|[^A-Za-z0-9_.-])git([[:space:]]+[^;&|]*)?[[:space:]]add[[:space:]]([^;&|]*[[:space:]])?(-f|--force|-[A-Za-z]*f[A-Za-z]*)([[:space:]]|$)'
+PERM_PENDING=()
+if [[ "$CMD" =~ $RE_PERM_COMMIT ]]; then
+  if [[ "$CMD" =~ $RE_PERM_FORCE ]]; then PERM_PENDING=(--pending force); else PERM_PENDING=(--pending plain); fi
+fi
+perm_checked="$NL"
+for pd in "${PUB_DIRS[@]}"; do
+  d="$pd"; { [ "$d" = "$UNK" ] || [ ! -d "$d" ]; } && d="$BASE_DIR"
+  [ -n "$d" ] && [ -d "$d" ] || continue
+  case "$perm_checked" in *"$NL$d$NL"*) continue ;; esac
+  perm_checked="$perm_checked$d$NL"
+  [ -f "$HERE/check-permission-files.sh" ] || deny "guard_unavailable: check-permission-files.sh missing"
+  perm_out="$(bash "$HERE/check-permission-files.sh" outgoing "$d" ${PERM_PENDING[@]+"${PERM_PENDING[@]}"} 2>/dev/null)"; perm_rc=$?
+  case "$perm_rc" in
+    0) ;;
+    1) deny "${perm_out:-permission_file: an outgoing commit carries a Claude Code permission file} (in $d). Take it out of every unpushed commit (\`git rm --cached <path>\`, then amend or rebase), add \`.claude/settings.local.json\` to .gitignore, and rotate any secret it held" ;;
+    *) deny "guard_unavailable: check-permission-files.sh could not read the outgoing commits in $d (exit $perm_rc)" ;;
+  esac
+done
+[ "$GATED" = 1 ] || allow
 
 # (iv-b) THE RUN-SPAWN GATE (#937). While an `/automate` driver waits on the report of its
 # `/autonomous run` spawn (its sidecar's `next` is `run-result`), a publish in that run's checkout must
