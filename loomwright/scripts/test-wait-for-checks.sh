@@ -47,8 +47,9 @@
 #  41. zero-padded --bound 08 / --call-max 08 read as decimal: the resumable
 #      path (CONTINUE + one persisted deadline), no `value too great for base`;
 #      mutation control (normalisation removed).
-#  42. the poll sleep is cut to the remaining --call-max budget: --call-max 1
-#      --interval 8 prints CONTINUE within 4 s; mutation control (clamp removed).
+#  42. the poll sleep is cut to the remaining --call-max budget: --call-max 3
+#      --interval 8 prints CONTINUE within 6 s after 2 polls; fewer polls is
+#      inconclusive, retried up to 3 times; mutation control (clamp removed).
 #  49-59. (drain-named-required-checks) --named-required <json>: stands in only
 #      where the protection read yields no list (paid-plan, unreadable, 404 with
 #      no ruleset check); a readable read (200 — even an empty list, or with an
@@ -499,7 +500,7 @@ write_never_settles_stub() {
 #!/usr/bin/env bash
 case "\$*" in
   *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
-  *headRefOid*) printf '{"headRefOid":"$SHA","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""}]}\n'; exit 0 ;;
+  *headRefOid*) echo poll >> "$1/polls"; printf '{"headRefOid":"$SHA","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""}]}\n'; exit 0 ;;
 esac
 case "\$*" in *"/rules/branches/"*) echo '[]'; exit 0 ;; esac
 [ "\$1" = "api" ] && printf '{"required_status_checks":{"contexts":["ci"]}}\n'
@@ -969,15 +970,21 @@ octal_ok() {   # octal_ok SUT — exit 0 iff (41) holds; WHY41 says which part f
   rm -rf "$d"
   [ -z "$WHY41" ]
 }
-ceiling_ok() {   # ceiling_ok SUT — exit 0 iff (42) holds; WHY42 says why not
-  local s="$1" d out t0 t
+# --call-max 3, not 1: bash's SECONDS ticks on whole seconds, so with a 1 s ceiling a slow first poll
+# (a loaded CI runner) crossed the tick before reaching the sleep, and a mutant without the clamp
+# printed CONTINUE without ever sleeping (CI run 45127467509). The stub counts polls: fewer than 2
+# means no sleep ran, so the case could not tell the clamp from its absence and says so (rc 2).
+ceiling_ok() {   # ceiling_ok SUT — 0 iff (42) holds, 1 if it does not, 2 if inconclusive; WHY42 says which
+  local s="$1" d out t0 t polls
   d="$(fresh_stub_dir)"; write_never_settles_stub "$d"
   t0=$SECONDS
-  out="$(wfc_err "$d" "$s" "$PR" --sha "$SHA" --bound 60 --call-max 1 --interval 8 --required-only)"
+  out="$(wfc_err "$d" "$s" "$PR" --sha "$SHA" --bound 60 --call-max 3 --interval 8 --required-only)"
   t=$((SECONDS - t0))
+  polls="$(wc -l < "$d/polls" 2>/dev/null | tr -d ' ')"
   rm -rf "$d"
-  WHY42="out='$out' in ${t}s"
-  case "$out" in "CONTINUE sha=$SHA remaining="*" pending=none") [ "$t" -le 4 ] ;; *) false ;; esac
+  WHY42="out='$out' in ${t}s after ${polls:-0} poll(s)"
+  [ "${polls:-0}" -ge 2 ] || { WHY42="inconclusive, no sleep reached: $WHY42"; return 2; }
+  case "$out" in "CONTINUE sha=$SHA remaining="*" pending=none") [ "$t" -le 6 ] ;; *) false ;; esac
 }
 echo "== 41. --bound 08 / --call-max 08 are decimal: resumable CONTINUE + state, no octal error =="
 if octal_ok "$SUT"; then ok "--bound 08 --call-max 1 prints CONTINUE with one persisted deadline; --call-max 08 settles; no 'value too great'"
@@ -989,14 +996,25 @@ if [ -s "$M41" ] && ! cmp -s "$SUT" "$M41" && bash -n "$M41"; then
   else ok "case 41 MUTATION CONTROL: without the --bound normalisation case 41 fails ($WHY41)"; fi
 else no "case 41 mutant invalid (empty / identical / bash -n)"; fi
 rm -rf "$(dirname "$M41")"
-echo "== 42. --call-max 1 --interval 8: the poll sleep ends at the per-call ceiling, not 8 s later =="
-if ceiling_ok "$SUT"; then ok "the last sleep is cut to the remaining --call-max budget ($WHY42)"
-else no "per-call ceiling overshoot: $WHY42"; fi
+# ceiling_try SUT — ceiling_ok, re-run up to 3 times while inconclusive (rc 2). Inconclusive
+# three times is still a failure, reported as inconclusive: never read as a pass, never as an overshoot.
+ceiling_try() { local i rc; for i in 1 2 3; do ceiling_ok "$1"; rc=$?; [ "$rc" -eq 2 ] || return "$rc"; done; return 2; }
+echo "== 42. --call-max 3 --interval 8: the poll sleep ends at the per-call ceiling, not 8 s later =="
+ceiling_try "$SUT"; rc42=$?
+case "$rc42" in
+  0) ok "the last sleep is cut to the remaining --call-max budget ($WHY42)" ;;
+  1) no "per-call ceiling overshoot: $WHY42" ;;
+  *) no "case 42: $WHY42" ;;
+esac
 M42="$(fresh_stub_dir)/mut-ceil.sh"
 grep -v '# CEILCAP$' "$SUT" > "$M42"
 if [ -s "$M42" ] && ! cmp -s "$SUT" "$M42" && bash -n "$M42"; then
-  if ceiling_ok "$M42"; then no "case 42 MUTATION CONTROL: without the sleep clamp case 42 still passed — it proves nothing"
-  else ok "case 42 MUTATION CONTROL: without the sleep clamp the call overshoots ($WHY42)"; fi
+  ceiling_try "$M42"; rc42=$?
+  case "$rc42" in
+    0) no "case 42 MUTATION CONTROL: without the sleep clamp case 42 still passed — it proves nothing" ;;
+    1) ok "case 42 MUTATION CONTROL: without the sleep clamp the call overshoots ($WHY42)" ;;
+    *) no "case 42 MUTATION CONTROL: $WHY42" ;;
+  esac
 else no "case 42 mutant invalid (empty / identical / bash -n)"; fi
 rm -rf "$(dirname "$M42")"
 
