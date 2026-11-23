@@ -10,7 +10,7 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
 
 ## 0.10.1 — 2026-11-23
 
-- `selvedge/eval/target-driver.sh`: the font step asks Google again, up to five times, when it
+- `selvedge/eval/target-driver.sh`: the font step asks Google again, up to five tries in all, when it
   serves a next/font/google CSS URL as `fonts.gstatic.com/l/` files, which Turbopack refuses. It
   happened for about 1 request in 15 (MuseoModerno, measured 2026-11-23), with any user agent, and
   stopped the tuning run twice with `target_unavailable`. A failed step now reports the error line

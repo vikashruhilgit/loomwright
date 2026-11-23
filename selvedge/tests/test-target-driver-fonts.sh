@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-target-driver-fonts.sh — pins the eval target driver's font step (`target-driver.sh fonts`):
 # Google now and then serves a next/font/google CSS URL as fonts.gstatic.com/l/ files, which
-# Turbopack refuses, so the driver asks again, up to five times, and only then fails, naming the URL.
+# Turbopack refuses, so the driver asks again, up to five tries in all, and only then fails, naming the URL.
 #
 # Hermetic: a fake clone (one layout importing next/font/google, stub next internals) and a fake
 # `curl` on PATH that serves the /l/ form for its first $FAKE_L_COUNT calls. No network.
