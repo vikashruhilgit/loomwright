@@ -104,6 +104,7 @@ All commands take `--repo <dir>` (the repository top level; default: this checko
 | `node selvedge/eval/eval-set.mjs manifest write` | lists every file in the outside folder in `held-out/manifest.sha256` (refuses an empty or missing folder) |
 | `node selvedge/eval/eval-set.mjs manifest check` | the outside folder against the committed manifest |
 | `node selvedge/eval/eval-set.mjs check-start-folder <dir>` | the planted-defect author's start folder holds only the two allowed copies (below) |
+| `node selvedge/eval/eval-set.mjs import-planted <out-dir>` | adds the planted-defect session's output (below) to the set, through the same rules as `split` |
 
 Adding cases: write them, with answers, to a file outside the repo (a held-out answer must never
 be committed, even briefly), then run `split <file>`, `manifest write`, `check-leak` and `count`.
@@ -126,6 +127,7 @@ be committed, even briefly), then run `split <file>`, `manifest write`, `check-l
 | `manifest_extra_file` | the outside folder holds a file the manifest does not list |
 | `held_out_answers_incomplete` | the outside `answers.json` is missing, or its keys are not exactly the held-out `case_id`s, or an answer is not PASS or FAIL |
 | `start_folder_not_clean` | the start folder holds a file that is not one of the two allowed copies, or lacks one of them |
+| `planted_import_invalid` | the planted-defect session's `out/` folder is not as the brief asks: a `cases.jsonl` line with other fields, a bad slug or answer, an empty or repeated criterion, a group with no FAIL criterion, a variant folder with no cases (or cases with none), a variant folder holding anything but exactly `app-server.mjs` and `servers.mjs`, or a non-regular file, or a variant already imported with other bytes |
 
 These are the eval tool's own reasons; the CLI's verdict and config reasons are listed in
 `selvedge/README.md`.
@@ -230,7 +232,8 @@ under `selvedge/eval/tuning/variants/<group_id>/`, held-out variants go to the o
 
 - Session id: TBD
 - Start date: TBD
-- Committed brief: TBD
+- Committed brief: [`planted-session-brief.md`](planted-session-brief.md), given as the session's first
+  message (the start folder may hold only the two app files, so the brief cannot sit in it)
 
 **Building its start folder.** Make an empty folder outside this repository and copy exactly two
 files into it, unchanged:
@@ -243,4 +246,32 @@ node selvedge/eval/eval-set.mjs check-start-folder <dir>
 
 `check-start-folder` fails (`start_folder_not_clean`) naming each file in `<dir>` that is not one
 of those two copies (saying which tracked file under `selvedge/` it copies, when it does), and each
-of the two that is missing. Start the session in that folder only after the check passes.
+of the two that is missing. Start the session in that folder only after the check passes:
+
+```bash
+cd <dir> && claude "$(cat <repo>/selvedge/eval/planted-session-brief.md)"
+```
+
+**Importing its output.** The session writes `out/cases.jsonl` and one `out/pd-<slug>/` folder per
+variant. The owner runs the import, never the session that builds Selvedge, since it reads the held-out
+variants:
+
+```bash
+node selvedge/eval/eval-set.mjs import-planted <dir>/out
+node selvedge/eval/eval-set.mjs manifest write
+node selvedge/eval/eval-set.mjs check-leak
+node selvedge/eval/eval-set.mjs count
+```
+
+A slug names its bug, so next to the held-out criteria it would give the answers away. The import
+gives each group an opaque id instead, `pd-` and the first 10 hex of `sha256("planted:" + slug)`.
+The slug-to-id list goes to `<dir>/out/imported-ids.tsv` and never into the set. `out/BUGS.md` is
+never read. Each case is `<id>.<criterion id without c->`, with source `planted` and target
+`{"kind": "variant", "path": "variants/<id>"}`. The cases go in through `split`, so the split rules
+apply and a refusal writes nothing. The variants are copied only after that: a tuning variant to
+`tuning/variants/<id>/` (committed), a held-out variant to the outside folder's `variants/<id>/`.
+Each variant is copied into a temporary folder next to its destination and then renamed into place
+in one step, so an interrupted run never leaves half a variant. A temporary folder left by such a
+run is removed on the next run. Running the import again with the same output changes nothing. A
+variant that differs from the one already imported under its id is refused. The command prints only
+counts. Its refusals name slugs, so run it in your own terminal.

@@ -4,7 +4,8 @@
 # check-leak (held_out_answer_committed, no_tracked_files, split_unreadable), the held-out manifest
 # (manifest_mismatch, manifest_missing_file, manifest_extra_file, manifest_empty, manifest_invalid),
 # count's answers check (held_out_answers_incomplete), real-bugs.json entries
-# (real_bug_entry_incomplete), the planted-defect start folder (start_folder_not_clean), and each
+# (real_bug_entry_incomplete), the planted-defect start folder (start_folder_not_clean), import-planted
+# (planted_import_invalid: opaque group ids, variants filed by side, refusals write nothing), and each
 # reason token on exactly one code line. Every arm turns red under its row of the brief's
 # pin-mutation table.
 #
@@ -333,12 +334,116 @@ rm "$SF/notes.md" "$SF/servers.mjs"
 run "$REPO_ROOT" check-start-folder "$SF"
 expect_fail "check-start-folder: servers.mjs missing" start_folder_not_clean "servers.mjs is missing"
 
+# --- import-planted (pin: planted_import_invalid) ------------------------------------------------------
+# Two slugs, one per side under the recorded seed, found by the independent rule (sha256 recomputed).
+read -r PT PH <<<"$(node -e '
+const h = (s) => require("crypto").createHash("sha256").update(s).digest("hex");
+const side = (g) => parseInt(h(process.argv[1] + ":" + g).slice(0, 8), 16) % 100 < 40 ? "t" : "h";
+const id = (s) => "pd-" + h("planted:" + s).slice(0, 10);
+const c = Array.from({ length: 200 }, (_, i) => "pd-bug-" + i);
+console.log(c.find((s) => side(id(s)) === "t"), c.find((s) => side(id(s)) === "h"));' "$SEED")"
+pid() { node -e 'console.log("pd-" + require("crypto").createHash("sha256").update("planted:" + process.argv[1]).digest("hex").slice(0, 10))' "$1"; }
+IT="$(pid "$PT")"; IH="$(pid "$PH")"
+# planted_out <dir> — a session out/ folder: one variant per slug, two FAIL and one PASS criterion each.
+planted_out() {
+  rm -rf "$1"; mkdir -p "$1/$PT" "$1/$PH"
+  local k=0 s
+  for s in "$PT" "$PH"; do
+    k=$((k + 1))
+    printf '// %s\nexport const BUG = "%s";\n' "$s" "$s" >"$1/$s/app-server.mjs"
+    cp "$PLUGIN_DIR/tests/fixtures/servers.mjs" "$1/$s/servers.mjs"
+    for a in "FAIL:The total for item $k reads 18" "FAIL:  - The badge for item $k reads 3" "PASS:The title for item $k reads Shop"; do
+      printf '{"group_id":"%s","criterion":"%s","answer":"%s","variant":"%s"}\n' "$s" "${a#*:}" "${a%%:*}" "$s"
+    done >>"$1/cases.jsonl"
+  done
+  printf '%s\n' "the bug notes" >"$1/BUGS.md"
+}
+fresh imp
+# The real repo's start-folder bases, so an unchanged servers.mjs in both a tuning and a held-out
+# variant gets check-leak's exemption, as it does in the real tree.
+mkdir -p "$R/selvedge/tests/fixtures" && cp "$PLUGIN_DIR/tests/fixtures/app-server.mjs" "$PLUGIN_DIR/tests/fixtures/servers.mjs" "$R/selvedge/tests/fixtures/"
+O="$TMP/planted-out"; planted_out "$O"
+run "$R" import-planted "$O"
+expect_ok "import-planted: a well-formed out/ folder"
+node -e '
+const fs = require("fs"); const [r, o, it, ih] = process.argv.slice(1);
+const tu = JSON.parse(fs.readFileSync(r + "/selvedge/eval/tuning/cases.json", "utf8")).cases.filter((c) => c.source === "planted");
+const ho = JSON.parse(fs.readFileSync(r + "/selvedge/eval/held-out/cases.json", "utf8")).cases.filter((c) => c.source === "planted");
+const an = JSON.parse(fs.readFileSync(o + "/answers.json", "utf8"));
+const ok = tu.length === 3 && tu.every((c) => c.group_id === it && c.target.kind === "variant" && c.target.path === "variants/" + it && "answer" in c)
+  && tu.filter((c) => c.answer === "FAIL").length === 2
+  && ho.length === 3 && ho.every((c) => c.group_id === ih && c.target.path === "variants/" + ih && !("answer" in c))
+  && ho.filter((c) => an[c.case_id] === "FAIL").length === 2 && ho.some((c) => c.criterion.text.startsWith("The badge"));
+process.exit(ok ? 0 : 1);' "$R" "$R.outside" "$IT" "$IH" \
+  && ok "import-planted: cases under opaque ids by side, criteria normalized, held-out answers outside only" || ko "import-planted: wrong cases or answers"
+cmp -s "$O/$PT/app-server.mjs" "$R/selvedge/eval/tuning/variants/$IT/app-server.mjs" && cmp -s "$O/$PH/app-server.mjs" "$R.outside/variants/$IH/app-server.mjs" \
+  && [ ! -e "$R/selvedge/eval/tuning/variants/$IH" ] && [ ! -e "$R.outside/variants/$IT" ] \
+  && ok "import-planted: the tuning variant under tuning/variants/<id>/, the held-out one in the outside folder only" || ko "import-planted: variants not filed by side"
+! grep -qF "pd-bug-" "$R/selvedge/eval/tuning/cases.json" "$R/selvedge/eval/held-out/cases.json" "$R.outside/answers.json" && ! grep -rqF "bug notes" "$R/selvedge/eval" "$R.outside" \
+  && ok "import-planted: no slug reaches the set's cases (they would name the bug), BUGS.md is never copied" || ko "import-planted: a slug or BUGS.md reached the set"
+! grep -qF "reads 18" <<<"$out" && grep -qF "tuning 1 (3 case(s)), held-out 1 (3 case(s))" <<<"$out" \
+  && ok "import-planted: prints counts only" || ko "import-planted: output: $out"
+printf '%s\t%s\ttuning\n%s\t%s\theld-out\n' "$PT" "$IT" "$PH" "$IH" | sort >"$TMP/ids.want"
+sort "$O/imported-ids.tsv" | diff -q - "$TMP/ids.want" >/dev/null && ok "import-planted: the slug-to-id list stays in the session's folder" || ko "import-planted: imported-ids.tsv: $(cat "$O/imported-ids.tsv")"
+cp -R "$R/selvedge/eval" "$TMP/eval-after-import"; cp -R "$R.outside" "$TMP/outside-after-import"
+# A stage left by an interrupted run (a half-copied variant) is cleared by the next run.
+mkdir -p "$R/selvedge/eval/tuning/variants/.$IT.stage-1" "$R.outside/variants/.$IH.stage-1"
+cp "$O/$PT/app-server.mjs" "$R/selvedge/eval/tuning/variants/.$IT.stage-1/"
+cp "$O/$PH/app-server.mjs" "$R.outside/variants/.$IH.stage-1/"
+run "$R" import-planted "$O"
+expect_ok "import-planted: a replay"
+[ ! -e "$R/selvedge/eval/tuning/variants/.$IT.stage-1" ] && [ ! -e "$R.outside/variants/.$IH.stage-1" ] \
+  && ok "import-planted: a half-copied stage left by an interrupted run is removed on the next run" || ko "import-planted: a stale stage survived"
+diff -r "$TMP/eval-after-import" "$R/selvedge/eval" >/dev/null && diff -r "$TMP/outside-after-import" "$R.outside" >/dev/null \
+  && ok "import-planted: a replay writes the same bytes" || ko "import-planted: a replay changed the set"
+run "$R" manifest write
+git -C "$R" add -A && git -C "$R" commit -qm planted
+run "$R" check-leak; expect_ok "import-planted then manifest write: check-leak passes on the committed tree"
+run "$R" count
+grep -qE '^held-out known-FAIL +3 +floor +60 +open$' <<<"$out" && ok "import-planted: count includes the planted held-out FAILs" || ko "import-planted: count: $out"
+# refused inputs write nothing, each named. refuse <label> <detail> <shell edit of $O>
+refuse() {
+  planted_out "$O"; eval "$3"
+  run "$R" import-planted "$O"
+  expect_fail "import-planted refuses: $1" planted_import_invalid "$2"
+  diff -r "$TMP/eval-after-import" "$R/selvedge/eval" >/dev/null && diff -r -x manifest.sha256 "$TMP/outside-after-import" "$R.outside" >/dev/null \
+    && ok "import-planted: refused ($1) writes nothing" || ko "import-planted: refused ($1) changed the set"
+}
+cp -R "$R/selvedge/eval" "$TMP/eval-after-import.tmp"; rm -rf "$TMP/eval-after-import"; mv "$TMP/eval-after-import.tmp" "$TMP/eval-after-import"
+NEWS="pd-bug-new-$$"
+refuse "a group with no FAIL criterion" "plants nothing" "sed -i.bak '/\"$PT\"/s/\"FAIL\"/\"PASS\"/' \"\$O/cases.jsonl\""
+refuse "a variant folder with no case" "has no case in cases.jsonl" "mkdir \"\$O/$NEWS\" && echo x >\"\$O/$NEWS/app-server.mjs\""
+refuse "cases with no variant folder" "has cases but no variant folder" "rm -rf \"\$O/$PH\""
+refuse "variant not its group_id" "variant is not its group_id" "sed -i.bak '1s/\"variant\":\"$PT\"/\"variant\":\"pd-other\"/' \"\$O/cases.jsonl\""
+refuse "an extra field" "needs exactly the fields" "sed -i.bak '1s/}\$/,\"note\":\"x\"}/' \"\$O/cases.jsonl\""
+refuse "a slug that is not pd-<slug>" "group_id is not pd-<slug>" "echo '{\"group_id\":\"Bug_1\",\"criterion\":\"x\",\"answer\":\"FAIL\",\"variant\":\"Bug_1\"}' >>\"\$O/cases.jsonl\""
+refuse "a repeated criterion" "already has this criterion" "head -n 1 \"\$O/cases.jsonl\" >>\"\$O/cases.jsonl\""
+refuse "a symlink in a variant" "is not a regular file" "ln -s /etc/hosts \"\$O/$PT/hosts.mjs\""
+refuse "a variant without app-server.mjs" "has no app-server.mjs" "rm \"\$O/$PH/app-server.mjs\""
+refuse "a variant without servers.mjs" "has no servers.mjs" "rm \"\$O/$PT/servers.mjs\""
+refuse "a stray file in a variant (here the servers.json a test start writes)" "servers.json is not one of app-server.mjs, servers.mjs" "echo '{}' >\"\$O/$PT/servers.json\""
+refuse "a changed variant over an imported one" "already holds a different variant" "echo changed >>\"\$O/$PH/app-server.mjs\""
+refuse "a missing cases.jsonl" "cases.jsonl does not exist" "rm \"\$O/cases.jsonl\""
+refuse "an answer that is not PASS or FAIL" "answer is not PASS or FAIL" "sed -i.bak '1s/\"answer\":\"FAIL\"/\"answer\":\"fail\"/' \"\$O/cases.jsonl\""
+refuse "a line that is not JSON" "line 7 is not JSON" "echo '{not json' >>\"\$O/cases.jsonl\""
+refuse "a criterion that normalizes to empty" "criterion is empty" "echo '{\"group_id\":\"$PT\",\"criterion\":\"  [ ]  \",\"answer\":\"FAIL\",\"variant\":\"$PT\"}' >>\"\$O/cases.jsonl\""
+# split's own refusal (here an outside answers.json that is not an object) copies no variant either.
+planted_out "$O"; sed -i.bak "s/$PT/$NEWS/g" "$O/cases.jsonl"; mv "$O/$PT" "$O/$NEWS"; rm -rf "$O/$PH"; grep -v "\"$PH\"" "$O/cases.jsonl" >"$O/c" && mv "$O/c" "$O/cases.jsonl"
+INEW="$(pid "$NEWS")"
+cp "$R.outside/answers.json" "$TMP/answers.keep" && echo '[]' >"$R.outside/answers.json"
+run "$R" import-planted "$O"
+expect_fail "import-planted: split's refusal is passed on" held_out_answers_incomplete "is not a JSON object"
+[ ! -e "$R/selvedge/eval/tuning/variants/$INEW" ] && [ ! -e "$R.outside/variants/$INEW" ] && [ ! -e "$O/imported-ids.tsv" ] \
+  && ok "import-planted: split refused, so no variant was copied and no id list written" || ko "import-planted: variant copied though split refused"
+cp "$TMP/answers.keep" "$R.outside/answers.json"
+rm -rf "$TMP/eval-after-import" "$TMP/outside-after-import"
+
 # --- the default outside folder is under HOME (here the temp HOME) ----------------------------------
 d="$(import_mod 'process.stdout.write(M.heldOutDir({}))')"
 [ "$d" = "$HOME/.claude/selvedge-eval/held-out" ] && ok "SELVEDGE_EVAL_HELD_OUT unset: ~/.claude/selvedge-eval/held-out" || ko "default outside folder: $d"
 
 # --- each reason token on exactly one code line; listed in the header and the README -----------------
-TOKENS="split_unreadable defect_on_both_sides case_on_wrong_side case_invalid held_out_answer_committed real_bug_entry_incomplete no_tracked_files manifest_empty manifest_invalid manifest_mismatch manifest_missing_file manifest_extra_file held_out_answers_incomplete start_folder_not_clean"
+TOKENS="split_unreadable defect_on_both_sides case_on_wrong_side case_invalid held_out_answer_committed real_bug_entry_incomplete no_tracked_files manifest_empty manifest_invalid manifest_mismatch manifest_missing_file manifest_extra_file held_out_answers_incomplete start_folder_not_clean planted_import_invalid"
 for t in $TOKENS; do
   n="$(grep -vE '^[[:space:]]*//' "$MOD" | grep -cE "(^|[^a-z_])${t}([^a-z_]|$)")"
   h="$(grep -E '^//' "$MOD" | grep -cE "(^|[^a-z_])${t}([^a-z_]|$)")"
