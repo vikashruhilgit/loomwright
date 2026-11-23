@@ -17,7 +17,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   in through `split`, so a refusal writes nothing. Each variant is then copied to its side: tuning
   variants into the repo, held-out ones to the outside folder only. A malformed output is refused as
   `planted_import_invalid`. `tests/test-eval-set.sh` pins the import, its refusals and the opaque ids,
-  and each refusal's arm was checked red under a mutation. The exception is the guard against two slugs hashing to one id, which no practical test input can reach.
+  and each refusal's arm was checked red under a mutation. The exception is the guard against two
+  slugs hashing to one id, which no practical test input can reach.
 - `selvedge/eval/planted-session-brief.md` is the committed brief for that session. It is given as
   the session's first message, since the start folder may hold only the two app files. The eval
   README gives the start command and the import steps.
