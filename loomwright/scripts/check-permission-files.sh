@@ -86,9 +86,9 @@ secret_shape() {
     name="${line%%"$TAB"*}"; line="${line#*"$TAB"}"
     flags="${line%%"$TAB"*}"; re="${line#*"$TAB"}"
     if [ "$flags" = i ]; then
-      printf '%s\n' "$text" | grep -Eiq -- "$re" && { printf '%s' "$name"; return 0; }
+      grep -Eiq -- "$re" <<<"$text" && { printf '%s' "$name"; return 0; }
     else
-      printf '%s\n' "$text" | grep -Eq -- "$re" && { printf '%s' "$name"; return 0; }
+      grep -Eq -- "$re" <<<"$text" && { printf '%s' "$name"; return 0; }
     fi
   done <<SHAPES_END
 $SHAPES
