@@ -995,13 +995,20 @@ if [ -s "$M41" ] && ! cmp -s "$SUT" "$M41" && bash -n "$M41"; then
   else ok "case 41 MUTATION CONTROL: without the --bound normalisation case 41 fails ($WHY41)"; fi
 else no "case 41 mutant invalid (empty / identical / bash -n)"; fi
 rm -rf "$(dirname "$M41")"
+# ceiling_try SUT — ceiling_ok, re-run up to 3 times while inconclusive (rc 2). Inconclusive
+# three times is still a failure, reported as inconclusive: never read as a pass, never as an overshoot.
+ceiling_try() { local i rc; for i in 1 2 3; do ceiling_ok "$1"; rc=$?; [ "$rc" -eq 2 ] || return "$rc"; done; return 2; }
 echo "== 42. --call-max 3 --interval 8: the poll sleep ends at the per-call ceiling, not 8 s later =="
-if ceiling_ok "$SUT"; then ok "the last sleep is cut to the remaining --call-max budget ($WHY42)"
-else no "per-call ceiling overshoot: $WHY42"; fi
+ceiling_try "$SUT"; rc42=$?
+case "$rc42" in
+  0) ok "the last sleep is cut to the remaining --call-max budget ($WHY42)" ;;
+  1) no "per-call ceiling overshoot: $WHY42" ;;
+  *) no "case 42: $WHY42" ;;
+esac
 M42="$(fresh_stub_dir)/mut-ceil.sh"
 grep -v '# CEILCAP$' "$SUT" > "$M42"
 if [ -s "$M42" ] && ! cmp -s "$SUT" "$M42" && bash -n "$M42"; then
-  ceiling_ok "$M42"; rc42=$?
+  ceiling_try "$M42"; rc42=$?
   case "$rc42" in
     0) no "case 42 MUTATION CONTROL: without the sleep clamp case 42 still passed — it proves nothing" ;;
     1) ok "case 42 MUTATION CONTROL: without the sleep clamp the call overshoots ($WHY42)" ;;
