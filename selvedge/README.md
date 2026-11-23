@@ -409,8 +409,12 @@ uses it to see a page in the state a criterion needs (a dialog open, a form fill
 writes locators: content that appears only after a click is not in the tree until a prefix clicks.
 
 - **The prefix** (`--steps`) is a JSON array of at most 15 `goto`, `click`, `fill`, `select`,
-  `check`, `press` and `wait_for` steps (never `read` or `expect`), checked by the same step
-  validator as a plan. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
+  `check`, `press`, `wait_for` and `request` steps (never `read` or `expect`), checked by the same
+  step validator as a plan. A `request` in a prefix must be a `GET` (`plan_invalid`
+  `prefix_mutation_refused` otherwise: looking never changes the app), to the origin of the page
+  it is sent from (`<url>`, or the last prefix `goto`). With one, the output also holds
+  `"replies"`: one `{step, method, url, status, content_type, body, truncated}` per request that
+  replied, `body` the first 2 KiB of the reply text, redacted like `aria_snapshot`. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
   unset name is `BLOCKED placeholder_unset`. The value is never printed: every resolved value is
   shown as its `{{NAME}}` in `aria_snapshot`, `error` and on stderr (found as given and as
   Playwright's YAML/JSON quoting and whitespace normalization print it — a page that shows the
@@ -420,7 +424,7 @@ writes locators: content that appears only after a click is not in the tree unti
   the plain value off the output, nothing more. The value of every variable `auth.env` names is
   redacted the same way, prefix or not, so a page that shows a credential hands a planner
   `{{NAME}}`.
-- **Before any browser launches** it refuses an unlisted `<url>` or prefix `goto` origin
+- **Before any browser launches** it refuses an unlisted `<url>`, prefix `goto` or prefix `request` origin
   (`BLOCKED host_not_allowed`), a bad prefix (`plan_invalid`, one stderr line per problem), and a
   missing Playwright (`BLOCKED playwright_unavailable`).
 - **The budget.** `--run-dir` (or `SELVEDGE_RUN_DIR`) is required: every call appends one line to
@@ -530,8 +534,20 @@ Step types (no field beyond these is accepted):
 - `check` — `locator`, optional `checked` (true or false).
 - `press` — `key`, optional `locator`.
 - `wait_for` — `locator`, `state` (`attached`, `detached`, `visible`, `hidden`).
+- `request` — `method` (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`), `url`, optional `json` (a plain
+  JSON object body, not for `GET`, at most 6 deep and 64 leaves; a string leaf is a literal or
+  `{{NAME}}`). No headers field and no raw body. Its origin must be in the plan's `origins`,
+  allowed by `selvedge.json`, and the origin of the page the criterion is on at that point (the last
+  `goto` before it): a cross-origin fetch would depend on the app's CORS policy, not on Selvedge. A
+  request whose method is not `GET` is an action (rule 1 and the negative baseline apply to it).
 - `read` — `property`: `text`, `value`, `checked`, `count`, `attribute:<name>` (each with a
-  `locator`) or `url` (no locator).
+  `locator`), or with no locator: `url`; `response_status` (a number), `response_text` (the body,
+  as text) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
+  pointer into the parsed body, e.g. `response_json:/0/createdBy/name`: a string, number or
+  boolean, or no value when the body is not JSON or the pointer names nothing, null, an object or
+  an array) of the last `request` before it; or `cookie:<name>`, a fingerprint of that cookie
+  (`sha256:` and 16 hex digits of its value's sha256, or no value when it is absent), never the
+  value.
 - `expect` — `op` and `value`, compared with the last read: `equals`, `contains`, `matches` (a
   regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
   from the previous read of the same locator and property, a negative criterion's baseline form).
@@ -539,25 +555,39 @@ Step types (no field beyond these is accepted):
 A locator is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"}` or
 `{"testid"}`: Playwright role, label, text and test-id locators, never CSS or XPath.
 
+**The `request` step** is sent as a `fetch` from inside the page: the runner runs one fixed,
+runner-owned function through `page.evaluate`, with the method, URL and body passed as arguments,
+never as source. So it leaves through the browser, and both guard layers check it as they check
+the page's own requests (see [The browser guard](#the-browser-guard)); the context's cookies go
+with it (a stored sign-in session included). Playwright's `context.request` is never used, and
+neither is an HTTP client in Node: `context.request` skips `context.route`, so the route layer's
+`host_not_allowed` and `remote_mutation_refused` would not apply to it. A request the guard
+refuses is BLOCKED with the guard's reason. The criterion keeps its last reply (status, up to
+64 KiB of text, content type) for the `response_*` reads after it; no reply value is carried into
+a later step (write a seeded id into the plan instead). The evidence line of a request records its
+method, url, the top-level keys of its `json` and the reply's status, never the body.
+
 Plan-lint problems (the codes after `plan_invalid:`):
 
 - `missing_final_read_expect` — a criterion's steps do not end in `read` then `expect` (a value read after the last action).
-- `existence_only_expect` — the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or every one of a fixed set of unlike one-line texts, as `.`, `\S`, `^.+$` or `..` do, while a format such as `^[a-z0-9-]+$` or `^\d+$` passes, or `read count` then `lt`).
+- `existence_only_expect` — an `expect` on a `cookie:<name>` read that is not `changed_from` against an earlier read of the same cookie (a cookie read is a fingerprint, so "a cookie exists" is "it changed from its baseline"); or the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or every one of a fixed set of unlike one-line texts, as `.`, `\S`, `^.+$` or `..` do, while a format such as `^[a-z0-9-]+$` or `^\d+$` passes, or `read count` then `lt`).
 - `unknown_step_type` — a step `type` that is not one of the step types above.
 - `unknown_field` — a field a step, a criterion entry or the plan does not have.
 - `invalid_locator` — a locator that is not exactly one role, label, text or test-id form (CSS, XPath and any other key are refused).
 - `code_like_content` — a step string that looks like code: `=>`, `function(`, `<script`, `javascript:`, `${`, a backtick, `eval(`, `document.`, `window.`, `require(`, `import `.
-- `origin_not_allowed` — a `goto` or a plan origin not allowed by `selvedge.json`, or a `goto` origin not in the plan's `origins`.
+- `origin_not_allowed` — a `goto`, `request` or plan origin not allowed by `selvedge.json`, a `goto` or `request` origin not in the plan's `origins`, or a `request` to an origin other than that of the page it is sent from (its last `goto`).
 - `missing_interpretation` — a planned criterion with no one-sentence `interpretation`.
 - `missing_polarity` — a planned criterion whose `polarity` is not `positive` or `negative`.
 - `invalid_assumptions` — `unverified_assumptions` is not an array of `{"text", "material"}`.
-- `negative_without_baseline` — a negative criterion with no `read` before its first action (`click`, `fill`, `select`, `check`, `press`).
+- `negative_without_baseline` — a negative criterion with no `read` before its first action (`click`, `fill`, `select`, `check`, `press`, or a `request` that is not `GET`).
 - `negative_absence_only` — a negative criterion whose only check is that an element is absent or hidden (final `read count` + `expect equals 0`, or a `wait_for` `hidden` as the last check).
 - `vague_criterion_planned` — a vague criterion has steps; it belongs under `not_planned`.
 - `criterion_unaccounted` — a criterion of `criteria.json` that is neither planned nor `not_planned`, or a planned id that is not in `criteria.json`.
 - `criteria_sha_mismatch` — `criteria_sha256` is not the hash of the run folder's `criteria.json`.
 - `prefix_step_not_allowed` — a snapshot prefix holds a `read` or `expect` step.
 - `prefix_too_long` — a snapshot prefix has more than 15 steps.
+- `prefix_mutation_refused` — a snapshot prefix holds a `request` whose method is not `GET`.
+- `response_without_request` — a `read` of `response_status`, `response_text` or `response_json:…` with no `request` step before it in the criterion.
 - `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, `criterion_not_testable` without a rewrite, or `side_effect_not_observable` without a detail.
 - `plan_schema_violation` — the plan or a step is malformed: not JSON, a missing or wrongly typed value, an unknown `op`, `state` or `read` property.
 
@@ -594,7 +624,7 @@ sign-in is checked once after the hooks and before the first criterion; a failed
 criterion BLOCKED `needs_auth` (see [`auth` and the sign-in check](#auth-and-the-sign-in-check)).
 
 Each criterion runs in its own fresh guarded context: no cookie or storage carries from one to the
-next (with a stored sign-in session, each starts from that same saved session). A `goto` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, an unset
+next (with a stored sign-in session, each starts from that same saved session). A `goto` or `request` origin `selvedge.json` no longer allows is BLOCKED `host_not_allowed`, a `request` a guard layer refuses while it runs is BLOCKED with that layer's reason (`host_not_allowed`, `remote_mutation_refused`, …), an unset
 `{{NAME}}` is BLOCKED `placeholder_unset`, and a criterion under the plan's `not_planned` is
 NOT_VERIFIABLE with the plan's reason. A step that throws (a locator matching nothing or more than
 one element, a hidden or covered click target, a step timeout) is BLOCKED `step_failed` with its
@@ -619,8 +649,11 @@ not waited for.
     `plan_time_actions`, `replay_of`; exactly one, the first line.
   - `step` — `criterion`, `step` (the 0-based index), `type`, `locator`, `outcome` (`ok` or
     `failed`; `matched` or `mismatched` for an `expect`), `value` (the read value for `read`, the
-    plan's own value for `fill` / `select`, else null), `duration_ms`, and `error` / `stable_wait`
-    when they apply; one per executed step (the stable wait's re-read is a second `read` line).
+    plan's own value for `fill` / `select`, else null; a `cookie:<name>` read's value is the
+    cookie's fingerprint, never its value), `duration_ms`, and `error` / `stable_wait` when they
+    apply; a `request` step also carries `request` — `{method, url, json_keys, status}`, the top-level
+    keys of its `json` body but never the body itself; one per executed step (the stable wait's
+    re-read is a second `read` line).
   - `criterion_end` — `criterion`, `outcome` (`completed`, `step_failed`, `stuck_screen`,
     `budget_exceeded`, `blocked`, `not_planned`), `reason`, `failed_step`, `screenshot`; one per
     criterion.
@@ -719,7 +752,8 @@ No `fill` or `select` value (those steps show type and locator only), no `{{NAME
 name (`Cookie`, `Set-Cookie`, `Authorization` read `[redacted]` wherever they appear), and nothing
 from `evidence.jsonl`, screenshots or traces.
 
-**Read values** (what each criterion's check read from the page) are not published unless the
+**Read values** (what each criterion's check read from the page or from a reply: a
+`response_text` or `response_json:` read is a read value too) are not published unless the
 **base branch's** `selvedge.json` sets `"comment": {"read_values": true}`. The base is `--base <ref>`
 or, by default, `origin/<the PR's base branch>` (`gh pr view <n> --json baseRefName`); the working
 tree's `selvedge.json` is never read here, so a PR cannot opt itself in. A base ref without a
@@ -728,7 +762,8 @@ readable `selvedge.json` leaves the defaults (values unpublished). With the opt-
 read, is refused `read_values_public_repo` and nothing is posted, unless you pass
 `--allow-public-values`. A published value is redacted first: an email address, a run of 6 or more
 digits, a URL query string and a base64 or hex token of 32 or more characters become `[redacted]`,
-then every `comment.redact` pattern is applied on top. Honest limit: patterns cannot catch every
+then every `comment.redact` pattern is applied on top. A criterion whose plan reads a
+`cookie:<name>` never shows a read value, opt-in or not: a fingerprint is not published. Honest limit: patterns cannot catch every
 personal detail (a name, an address), so publish values only where every reader may see them.
 
 **Revisions.** When the plan is a later revision of the same criteria, each criterion's verdict cell
@@ -967,9 +1002,9 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `run_interrupted` | BLOCKED | `evidence.jsonl` has no end line for a planned criterion: the run stopped before the criterion finished |
 | `needs_auth` | BLOCKED | `auth.signed_in_check` did not match (no session, or an expired one) and nobody could sign in; run `selvedge auth setup` (or `--headed`) |
 | `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
-| `side_effect_not_observable` | NOT_VERIFIABLE | a negative criterion names no side effect a check can read before and after the action, on any page the planner looked at; it is not planned, and its detail names those pages |
+| `side_effect_not_observable` | NOT_VERIFIABLE | the criterion names no effect a check can read, on any page the planner looked at or in any reply a `request` step can read (an email sent, a queued job no page or endpoint reports); it is not planned, and its detail names the pages and endpoints looked at |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
-| `no_value_read` | NOT_VERIFIABLE | the criterion's final `read` gave an empty value (`""` or none), so nothing was verified, even when the `expect` would hold |
+| `no_value_read` | NOT_VERIFIABLE | the criterion's final `read` gave an empty value (`""` or none: a `response_json:` pointer that names nothing, a body that is not JSON, a `cookie:` that is absent), so nothing was verified, even when the `expect` would hold |
 | `material_assumption` | NOT_VERIFIABLE | the `expect` held, but the plan records an assumption marked `material: true` for the criterion; `verdict.json` carries its text |
 | `origins_empty` | config | `origins` is absent or empty; add the app you test, e.g. `http://localhost:3000` |
 | `origin_invalid` | config | an origin is not exactly `scheme://host[:port]` |

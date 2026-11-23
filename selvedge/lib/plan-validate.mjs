@@ -14,12 +14,17 @@
 //  - each planned criterion states its interpretation, polarity and unverified assumptions;
 //  - vague criteria are never planned; they sit under not_planned with a rewrite;
 //  - every criterion of criteria.json is accounted for, and criteria_sha256 matches it;
+//  - a read of the last reply (response_status, response_text, response_json:<pointer>) follows a
+//    `request` step of the same criterion (response_without_request);
+//  - a read cookie:<name> is a fingerprint, never a value: an expect on it is changed_from only,
+//    against an earlier read of the same cookie (a baseline), so "a cookie exists" is "it changed
+//    from what it was before";
 //  - every step passes validateSteps (plan-steps.mjs, the one step validator).
 //
 // Node >= 18, standard library only.
 import { REASONS, isOriginAllowed, parseOrigin } from './env-config.mjs';
 import { classifyTestability, criteriaSha256 } from './criteria.mjs';
-import { ACTION_TYPES, validateSteps } from './plan-steps.mjs';
+import { isActionStep, isCookieRead, isResponseRead, validateSteps } from './plan-steps.mjs';
 
 // The closed list of plan-lint problem codes. selvedge/README.md lists each one;
 // selvedge/tests/test-plan-validate.sh asserts the two match.
@@ -41,6 +46,8 @@ export const PLAN_PROBLEMS = Object.freeze([
   'criteria_sha_mismatch',
   'prefix_step_not_allowed',
   'prefix_too_long',
+  'prefix_mutation_refused',
+  'response_without_request',
   'invalid_not_planned',
   'plan_schema_violation',
 ]);
@@ -132,9 +139,33 @@ export function vacuousExpect(read, expect) {
   return null;
 }
 
+// The reply and cookie rules (header): one problem per offending step.
+function lintReplyReads(id, steps, add) {
+  let requested = false;
+  let lastRead = -1;
+  steps.forEach((s, i) => {
+    if (!isPlainObject(s)) return;
+    if (s.type === 'request') requested = true;
+    if (s.type === 'read') {
+      if (isResponseRead(s.property) && !requested) {
+        add(id, 'response_without_request', `steps[${i}] read ${s.property} reads the last reply, but no request step comes before it in this criterion`);
+      }
+      lastRead = i;
+    }
+    const read = lastRead >= 0 ? steps[lastRead] : null;
+    if (s.type !== 'expect' || !read || !isCookieRead(read.property)) return;
+    if (s.op !== 'changed_from') {
+      add(id, 'existence_only_expect', `steps[${i}] expect ${s.op} on read ${read.property}: a cookie read is a fingerprint, never its value, so only changed_from (against a baseline read of the same cookie) checks it`);
+    } else if (!steps.slice(0, lastRead).some((b) => isPlainObject(b) && b.type === 'read' && b.property === read.property)) {
+      add(id, 'existence_only_expect', `steps[${i}] changed_from on read ${read.property} has no baseline: read ${read.property} before the step that sets it`);
+    }
+  });
+}
+
 function lintSteps(id, entry, add) {
   const steps = entry.steps;
   if (!Array.isArray(steps)) return;
+  lintReplyReads(id, steps, add);
   const n = steps.length;
   const last = n ? steps[n - 1] : null;
   const prev = n > 1 ? steps[n - 2] : null;
@@ -152,7 +183,7 @@ function lintSteps(id, entry, add) {
   const vacuous = isPlainObject(last) && last.type === 'expect' ? vacuousExpect(endsInReadExpect ? prev : null, last) : null;
   if (vacuous) add(id, 'existence_only_expect', vacuous);
   if (entry.polarity !== 'negative') return;
-  const firstAction = steps.findIndex((s) => isPlainObject(s) && ACTION_TYPES.includes(s.type));
+  const firstAction = steps.findIndex((s) => isActionStep(s));
   if (firstAction >= 0 && !steps.slice(0, firstAction).some((s) => isPlainObject(s) && s.type === 'read')) {
     add(id, 'negative_without_baseline', `a negative criterion reads a baseline of the side effect before its first action (steps[${firstAction}] ${steps[firstAction].type})`);
   }

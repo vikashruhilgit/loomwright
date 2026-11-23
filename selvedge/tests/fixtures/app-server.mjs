@@ -47,6 +47,14 @@
 //                 (only /account is counted)
 //   /control/expire-sessions  ends every session, so a saved cookie is no longer accepted; answers
 //                 text "ok"
+//   /api/forecast  GET: with a live API session cookie (selvedge_api, below) 200 JSON
+//                 {"days": [{"day": "mon", "high": 21}, …]}; without one 401 JSON {"error": "unauthorized"}
+//   /api/login    POST JSON {email, password}, both non-empty strings: 200 JSON {"user": {"email"},
+//                 "echo": <the password>} (a reply that holds a credential, which a run must redact)
+//                 and the cookie selvedge_api=<API_COOKIE_PREFIX><random> (path /, HttpOnly); else 400
+//                 JSON {"error": "email and password are required"}. Every POST is counted
+//                 (/control/hits?path=/api/login)
+//   /api/big      GET: text/plain of BIG_REPLY_CHARS characters (past the runner's 64 KiB reply cap)
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
@@ -203,6 +211,11 @@ function cookieValue(header, name) {
   return null;
 }
 
+// The value prefix of every /api/login session cookie: a test checks no output holds it.
+export const API_COOKIE_PREFIX = 'apisess-7f3c9d-';
+export const API_COOKIE = 'selvedge_api';
+export const BIG_REPLY_CHARS = 70000;
+
 const SILENT = page(
   'Account',
   `<main><h1>Account</h1>
@@ -218,6 +231,7 @@ export async function startAppServer({ port: listenPort = 0 } = {}) {
   const events = [];
   let cartLabel = null; // /control/cart-label; null: the button's name is its text
   const sessions = new Map(); // session id → { user, pass } (/login, /account)
+  const apiSessions = new Set(); // /api/login cookie values
   const hits = new Map(); // counted path → requests (/account)
   const sockets = new Set();
   const server = http.createServer((req, res) => {
@@ -231,6 +245,32 @@ export async function startAppServer({ port: listenPort = 0 } = {}) {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
       res.end(body);
     };
+    const json = (status, body, headers = {}) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
+      res.end(JSON.stringify(body));
+    };
+    if (url.pathname === '/api/login' && req.method === 'POST') {
+      hits.set('/api/login', (hits.get('/api/login') || 0) + 1);
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        let body = null;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          body = null;
+        }
+        const ok = body && typeof body.email === 'string' && body.email !== '' && typeof body.password === 'string' && body.password !== '';
+        if (!ok) {
+          json(400, { error: 'email and password are required' });
+          return;
+        }
+        const id = `${API_COOKIE_PREFIX}${randomBytes(8).toString('hex')}`;
+        apiSessions.add(id);
+        json(200, { user: { email: body.email }, echo: body.password }, { 'set-cookie': `${API_COOKIE}=${id}; Path=/; HttpOnly` });
+      });
+      return;
+    }
     if (url.pathname === '/login' && req.method === 'POST') {
       const chunks = [];
       req.on('data', (c) => chunks.push(c));
@@ -306,6 +346,13 @@ export async function startAppServer({ port: listenPort = 0 } = {}) {
       }
       case '/controls':
         send(200, CONTROLS);
+        return;
+      case '/api/forecast':
+        if (apiSessions.has(cookieValue(req.headers.cookie, API_COOKIE))) json(200, { days: [{ day: 'mon', high: 21 }, { day: 'tue', high: 19 }] });
+        else json(401, { error: 'unauthorized' });
+        return;
+      case '/api/big':
+        text('x'.repeat(BIG_REPLY_CHARS));
         return;
       case '/cookie': {
         const headers = url.searchParams.get('set') === '1' ? { 'set-cookie': 'selvedge_fixture=seen; Path=/' } : {};
