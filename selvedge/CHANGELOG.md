@@ -8,6 +8,23 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.10.1 — 2026-11-23
+
+- `selvedge/eval/target-driver.sh`: the font step asks Google again, up to five tries in all, when it
+  serves a next/font/google CSS URL as `fonts.gstatic.com/l/` files, which Turbopack refuses. It
+  happened for about 1 request in 15 (MuseoModerno, measured 2026-11-23), with any user agent, and
+  stopped the tuning run twice with `target_unavailable`. A failed step now reports the error line
+  itself instead of the last three lines of the stack trace, which hid the cause. A new `fonts
+  <clone> <out.js>` subcommand runs the step alone, through the same `fonts_step` (retry and
+  error line) that `up` uses, and `tests/test-target-driver-fonts.sh` pins both with a fake `curl`.
+  The `CHROME_UA` comment now says a newer user agent alone does not stop the `/l/` form.
+- `selvedge/eval/results.json` carries the first tuning report (engine 0.10.0, planner sonnet, one
+  plan and one run per target): 72 cases, PASS 27, FAIL 2, BLOCKED 15, NOT_VERIFIABLE 28;
+  false-PASS 0/12, false-FAIL 0/60, abstention 43/72. `side_effect_not_observable` is 16 of 72.
+  The planner notes for those 16 name the same cause: each criterion checks an HTTP status, a POST
+  response or a session cookie, which no browser step can read. There is no 0.9.0 tuning report
+  to compare with.
+
 ## 0.10.0 — 2026-11-22
 
 - The planner prompt (`prompts/planner.md`, rule 3) now tells the planner to look for the page

@@ -165,7 +165,9 @@ set, engine, repeats and cases. Each target is brought up by `target-driver.sh` 
 `setup` lines `real-bugs.json` recorded for that commit, each as a known step: a scratch clone
 (`SELVEDGE_EVAL_CLONE_DIR`), `supabase/config.toml` copied read-only from the owner's checkout
 (`SELVEDGE_EVAL_SM_CHECKOUT`) and patched to project id `selvedge-eval-sm` and ports 553xx, `npm ci`,
-`supabase db reset --local`, any fixture SQL, `.env.local`, the Google Fonts stylesheets, and a fresh
+`supabase db reset --local`, any fixture SQL, `.env.local`, the Google Fonts stylesheets (fetched
+again, up to five tries in all, when Google serves one as `fonts.gstatic.com/l/` files, which Turbopack
+refuses; `fonts <clone> <out.js>` runs this step alone), and a fresh
 `next dev -p 3471`. A setup line it does not know, or a step that fails, stops the run with
 `target_unavailable` and the step named; a target is never scored part-way. A planted variant is
 served with `node app-server.mjs serve`. Each target's workspace is a git repo in the work dir

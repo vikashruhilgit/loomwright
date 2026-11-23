@@ -7,6 +7,8 @@
 #   target-driver.sh down <workdir>               stops what `up` started for that target
 #   target-driver.sh stop <dir>                   once, after the last target: stops the eval's own
 #                                                 Supabase project (never any other)
+#   target-driver.sh fonts <clone> <out.js>       the font step of `up` alone (the harness never
+#                                                 calls it; tests/test-target-driver-fonts.sh does)
 #
 # <target.json> is a case's target plus the harness's additions: {"kind": "commit", "repo", "sha",
 # "setup": [the real-bugs.json setup lines recorded for that commit]} or {"kind": "variant", "path",
@@ -27,8 +29,9 @@
 #                                          local NEXTAUTH_SECRET, dummy Stripe test keys,
 #                                          EMAIL_FROM, BETA_CLUB_CAP=0
 #   NEXT_FONT_GOOGLE_MOCKED_RESPONSES: …   the commit's own next/font/google CSS URLs (computed with
-#                                          the commit's own next), fetched once with a desktop
-#                                          Chrome user agent
+#                                          the commit's own next), fetched with a desktop
+#                                          Chrome user agent, again (up to five tries) when
+#                                          Google serves one as fonts.gstatic.com/l/ files
 #   rm -rf .next; next dev -p 3471 …       a fresh dev server per commit (also for the recorded
 #   next dev -p 3471, already running …    "already running" lines), up when /login answers
 #   sign in as …                           a probe step of item 07, not a revival step: skipped
@@ -45,13 +48,14 @@ PROJECT_ID="selvedge-eval-sm"
 PORT=3471
 # A current desktop Chrome: for an older one Google serves some families (Archivo, for one) as
 # fonts.gstatic.com/l/font?kit=… files, whose query Turbopack refuses ("next/font/google queries have
-# exactly one entry"), and the page answers 500.
+# exactly one entry"), and the page answers 500. Even with this agent Google still serves that form
+# now and then, so a newer agent does not fix it alone: fonts_mock asks again (FONT_TRIES).
 CHROME_UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 STEP="start"
 
 step() { STEP="$1"; echo "target-driver: step: $1" >&2; }
 fail() { echo "target-driver: FAIL step '$STEP': $*" >&2; exit 1; }
-usage() { echo "usage: target-driver.sh up <target.json> <workdir> | down <workdir> | stop <dir>" >&2; exit 2; }
+usage() { echo "usage: target-driver.sh up <target.json> <workdir> | down <workdir> | stop <dir> | fonts <clone> <out.js>" >&2; exit 2; }
 
 clone_dir() { printf '%s\n' "${SELVEDGE_EVAL_CLONE_DIR:-${TMPDIR:-/tmp}/selvedge-eval-sm/clone}"; }
 jget() { node -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]]; process.stdout.write(v===undefined||v===null?"":String(v))' "$1" "$2"; }
@@ -110,7 +114,8 @@ for (const line of Array.isArray(t.setup) ? t.setup : []) {
 process.exit(bad);' "$1"
 }
 
-# fonts_mock <clone> <out.js> — the commit's next/font/google CSS URLs, each fetched once.
+# fonts_mock <clone> <out.js> — the commit's next/font/google CSS URLs, each fetched (again, up to
+# FONT_TRIES times, while Google serves it as fonts.gstatic.com/l/ files).
 fonts_mock() {
   node - "$1" "$2" "$CHROME_UA" <<'EOF'
 const fs = require('fs');
@@ -161,13 +166,28 @@ for (const f of files) {
   }
 }
 const mocks = {};
+// Google serves the same URL as fonts.gstatic.com/l/ files now and then (about 1 request in 15 for
+// MuseoModerno, measured 2026-11-23), whatever the user agent: ask again, up to FONT_TRIES times.
+const FONT_TRIES = 5;
 for (const u of urls) {
-  mocks[u] = execFileSync('curl', ['-fsSL', '--max-time', '60', '-A', ua, u], { encoding: 'utf8' });
-  if (mocks[u].includes('fonts.gstatic.com/l/')) throw new Error(`${u} was served as fonts.gstatic.com/l/ files, which Turbopack refuses`);
+  for (let i = 1; ; i++) {
+    mocks[u] = execFileSync('curl', ['-fsSL', '--max-time', '60', '-A', ua, u], { encoding: 'utf8' });
+    if (!mocks[u].includes('fonts.gstatic.com/l/')) break;
+    if (i === FONT_TRIES) throw new Error(`${u} was served as fonts.gstatic.com/l/ files ${FONT_TRIES} times in a row, which Turbopack refuses`);
+  }
 }
 fs.writeFileSync(out, `module.exports = ${JSON.stringify(mocks, null, 2)};\n`);
 process.stdout.write(`${urls.size}\n`);
 EOF
+}
+
+# fonts_step <clone> <out.js> <err file> — the font step as `up` and `fonts` run it: prints the
+# number of stylesheets mocked, or fails the step with the error's own line (Error, TypeError,
+# SyntaxError, …: not the stack's tail).
+fonts_step() {
+  local n
+  n="$(fonts_mock "$1" "$2" 2>"$3")" || fail "$(grep -m1 -E '^[A-Za-z]*Error(:|$)' "$3" || tail -n 3 "$3")"
+  echo "$n"
 }
 
 up_variant() {
@@ -300,7 +320,7 @@ EOF
   } >"$envfile" || fail "cannot write $envfile"
 
   step "NEXT_FONT_GOOGLE_MOCKED_RESPONSES"
-  n="$(fonts_mock "$clone" "$work/font-mocks.js" 2>"$work/fonts.err")" || fail "$(tail -n 3 "$work/fonts.err")"
+  n="$(fonts_step "$clone" "$work/font-mocks.js" "$work/fonts.err")" || exit 1
   echo "target-driver: $n next/font/google stylesheet(s) mocked" >&2
 
   step "next dev -p $PORT"
@@ -340,6 +360,15 @@ case "${1:-}" in
     stop_pidfile "$2/next.pid"
     stop_pidfile "$2/app.pid"
     exit 0
+    ;;
+  fonts)
+    # fonts <clone> <out.js>: the font step alone (what `up` runs for a commit), for the tests.
+    [ "$#" -eq 3 ] || usage
+    STEP="NEXT_FONT_GOOGLE_MOCKED_RESPONSES"
+    err="$(mktemp "${TMPDIR:-/tmp}/target-driver-fonts.XXXXXX")" || exit 1
+    ( fonts_step "$2" "$3" "$err" >/dev/null ); rc=$?
+    rm -f "$err"
+    exit "$rc"
     ;;
   stop)
     [ "$#" -eq 2 ] || usage
