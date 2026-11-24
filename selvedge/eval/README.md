@@ -3,9 +3,9 @@
 A fixed set of acceptance criteria with known right answers, used to measure how often Selvedge
 says PASS when the right answer is FAIL. The set is split by underlying defect into a **tuning**
 side (about 40% of the defects) and a **held-out** side (about 60%). The held-out answers file is
-kept outside this repository, but in this release every held-out answer can still be worked out
-from committed data (see "What the outside folder does not hide" below); only the planted variants,
-once they land, will be withheld.
+kept outside this repository. The answers of held-out real-bug and non-defect cases can still be
+worked out from committed data (see "What the outside folder does not hide" below); the held-out
+planted variants and their answers are withheld.
 
 This folder is an owner-only measurement tool. It is not part of the `selvedge` CLI, and nothing
 in `selvedge/bin` or `selvedge/lib` reads it.
@@ -14,8 +14,8 @@ The set's sizes are never written here: run `node selvedge/eval/eval-set.mjs cou
 each count beside its floor and marks it `met` or `open`. The floors live in `eval-set.mjs`
 (`FLOORS`).
 
-Floors still open: known-FAIL and held-out known-FAIL. Both need the planted-defect set (below),
-which the owner writes in a separate session; `count` shows the measured values.
+Every floor was met once the planted-defect set (below) was imported; `count` shows the measured
+values.
 
 ## Layout
 
@@ -37,7 +37,7 @@ Outside the repository, in the **outside folder** `$SELVEDGE_EVAL_HELD_OUT` (def
 `~/.claude/selvedge-eval/held-out/`):
 
 - `answers.json` — `{"<case_id>": "PASS" | "FAIL"}` for every held-out case, and nothing else
-- `variants/<group_id>/…` — held-out planted app variants, when the planted set lands
+- `variants/<group_id>/…` — held-out planted app variants
 
 ## Data model
 
@@ -73,21 +73,20 @@ group later never moves an existing one. `split.json` records the rule's name an
 
 `$SELVEDGE_EVAL_HELD_OUT` is read by `eval-set.mjs` only (not by the `selvedge` CLI). It lives on
 one machine. To back it up, copy the whole folder; to check a restored copy, run
-`node selvedge/eval/eval-set.mjs manifest check`. Losing it loses `answers.json` (which, in this
-release, can be rebuilt from committed data) and, once they land, the held-out planted variants,
-which cannot; the held-out set then has to be rebuilt.
+`node selvedge/eval/eval-set.mjs manifest check`. Losing it loses `answers.json`, whose planted answers exist only
+there, and the held-out planted variants. Neither can be rebuilt from committed data, so the
+held-out set then has to be rebuilt.
 
 Finder and other tools can drop files such as `.DS_Store` into the folder; `manifest check` names
 any file it does not list (`manifest_extra_file`), so remove such files rather than re-writing the
 manifest around them.
 
-**What the outside folder does not hide.** In this release, every held-out answer can be worked
-out from committed data alone. A `non-defect` case's answer is PASS by the rule above, and its
+**What the outside folder does not hide.** Every held-out real-bug and non-defect answer can be
+worked out from committed data alone. A `non-defect` case's answer is PASS by the rule above, and its
 `source` is committed in `held-out/cases.json`. A real-bug case is FAIL on its entry's `parent_sha`
 and PASS on its `fix_sha`, and both commits, with what the probe saw (`observed`), are committed in
-`real-bugs.json`. So `answers.json` keeps no held-out answer secret yet; it is what `count` reads.
-Only the planted variants, once they land, will be withheld: their files and answers go to the
-outside folder only.
+`real-bugs.json`. So for those cases `answers.json` keeps no secret; it is what `count` reads. Only the planted
+variants are withheld: their files and answers are in the outside folder only.
 
 ## Commands
 
@@ -205,8 +204,8 @@ and `per_app` (counts per `group_id` and per app: the target repo, or `sample-ap
 `repeatability` (`runner` and `planner`, each with `repeats`, `cases`, `flipped` and `flips`, an
 array of `{case_id, verdicts}`), `runs` (planner tokens and duration per run), `totals` and `gate`
 (`{verdict: "met" | "not met", failed}`, or null for tuning). It carries no `answer` key and no map
-of case ids to PASS or FAIL, so `check-leak` passes on it. When the planted held-out set lands, check
-the per-group counts and flip lists of planted groups for answer exposure before committing a report.
+of case ids to PASS or FAIL, so `check-leak` passes on it. Now that the held-out set has planted
+groups, check the per-group counts and flip lists of planted groups for answer exposure before committing a report.
 
 ### Harness reason tokens
 
@@ -223,7 +222,7 @@ Printed `harness: FAIL <token>: <detail>` on stderr (exit 1). A failing set chec
 | `run_incomplete` | `score` (or the end of `run`) found a target with no finished result in the work dir |
 | `browser_unavailable` | `run`'s browser preflight failed: the Playwright every `selvedge run` child would load (`SELVEDGE_PLAYWRIGHT_MODULE`, resolved as the selvedge CLI does) does not load, or its chromium does not launch headless (typically its browser build is not installed). Checked after the set check and before any target is brought up, so no planner tokens are spent and nothing is written to the work dir or `results.json`; the detail leads with the error's first line |
 
-## The planted-defect author session (open)
+## The planted-defect author session (done)
 
 Planted defects (`source: "planted"`, `target.kind: "variant"`, `group_id` `pd-<slug>`) are written
 by a separate session the owner starts by hand, so the session that builds Selvedge never sees the
@@ -231,8 +230,11 @@ held-out variants. The tooling accepts them with no code change: tuning variants
 under `selvedge/eval/tuning/variants/<group_id>/`, held-out variants go to the outside folder under
 `variants/<group_id>/`.
 
-- Session id: TBD
-- Start date: TBD
+- Session id: `0ce666ee-5059-4bc1-bae8-8d16175b9679`
+- Start date: 2026-11-23
+- Imported: 2026-11-24, 32 variants and 166 criteria (97 FAIL, 69 PASS). The import ran from the
+  builder session at the owner's request with all its output sent to a log outside the repository
+  that the session never read; it saw only each step's exit code and the last line of `count`
 - Committed brief: [`planted-session-brief.md`](planted-session-brief.md), given as the session's first
   message (the start folder may hold only the two app files, so the brief cannot sit in it)
 
