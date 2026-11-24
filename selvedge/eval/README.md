@@ -206,7 +206,8 @@ array of `{case_id, verdicts}`), `runs` (planner tokens and duration per run), `
 (`{verdict: "met" | "not met", failed}`, or null for tuning). It carries no `answer` key and no map
 of case ids to PASS or FAIL, so `check-leak` passes on it. In a held-out report, a planted group's
 `per_group` row has no `known_fail` or `known_pass`: its criteria are committed, so its FAIL/PASS
-split would narrow every answer. Before committing a held-out report, check its flip lists for
+split would narrow every answer. `per_app` stays whole: the planted cases' total split is already
+public, as the false-PASS denominator less the real-bug and non-defect known-FAIL count. Before committing a held-out report, check its flip lists for
 planted cases, which name each case with the verdicts it got.
 
 ### Harness reason tokens

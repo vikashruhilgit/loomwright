@@ -147,7 +147,8 @@ function repeatability(cases, series) {
 //   input.set        'held-out' | 'tuning'
 //   input.engine     {selvedge_version, planner_model}
 //   input.ts         ISO time
-//   input.cases      [{case_id, group_id, app, known: 'PASS' | 'FAIL'}] — `known` is used here and
+//   input.cases      [{case_id, group_id, source, app, known: 'PASS' | 'FAIL'}] — `source` 'planted'
+//                    marks a planted case; — `known` is used here and
 //                    never written to the report
 //   input.plans      [plan 1, plan 2, …], each {<case_id>: {verdict, evidence_class, reason}}: the
 //                    first run of each fresh plan
@@ -165,7 +166,7 @@ export function buildReport(input) {
   const reasons = {};
   const byGroup = new Map();
   const byApp = new Map();
-  const plantedGroups = new Set(cases.filter((c) => c.app === SAMPLE_APP).map((c) => c.group_id));
+  const plantedGroups = new Set(cases.filter((c) => c.source === 'planted').map((c) => c.group_id));
   let budgetExceeded = 0;
   for (const c of cases) {
     const v = main[c.case_id];
@@ -192,6 +193,8 @@ export function buildReport(input) {
   // A held-out planted group's answers live only in the outside folder, and its criteria are
   // committed in held-out/cases.json, so its FAIL/PASS split would narrow every answer: drop it.
   // Real-bug and non-defect answers can be worked out from committed data, so they keep theirs.
+  // per_app is left whole: the planted cases' total split is already public, as the false-PASS
+  // denominator less the real-bug and non-defect known-FAIL count, both derivable from committed data.
   const perGroup = grouped(byGroup, 'group_id').map((g) => (set === 'held-out' && plantedGroups.has(g.group_id) ? withoutSplit(g) : g));
   const totals = runs.reduce((a, r) => ({ planner_tokens: a.planner_tokens + (r.planner_tokens || 0), duration_ms: a.duration_ms + (r.duration_ms || 0) }), { planner_tokens: 0, duration_ms: 0 });
   const report = {

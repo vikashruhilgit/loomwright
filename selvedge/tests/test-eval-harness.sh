@@ -88,7 +88,7 @@ const build = ({ set = 'held-out', fail = [], pass = [], version = '1.0.0', extr
   const add = (known, [verdict, n, ec = 'structured-read', group = 'g-a', app = 'o/r']) => {
     for (let i = 0; i < n; i++) {
       const id = `c${++seq}`;
-      cases.push({ case_id: id, group_id: group, app, known });
+      cases.push({ case_id: id, group_id: group, source: group.startsWith('pd-') ? 'planted' : 'non-defect', app, known });
       plan[id] = { verdict, evidence_class: ec, reason: verdict === 'PASS' || verdict === 'FAIL' ? null : 'step_failed' };
     }
   };
@@ -139,6 +139,8 @@ out(mj.rates.false_pass.numerator === 0 && mj.rates.false_pass.denominator === 5
   const t = build({ set: 'tuning', fail: [['PASS', 1, 'structured-read', 'pd-x', 'sample-app']], pass: [['PASS', 1, 'structured-read', 'pd-x', 'sample-app']] });
   const tpd = t.per_group.find((g) => g.group_id === 'pd-x');
   out(tpd && tpd.known_fail === 1 && tpd.known_pass === 1, 'a tuning planted group keeps its split (tuning answers are committed)', JSON.stringify(t.per_group));
+  const nd = build({ fail: [['PASS', 1, 'structured-read', 'nd-v', 'sample-app']], pass: [['PASS', 2, 'structured-read', 'nd-v', 'sample-app']] }).per_group.find((g) => g.group_id === 'nd-v');
+  out(nd && nd.known_fail === 1 && nd.known_pass === 2, 'a held-out non-planted case on a variant target keeps its split (planted is read from source, not the app name)', JSON.stringify(nd));
 }
 // AC10 — a tuning report never feeds the gate or the two-revision rule.
 const tun = build({ set: 'tuning', fail: [['PASS', 70]], pass: [['PASS', 10]] });
