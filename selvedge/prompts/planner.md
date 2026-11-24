@@ -101,13 +101,19 @@ Each step is an object with `type` and exactly these fields:
 - `press` — `key`, optional `locator`
 - `wait_for` — `locator`, `state` (`attached`, `detached`, `visible`, `hidden`)
 - `request` — `method` (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`), `url`, optional `json` (a JSON
-  object body, not for `GET`; a string leaf may be `{{NAME}}`). Sent from the page, so its `url`'s
-  origin must be the origin of the page the criterion is on at that point (its last `goto`). No
-  headers. A request whose method is not `GET` is an action.
+  object body, not for `GET`; a string leaf may be `{{NAME}}`) or optional `body` (a raw text body
+  instead, for a body that is not JSON or is malformed on purpose), optional `headers` (name to
+  string; never `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, which the browser drops). Sent from
+  the page, so its `url`'s origin must be the origin of the page the criterion is on at that point
+  (its last `goto`). A request whose method is not `GET` is an action.
 - `read` — `property`: `text`, `value`, `checked`, `count` or `attribute:<name>` (each with a
-  `locator`), or, with no locator: `url`; `response_status`, `response_text` or
-  `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`) of the
-  last `request` before it; `cookie:<name>` (a fingerprint of that cookie, never its value).
+  `locator`), or, with no locator: `url`; `focused` (the element holding keyboard focus, as
+  `button "Save"`: press `Tab`, then read it); `response_status`, `response_text`,
+  `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`) or
+  `response_header:<name>` of the last `request` before it; `cookie:<name>` (a fingerprint of that
+  cookie, never its value); `cookie_attribute:<name>:<attribute>` (`http_only`, `secure`,
+  `same_site`, `path` or `domain` of that cookie: "the cookie is HttpOnly" is
+  `cookie_attribute:<name>:http_only` then `equals true`).
   Optional `at_load: true` checks the page as it loaded, without waiting for it to settle, for a
   criterion about the first state ("right after /slow loads, Price reads pending"): only before
   any action, in a positive criterion, checked with `equals`, `contains` or `matches`
@@ -152,6 +158,12 @@ Negative (rejected by the lint) — reading a reply with no request before it in
 A `cookie:<name>` read is a fingerprint, so the only check on it is `changed_from`, against a
 baseline read of the same cookie before the request that sets it: read `cookie:session`, send
 the sign-in `request`, read `cookie:session` again, `expect changed_from true`.
+
+Response headers, cookie flags (HttpOnly, Secure, SameSite), a body that is not JSON, request
+headers and keyboard focus are all observable with the steps above. A criterion that needs a
+signed-in session the plan cannot get (a 401 or 403 with no `{{NAME}}` credentials to sign in
+with) is not `side_effect_not_observable`: plan its sign-in with `{{NAME}}` values, which a run
+without them reports as BLOCKED `placeholder_unset`.
 
 `side_effect_not_observable` is the reason only when neither a page nor a reply shows the effect
 (an email sent, a job queued that no page or endpoint reports).

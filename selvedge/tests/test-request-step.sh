@@ -88,7 +88,10 @@ if node "$TESTS_DIR/fixtures/request-unit.mjs" "$LIB" >"$U" 2>"$TMP/unit.err" &&
   jcheck "$U" "a GET request and a POST with a nested json body to the page's own origin are valid steps" 'same(R.valid_get, []) && same(R.valid_post, [])'
   jcheck "$U" "a method outside GET/POST/PUT/PATCH/DELETE, a GET with json, a json that is a string or an array, or nests past 6: plan_schema_violation" \
     '["bad_method", "get_with_json", "json_not_object", "json_array", "json_too_deep"].every((k) => same(R[k], ["1:plan_schema_violation"]))'
-  jcheck "$U" "a headers field is unknown_field (no free headers)" 'same(R.header_field, ["1:unknown_field"])'
+  jcheck "$U" "request headers (name to string, {{NAME}} allowed) and a raw body on a non-GET are valid steps" 'same(R.header_field, []) && same(R.raw_body, [])'
+  jcheck "$U" "a header fetch forbids page code to set (Cookie, Sec-*), a non-string header value, json and body together, a body on a GET or a body that is not a string: plan_schema_violation" \
+    '["forbidden_header", "sec_header", "header_not_string", "body_and_json", "get_with_body", "body_not_string"].every((k) => R[k].includes("1:plan_schema_violation"))'
+  jcheck "$U" "{{NAME}} in a raw body and a header value is a placeholder (resolved at run time, redacted like a json leaf)" 'same(R.body_placeholders, ["BODY_K", "HDR_T"])'
   jcheck "$U" "the origin rule: a request to another listed origin than its page's, or before any goto, is origin_not_allowed; after a goto to that origin it is valid" \
     'same(R.cross_origin, ["1:origin_not_allowed"]) && same(R.no_goto_first, ["0:origin_not_allowed"]) && same(R.after_second_goto, [])'
   jcheck "$U" "a request to an origin selvedge.json does not list is origin_not_allowed" 'R.unlisted_origin.includes("1:origin_not_allowed")'
@@ -240,6 +243,27 @@ check "Acceptance 5: plan.json holds {{PASS}}, never its value; no evidence, ver
 check "Acceptance 5: a request line records the json keys [email, password], never the body" \
   'const l = evOf(1).find((x) => x.type === "request"); JSON.stringify(l.request.json_keys) === "[\"email\",\"password\"]" && !JSON.stringify(l).includes("ada@") && l.request.status === 200'
 [ "$(hits)" = "$((before + 4))" ] && ok "the four sign-in requests reached the app once each (no retry, no second send)" || ko "/api/login hits: before $before, after $(hits)"
+
+RAW='{"type":"request","method":"POST","url":"$O/api/login","body":"{not json","headers":{"content-type":"application/json"}}'
+F3="$(folder vocab "$R" '{"criteria":[
+{"text":"POST /api/login with a body that is not JSON answers 400","steps":[{"type":"goto","url":"$O/"},'"$RAW"',{"type":"read","property":"response_status"},{"type":"expect","op":"equals","value":400}]},
+{"text":"The forecast reply is sent as JSON","steps":['"$REQ_GET"',{"type":"read","property":"response_header:Content-Type"},{"type":"expect","op":"contains","value":"application/json"}]},
+{"text":"The forecast reply has no X-Nope header","steps":['"$REQ_GET"',{"type":"read","property":"response_header:x-nope"},{"type":"expect","op":"equals","value":"x"}]},
+{"text":"Signing in sets the session cookie HttpOnly","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"',{"type":"read","property":"cookie_attribute:selvedge_api:http_only"},{"type":"expect","op":"equals","value":true}]},
+{"text":"The session cookie is scoped to path /","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"',{"type":"read","property":"cookie_attribute:selvedge_api:path"},{"type":"expect","op":"equals","value":"/"}]},
+{"text":"Pressing Tab on /controls first focuses Do nothing","steps":[{"type":"goto","url":"$O/controls"},{"type":"press","key":"Tab"},{"type":"read","property":"focused"},{"type":"expect","op":"contains","value":"Do nothing"}]},
+{"text":"Tabbing on /controls never reaches Hidden action","steps":[{"type":"goto","url":"$O/controls"},{"type":"press","key":"Tab"},{"type":"read","property":"focused"},{"type":"expect","op":"absent","value":"Hidden action"},{"type":"press","key":"Tab"},{"type":"read","property":"focused"},{"type":"expect","op":"absent","value":"Hidden action"}]}]}')"
+[ -n "$F3" ] && ok "setup: the plan with a raw body, headers, response_header, cookie_attribute and focused reads freezes" || ko "setup: folder vocab: $(cat "$TMP/o/freeze-vocab.err" 2>/dev/null)"
+before="$(hits)"
+run vocab "$F3" "$PW" "PASS=$PASS_VALUE"
+check "a raw non-JSON body with a content-type header reaches the app and is answered 400 (PASS)" 'vc(0).verdict === "PASS" && vc(0).read_value === 400'
+check "response_header:Content-Type reads the reply header (any case; PASS), an absent header reads no value (NOT_VERIFIABLE no_value_read, never PASS)" \
+  'vc(1).verdict === "PASS" && vc(1).read_value.includes("application/json") && vc(2).verdict === "NOT_VERIFIABLE" && vc(2).reason === "no_value_read"'
+check "cookie_attribute reads the HttpOnly flag (true) and the path (/) of the session cookie, never its value" \
+  'vc(3).verdict === "PASS" && vc(3).read_value === true && vc(4).verdict === "PASS" && vc(4).read_value === "/" && !all().includes(E.API_PREFIX)'
+check "focused reads the element holding focus after a key press (button \"Do nothing\"); absent on it checks a hidden button is never reached" \
+  'vc(5).verdict === "PASS" && vc(5).read_value.startsWith("button") && vc(6).verdict === "PASS"'
+[ "$(hits)" = "$((before + 3))" ] && ok "the raw-body request and the two sign-ins reached the app once each" || ko "/api/login hits (vocab): before $before, after $(hits)"
 node --input-type=module -e "
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';

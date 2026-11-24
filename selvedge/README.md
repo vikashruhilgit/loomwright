@@ -413,7 +413,7 @@ writes locators: content that appears only after a click is not in the tree unti
   step validator as a plan. A `request` in a prefix must be a `GET` (`plan_invalid`
   `prefix_mutation_refused` otherwise: looking never changes the app), to the origin of the page
   it is sent from (`<url>`, or the last prefix `goto`). With one, the output also holds
-  `"replies"`: one `{step, method, url, status, content_type, body, truncated}` per request that
+  `"replies"`: one `{step, method, url, status, content_type, headers, body, truncated}` per request that
   replied, `body` the first 2 KiB of the reply text, redacted like `aria_snapshot`. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
   unset name is `BLOCKED placeholder_unset`. The value is never printed: every resolved value is
   shown as its `{{NAME}}` in `aria_snapshot`, `error` and on stderr (found as given and as
@@ -541,12 +541,22 @@ Step types (no field beyond these is accepted):
 - `wait_for` — `locator`, `state` (`attached`, `detached`, `visible`, `hidden`).
 - `request` — `method` (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`), `url`, optional `json` (a plain
   JSON object body, not for `GET`, at most 6 deep and 64 leaves; a string leaf is a literal or
-  `{{NAME}}`). No headers field and no raw body. Its origin must be in the plan's `origins`,
+  `{{NAME}}`), or optional `body` instead (a raw text body, not for `GET`, at most 8192
+  characters, sent as given: text/plain unless `headers` name a content-type), and optional
+  `headers` (at most 16, name to string; values literal or `{{NAME}}`; a header `fetch` forbids
+  page code to set, such as `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*` or `Proxy-*`, is
+  refused, since the browser would drop it). Its origin must be in the plan's `origins`,
   allowed by `selvedge.json`, and the origin of the page the criterion is on at that point (the last
   `goto` before it): a cross-origin fetch would depend on the app's CORS policy, not on Selvedge. A
   request whose method is not `GET` is an action (rule 1 and the negative baseline apply to it).
 - `read` — `property`: `text`, `value`, `checked`, `count`, `attribute:<name>` (each with a
-  `locator`), or with no locator: `url`; `response_status` (a number), `response_text` (the body,
+  `locator`), or with no locator: `url`; `focused` (the element holding keyboard focus, as its
+  accessibility-tree line such as `button "Save"`, or no value when focus is on no element);
+  `response_header:<name>` (a header of the last reply, any case, or no value when it is absent;
+  `Set-Cookie` is never visible to the page, so read `cookie_attribute` instead);
+  `cookie_attribute:<name>:<attribute>` (`http_only` or `secure`, a boolean; `same_site`, `path`
+  or `domain`, a string; never the value; no value when there is no such cookie);
+  `response_status` (a number), `response_text` (the body,
   as text, trimmed like `text`) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
   pointer into the parsed body, e.g. `response_json:/0/createdBy/name`: a string, number or
   boolean, or no value when the body is not JSON or the pointer names nothing, null, an object or

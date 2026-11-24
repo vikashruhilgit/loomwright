@@ -376,7 +376,8 @@ const checks = {
   states: eq(d.step_wait_for.properties.state.enum, S.WAIT_STATES),
   read: eq(d.step_read.properties.property.anyOf[0].enum, S.READ_PROPERTIES) && d.step_read.properties.property.anyOf[1].pattern === S.READ_ATTRIBUTE_PATTERN
     && d.step_read.properties.property.anyOf[2].pattern === S.READ_RESPONSE_JSON_PATTERN && d.step_read.properties.property.anyOf[3].pattern === S.READ_COOKIE_PATTERN
-    && d.step_read.properties.property.anyOf.length === 4,
+    && d.step_read.properties.property.anyOf[4].pattern === S.READ_RESPONSE_HEADER_PATTERN && d.step_read.properties.property.anyOf[5].pattern === S.READ_COOKIE_ATTRIBUTE_PATTERN
+    && d.step_read.properties.property.anyOf.length === 6,
   request: eq(d.step_request.properties.method.enum, S.REQUEST_METHODS),
   criterion: eq(Object.keys(d.criterion_plan.properties), V.CRITERION_PLAN_KEYS) && d.criterion_plan.additionalProperties === false
     && eq(d.criterion_plan.properties.polarity.enum, V.POLARITIES)

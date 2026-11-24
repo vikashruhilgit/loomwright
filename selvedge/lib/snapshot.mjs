@@ -450,7 +450,7 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
         try {
           const reply = await runPrefixStep(page, step, ctx);
           if (step.type === 'request') {
-            replies.push({ step: i, method: steps[i].method, url: steps[i].url, status: reply.status, content_type: reply.content_type, body: firstBytes(reply.text, SNAPSHOT_REPLY_BYTES), truncated: reply.truncated || Buffer.byteLength(reply.text, 'utf8') > SNAPSHOT_REPLY_BYTES });
+            replies.push({ step: i, method: steps[i].method, url: steps[i].url, status: reply.status, content_type: reply.content_type, headers: reply.headers || {}, body: firstBytes(reply.text, SNAPSHOT_REPLY_BYTES), truncated: reply.truncated || Buffer.byteLength(reply.text, 'utf8') > SNAPSHOT_REPLY_BYTES });
           }
           result.steps_run += 1;
         } catch (e) {
@@ -479,7 +479,7 @@ async function snapshotIn({ url, flags, base, runDir, budget, cwd, env, record, 
   result.aria_snapshot = result.aria_snapshot === null ? null : redactValues(result.aria_snapshot, secrets);
   result.error = result.error === null ? null : redactValues(result.error, secrets);
   if (steps.some((st) => st && st.type === 'request')) {
-    result.replies = replies.map((r) => ({ ...r, content_type: r.content_type === null ? null : redactValues(r.content_type, secrets), body: redactValues(r.body, secrets) }));
+    result.replies = replies.map((r) => ({ ...r, content_type: r.content_type === null ? null : redactValues(r.content_type, secrets), headers: Object.fromEntries(Object.entries(r.headers).map(([k, v]) => [k, redactValues(v, secrets)])), body: redactValues(r.body, secrets) }));
   }
   say(JSON.stringify(result, null, 2));
   if (result.failed_step !== null) {

@@ -31,7 +31,15 @@ out.get_with_json = codes([goto, { type: 'request', method: 'GET', url: `${O}/`,
 out.json_not_object = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, json: '{"a":1}' }]);
 out.json_array = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, json: [1] }]);
 out.json_too_deep = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, json: { a: { b: { c: { d: { e: { f: 1 } } } } } } }]);
-out.header_field = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { authorization: 'x' } }]);
+out.header_field = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { authorization: 'Bearer {{TOKEN}}', 'x-trace': '1' } }]);
+out.forbidden_header = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { Cookie: 'a=b' } }]);
+out.sec_header = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { 'Sec-Fetch-Mode': 'cors' } }]);
+out.header_not_string = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { 'x-n': 1 } }]);
+out.raw_body = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: '{not json' }]);
+out.body_and_json = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'x', json: { a: 1 } }]);
+out.get_with_body = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, body: 'x' }]);
+out.body_not_string = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: { a: 1 } }]);
+out.body_placeholders = S.placeholderNames([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'k={{BODY_K}}', headers: { authorization: '{{HDR_T}}' } }]);
 out.cross_origin = codes([goto, { type: 'request', method: 'GET', url: `${OTHER}/api/x` }]);
 out.no_goto_first = codes([{ type: 'request', method: 'GET', url: `${O}/api/x` }]);
 out.after_second_goto = codes([goto, { type: 'goto', url: `${OTHER}/` }, { type: 'request', method: 'GET', url: `${OTHER}/api/x` }]);
