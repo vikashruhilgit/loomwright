@@ -143,11 +143,13 @@ export function addVagueNotPlanned(plan, vague) {
 const PLAN_WIDE_CODES = Object.freeze(['criterion_unaccounted', 'criteria_sha_mismatch', 'invalid_not_planned']);
 export const SET_ASIDE_DETAIL_MAX = 2000;
 
-// setAsideInvalid(plan, problems) → { plan, setAside: [id] } or null. When every problem names a
-// criterion planned under steps_by_criterion with a code of its own entry, each such criterion moves
-// to not_planned with criterion_plan_invalid and its problem lines (capped) as the detail; else null
-// (the plan fails as a whole).
-export function setAsideInvalid(plan, problems) {
+// setAsideInvalid(plan, problems, criteria) → { plan, setAside: [{id, reason}] } or null. When every
+// problem names a criterion planned under steps_by_criterion with a code of its own entry, each such
+// criterion moves to not_planned with criterion_plan_invalid and its problem lines (capped) as the
+// detail; else null (the plan fails as a whole). A criterion whose TEXT is vague (`criteria`, the
+// criteria.json list, by classifyTestability) moves under criterion_not_testable with its rewrite
+// instead, the one not_planned reason the lint accepts for a vague criterion.
+export function setAsideInvalid(plan, problems, criteria = []) {
   if (!problems.length || plan === null || typeof plan !== 'object' || Array.isArray(plan)) return null;
   const sbc = plan.steps_by_criterion;
   if (sbc === null || typeof sbc !== 'object' || Array.isArray(sbc) || !Array.isArray(plan.not_planned ?? [])) return null;
@@ -155,12 +157,22 @@ export function setAsideInvalid(plan, problems) {
   if (!problems.every(own)) return null;
   const ids = [...new Set(problems.map((p) => p.id))];
   if (!Array.isArray(plan.not_planned)) plan.not_planned = [];
+  const textById = new Map((Array.isArray(criteria) ? criteria : []).map((c) => [c.id, c.text]));
+  const setAside = [];
   for (const id of ids) {
-    const lines = problems.filter((p) => p.id === id).map((p) => `${p.code}${p.detail ? `: ${p.detail}` : ''}`).join('; ');
     delete sbc[id];
+    const text = textById.get(id);
+    const t = text === undefined ? null : classifyTestability(text);
+    if (t && t.testability === 'vague') {
+      plan.not_planned.push({ id, reason: REASONS.criterion_not_testable, rewrite: t.rewrite });
+      setAside.push({ id, reason: REASONS.criterion_not_testable });
+      continue;
+    }
+    const lines = problems.filter((p) => p.id === id).map((p) => `${p.code}${p.detail ? `: ${p.detail}` : ''}`).join('; ');
     plan.not_planned.push({ id, reason: REASONS.criterion_plan_invalid, detail: lines.length > SET_ASIDE_DETAIL_MAX ? `${lines.slice(0, SET_ASIDE_DETAIL_MAX - 1)}…` : lines });
+    setAside.push({ id, reason: REASONS.criterion_plan_invalid });
   }
-  return { plan, setAside: ids };
+  return { plan, setAside };
 }
 
 // Lint, then freeze. The lint runs before anything is hashed; an invalid plan throws PlanInvalid.
@@ -272,12 +284,12 @@ function cmdPlan(args, env) {
     }
     addVagueNotPlanned(plan, vague);
     const problems = validatePlan(plan, { criteria, config });
-    const aside = setAsideInvalid(plan, problems);
-    if (aside) {
-      for (const p of problems) process.stderr.write(`${problemLine(p)}\n`);
-      for (const id of aside.setAside) err(`${id}: its steps broke the plan lint; set aside under not_planned (${REASONS.criterion_plan_invalid}), the other criteria freeze`);
-    }
-    reportFreeze(runDir, freezeChecked({ root, runDir, plan, criteria, config, env }));
+    const aside = setAsideInvalid(plan, problems, criteria.criteria);
+    if (aside) for (const p of problems) process.stderr.write(`${problemLine(p)}\n`);
+    // the set-aside lines only once the rest froze: a freeze that still fails says nothing froze
+    const rec = freezeChecked({ root, runDir, plan, criteria, config, env });
+    if (aside) for (const a of aside.setAside) err(`${a.id}: set aside under not_planned (${a.reason}); the other criteria froze`);
+    reportFreeze(runDir, rec);
     return 0;
   } catch (e) {
     err(`nothing was frozen in ${runDir}; fix ${RUN_FILES.plan} there and run: selvedge plan --freeze ${runDir}`);

@@ -214,7 +214,26 @@ check "AC6 a stub whose plan has a problem of the plan as a whole (criteria_sha_
   'rc === 2 && err.includes("plan_invalid: (plan): criteria_sha_mismatch") && dir !== "" && has("plan.json") && !has("plan.sha256") && !has("freeze.json") && jl(E.R + "/.selvedge/runs.jsonl").length === Number(E.RUNS_BEFORE)'
 run ac6-half "$R" "$PLANNER" STUB_PLANNER_MODE=half -- "$CRITERIA"
 check "one criterion whose steps break the lint is set aside, the rest freeze: exit 0, the problem line on stderr, <c1> under not_planned criterion_plan_invalid with the problem as detail, <c3> still planned" \
-  'const p = j("plan.json"); const np = p.not_planned.find((x) => x.id === E.C1); rc === 0 && has("plan.sha256") && err.includes("plan_invalid: " + E.C1 + ": missing_final_read_expect") && err.includes("set aside") && np && np.reason === "criterion_plan_invalid" && np.detail.startsWith("missing_final_read_expect") && !(E.C1 in p.steps_by_criterion) && (E.C3 in p.steps_by_criterion)'
+  'const p = j("plan.json"); const np = p.not_planned.find((x) => x.id === E.C1); rc === 0 && has("plan.sha256") && err.includes("plan_invalid: " + E.C1 + ": missing_final_read_expect") && err.includes("set aside under not_planned (criterion_plan_invalid); the other criteria froze") && np && np.reason === "criterion_plan_invalid" && np.detail.startsWith("missing_final_read_expect") && !(E.C1 in p.steps_by_criterion) && (E.C3 in p.steps_by_criterion)'
+out="$(node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const P = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/plan.mjs").href);
+const V = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/plan-validate.mjs").href);
+const C = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/criteria.mjs").href);
+const criteria = JSON.parse(readFileSync(process.env.CRITERIA, "utf8"));
+const o = process.env.AURL;
+const good = { interpretation: "x.", polarity: "positive", unverified_assumptions: [], steps: [{ type: "goto", url: o + "/" }, { type: "read", property: "url" }, { type: "expect", op: "equals", value: o + "/" }] };
+const bad = { ...good, steps: [{ type: "goto", url: o + "/" }] };
+const plan = { schema_version: 1, target: "web", criteria_sha256: C.criteriaSha256(criteria.criteria), origins: [o], steps_by_criterion: { [process.env.C1]: bad, [process.env.C2]: good, [process.env.C3]: good }, not_planned: [] };
+const config = { origins: [o] };
+const first = V.validatePlan(plan, { criteria, config });
+const a = P.setAsideInvalid(plan, first, criteria.criteria);
+const again = V.validatePlan(plan, { criteria, config });
+const np2 = plan.not_planned.find((x) => x.id === process.env.C2);
+console.log(first.some((p) => p.id === process.env.C2 && p.code === "vague_criterion_planned") && a && again.length === 0 && np2.reason === "criterion_not_testable" && np2.rewrite && plan.not_planned.find((x) => x.id === process.env.C1).reason === "criterion_plan_invalid" && (process.env.C3 in plan.steps_by_criterion) ? "yes" : JSON.stringify({ first, again, np: plan.not_planned }));
+' 2>&1)"
+[ "$out" = "yes" ] && ok "a vague criterion the planner planned anyway is set aside under criterion_not_testable with its rewrite (the reason the lint accepts), so the re-lint is clean and the rest freeze" || ko "set aside vague: $out"
 run ac6-allbad "$R" "$PLANNER" STUB_PLANNER_MODE=invalid -- "$CRITERIA"
 check "every criterion breaking the lint: all set aside, the plan still freezes (exit 0) with an empty steps_by_criterion" \
   'const p = j("plan.json"); rc === 0 && has("plan.sha256") && Object.keys(p.steps_by_criterion).length === 0 && [E.C1, E.C3].every((id) => p.not_planned.some((x) => x.id === id && x.reason === "criterion_plan_invalid"))'
