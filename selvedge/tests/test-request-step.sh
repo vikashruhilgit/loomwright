@@ -91,6 +91,9 @@ if node "$TESTS_DIR/fixtures/request-unit.mjs" "$LIB" >"$U" 2>"$TMP/unit.err" &&
   jcheck "$U" "request headers (name to string, {{NAME}} allowed) and a raw body on a non-GET are valid steps" 'same(R.header_field, []) && same(R.raw_body, [])'
   jcheck "$U" "a header fetch forbids page code to set (Cookie, Sec-*), a non-string header value, json and body together, a body on a GET or a body that is not a string: plan_schema_violation" \
     '["forbidden_header", "sec_header", "header_not_string", "body_and_json", "get_with_body", "body_not_string"].every((k) => R[k].includes("1:plan_schema_violation"))'
+  jcheck "$U" "headers: 16 are valid, 17 are plan_schema_violation, and two names that differ only in case (one wire header) are plan_schema_violation" \
+    'same(R.headers_at_max, []) && same(R.headers_over_max, ["1:plan_schema_violation"]) && same(R.header_dup, ["1:plan_schema_violation"])'
+  jcheck "$U" "a raw body of 8192 characters is valid; 8193 is plan_schema_violation" 'same(R.body_at_max, []) && same(R.body_over_max, ["1:plan_schema_violation"])'
   jcheck "$U" "{{NAME}} in a raw body and a header value is a placeholder (resolved at run time, redacted like a json leaf)" 'same(R.body_placeholders, ["BODY_K", "HDR_T"])'
   jcheck "$U" "the origin rule: a request to another listed origin than its page's, or before any goto, is origin_not_allowed; after a goto to that origin it is valid" \
     'same(R.cross_origin, ["1:origin_not_allowed"]) && same(R.no_goto_first, ["0:origin_not_allowed"]) && same(R.after_second_goto, [])'

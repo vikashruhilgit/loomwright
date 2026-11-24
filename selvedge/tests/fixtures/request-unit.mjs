@@ -39,6 +39,12 @@ out.raw_body = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, bod
 out.body_and_json = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'x', json: { a: 1 } }]);
 out.get_with_body = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, body: 'x' }]);
 out.body_not_string = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: { a: 1 } }]);
+const hdrs = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`x-h${i}`, 'v']));
+out.headers_at_max = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: hdrs(S.REQUEST_HEADERS_MAX) }]);
+out.headers_over_max = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: hdrs(S.REQUEST_HEADERS_MAX + 1) }]);
+out.header_dup = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { 'X-Foo': 'a', 'x-foo': 'b' } }]);
+out.body_at_max = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'b'.repeat(S.REQUEST_BODY_MAX_CHARS) }]);
+out.body_over_max = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'b'.repeat(S.REQUEST_BODY_MAX_CHARS + 1) }]);
 out.body_placeholders = S.placeholderNames([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'k={{BODY_K}}', headers: { authorization: '{{HDR_T}}' } }]);
 out.cross_origin = codes([goto, { type: 'request', method: 'GET', url: `${OTHER}/api/x` }]);
 out.no_goto_first = codes([{ type: 'request', method: 'GET', url: `${O}/api/x` }]);
