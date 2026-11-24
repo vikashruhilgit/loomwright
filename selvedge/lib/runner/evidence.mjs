@@ -18,8 +18,9 @@
 // completed criterion and one of REASONS otherwise.
 // A `request` step line carries `request`: {method, url, json_keys, status} — the plan's method and
 // url, the top-level keys of its json body (sorted; null without one), and the reply's HTTP status
-// (null when no reply came). The body itself is never written, as given or resolved. Its reply is
-// evidence only through the reads after it (response_status / response_text / response_json:…).
+// (null when no reply came). The body itself (json or a raw body) and the request headers are never
+// written, as given or resolved. Its reply is evidence only through the reads after it
+// (response_status / response_text / response_json… / response_header:…).
 // A `cookie:<name>` read's value is the cookie's fingerprint (steps.mjs cookieFingerprint), never
 // the cookie's value.
 //

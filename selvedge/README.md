@@ -594,7 +594,8 @@ neither is an HTTP client in Node: `context.request` skips `context.route`, so t
 refuses is BLOCKED with the guard's reason. The criterion keeps its last reply (status, up to
 64 KiB of text, content type) for the `response_*` reads after it; no reply value is carried into
 a later step (write a seeded id into the plan instead). The evidence line of a request records its
-method, url, the top-level keys of its `json` and the reply's status, never the body.
+method, url, the top-level keys of its `json` and the reply's status, never the body (a `json`
+or a raw `body`) and never the request `headers`.
 
 Plan-lint problems (the codes after `plan_invalid:`):
 
