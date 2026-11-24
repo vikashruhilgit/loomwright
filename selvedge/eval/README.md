@@ -223,7 +223,7 @@ Printed `harness: FAIL <token>: <detail>` on stderr (exit 1). A failing set chec
 | `run_incomplete` | `score` (or the end of `run`) found a target with no finished result in the work dir |
 | `browser_unavailable` | `run`'s browser preflight failed: the Playwright every `selvedge run` child would load (`SELVEDGE_PLAYWRIGHT_MODULE`, resolved as the selvedge CLI does) does not load, or its chromium does not launch headless (typically its browser build is not installed). Checked after the set check and before any target is brought up, so no planner tokens are spent and nothing is written to the work dir or `results.json`; the detail leads with the error's first line |
 
-## The planted-defect author session (open)
+## The planted-defect author session (done)
 
 Planted defects (`source: "planted"`, `target.kind: "variant"`, `group_id` `pd-<slug>`) are written
 by a separate session the owner starts by hand, so the session that builds Selvedge never sees the
@@ -231,8 +231,11 @@ held-out variants. The tooling accepts them with no code change: tuning variants
 under `selvedge/eval/tuning/variants/<group_id>/`, held-out variants go to the outside folder under
 `variants/<group_id>/`.
 
-- Session id: TBD
-- Start date: TBD
+- Session id: `0ce666ee-5059-4bc1-bae8-8d16175b9679`
+- Start date: 2026-11-23
+- Imported: 2026-11-24, 32 variants and 166 criteria (97 FAIL, 69 PASS). The import ran from the
+  builder session at the owner's request with all its output sent to a log outside the repository
+  that the session never read; it saw only each step's exit code and the last line of `count`
 - Committed brief: [`planted-session-brief.md`](planted-session-brief.md), given as the session's first
   message (the start folder may hold only the two app files, so the brief cannot sit in it)
 

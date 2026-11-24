@@ -2,6 +2,804 @@
   "schema_version": 1,
   "cases": [
     {
+      "case_id": "pd-03d0d5e6c6.141540c82940",
+      "group_id": "pd-03d0d5e6c6",
+      "source": "planted",
+      "criterion": {
+        "id": "c-141540c82940",
+        "text": "In the cart on /cart, setting Quantity to 5 shows a Total of 30."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-03d0d5e6c6"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-03d0d5e6c6.321591f0dbb7",
+      "group_id": "pd-03d0d5e6c6",
+      "source": "planted",
+      "criterion": {
+        "id": "c-321591f0dbb7",
+        "text": "On first loading /cart, no Quantity field is visible."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-03d0d5e6c6"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-03d0d5e6c6.5952d55ee686",
+      "group_id": "pd-03d0d5e6c6",
+      "source": "planted",
+      "criterion": {
+        "id": "c-5952d55ee686",
+        "text": "Before Open cart is clicked, /cart shows no Cart dialog."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-03d0d5e6c6"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-03d0d5e6c6.622161634d27",
+      "group_id": "pd-03d0d5e6c6",
+      "source": "planted",
+      "criterion": {
+        "id": "c-622161634d27",
+        "text": "On first loading /cart, no Total is visible."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-03d0d5e6c6"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-03d0d5e6c6.9a3c55724f71",
+      "group_id": "pd-03d0d5e6c6",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9a3c55724f71",
+        "text": "/cart shows the heading Shop and a button reading Open cart."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-03d0d5e6c6"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-09c7cdb17e.7b8a8c1f2899",
+      "group_id": "pd-09c7cdb17e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7b8a8c1f2899",
+        "text": "Opening /slow and waiting 3 seconds without clicking anything leaves the Price reading pending."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-09c7cdb17e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-09c7cdb17e.99341d8bd2fd",
+      "group_id": "pd-09c7cdb17e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-99341d8bd2fd",
+        "text": "Immediately after /slow loads, the Price reads pending."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-09c7cdb17e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-09c7cdb17e.a3c5272aa31c",
+      "group_id": "pd-09c7cdb17e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-a3c5272aa31c",
+        "text": "On /slow, the Price stays pending for at least 2 seconds when Load price is never clicked."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-09c7cdb17e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-09c7cdb17e.f08e2447d5e0",
+      "group_id": "pd-09c7cdb17e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f08e2447d5e0",
+        "text": "GET /api/price answers 200 with the text 42."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-09c7cdb17e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-09c7cdb17e.f4e2243aaadf",
+      "group_id": "pd-09c7cdb17e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f4e2243aaadf",
+        "text": "On /slow, after waiting 4 seconds on the page and then clicking Load price, the Price still reads pending half a second after the click."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-09c7cdb17e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-14aed2d01e.2a3bd041f568",
+      "group_id": "pd-14aed2d01e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2a3bd041f568",
+        "text": "On /echo, typing \"ab cd\" into User shows Reversed: dc ba."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-14aed2d01e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-14aed2d01e.2af0d99498b2",
+      "group_id": "pd-14aed2d01e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2af0d99498b2",
+        "text": "On /echo, typing the single letter x into User shows Reversed: x."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-14aed2d01e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-14aed2d01e.6c6d0af5eb32",
+      "group_id": "pd-14aed2d01e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-6c6d0af5eb32",
+        "text": "On /echo, typing abc into User shows Reversed: cba."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-14aed2d01e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-14aed2d01e.7eaf565379c1",
+      "group_id": "pd-14aed2d01e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7eaf565379c1",
+        "text": "On first loading /echo, the reversed line reads Reversed: nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-14aed2d01e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-14aed2d01e.c6d2aae4c515",
+      "group_id": "pd-14aed2d01e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c6d2aae4c515",
+        "text": "On /echo, typing Ann into User shows Hello, Ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-14aed2d01e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-14aed2d01e.f0fbd56b0f49",
+      "group_id": "pd-14aed2d01e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f0fbd56b0f49",
+        "text": "On /echo, typing Ann into User shows Reversed: nnA."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-14aed2d01e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-1614348f58.25bb2060cf6a",
+      "group_id": "pd-1614348f58",
+      "source": "planted",
+      "criterion": {
+        "id": "c-25bb2060cf6a",
+        "text": "On /controls, clicking Add one once makes Count read 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1614348f58"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-1614348f58.3797ffe25eb0",
+      "group_id": "pd-1614348f58",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3797ffe25eb0",
+        "text": "On /controls, clicking Add one twice makes Count read 2."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1614348f58"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-1614348f58.9920c9ce6cc9",
+      "group_id": "pd-1614348f58",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9920c9ce6cc9",
+        "text": "On first loading /controls, Count reads 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1614348f58"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-1614348f58.de9f32cb3848",
+      "group_id": "pd-1614348f58",
+      "source": "planted",
+      "criterion": {
+        "id": "c-de9f32cb3848",
+        "text": "/controls shows no Hidden action button."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1614348f58"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-1614348f58.ed27093a2fad",
+      "group_id": "pd-1614348f58",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ed27093a2fad",
+        "text": "On /controls, clicking Add one five times makes Count read 5."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1614348f58"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-196d5fd2d8.2c57ff2b4e15",
+      "group_id": "pd-196d5fd2d8",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2c57ff2b4e15",
+        "text": "On /echo, pressing the a key with nothing focused makes the order line end with last key a."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-196d5fd2d8"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-196d5fd2d8.36f40cd6e1e3",
+      "group_id": "pd-196d5fd2d8",
+      "source": "planted",
+      "criterion": {
+        "id": "c-36f40cd6e1e3",
+        "text": "On /echo, pressing Escape makes the order line end with last key Escape."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-196d5fd2d8"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-196d5fd2d8.3ac97f49369a",
+      "group_id": "pd-196d5fd2d8",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3ac97f49369a",
+        "text": "On /echo, typing x into the User field makes the order line end with last key x."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-196d5fd2d8"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-196d5fd2d8.87c8a78f0ac1",
+      "group_id": "pd-196d5fd2d8",
+      "source": "planted",
+      "criterion": {
+        "id": "c-87c8a78f0ac1",
+        "text": "On /echo, typing x into the User field shows Hello, x."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-196d5fd2d8"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-196d5fd2d8.9128274ed355",
+      "group_id": "pd-196d5fd2d8",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9128274ed355",
+        "text": "On /echo, pressing the 1 key makes the order line end with last key 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-196d5fd2d8"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-196d5fd2d8.ea8a9d433ee3",
+      "group_id": "pd-196d5fd2d8",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ea8a9d433ee3",
+        "text": "On /echo, pressing Enter makes the order line end with last key Enter."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-196d5fd2d8"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-424e742e0b.1cb37fc9b4fd",
+      "group_id": "pd-424e742e0b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1cb37fc9b4fd",
+        "text": "Opening /silent-cookie shows Session: signed in once the page has loaded."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-424e742e0b"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-424e742e0b.3d9da8da4075",
+      "group_id": "pd-424e742e0b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3d9da8da4075",
+        "text": "GET /silent-cookie sets the cookie selvedge_secret marked HttpOnly."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-424e742e0b"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-424e742e0b.72a57ec33ddb",
+      "group_id": "pd-424e742e0b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-72a57ec33ddb",
+        "text": "Reloading /silent-cookie still shows Session: signed in."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-424e742e0b"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-424e742e0b.af98112bd133",
+      "group_id": "pd-424e742e0b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-af98112bd133",
+        "text": "GET /api/whoami with no Authorization header answers anonymous."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-424e742e0b"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-424e742e0b.e8554d4e0142",
+      "group_id": "pd-424e742e0b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-e8554d4e0142",
+        "text": "GET /api/whoami sent with the same Authorization header the /silent-cookie page sends answers signed in."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-424e742e0b"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-4b855a0035.25bb2060cf6a",
+      "group_id": "pd-4b855a0035",
+      "source": "planted",
+      "criterion": {
+        "id": "c-25bb2060cf6a",
+        "text": "On /controls, clicking Add one once makes Count read 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4b855a0035"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-4b855a0035.3537e9ac3678",
+      "group_id": "pd-4b855a0035",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3537e9ac3678",
+        "text": "On /controls, clicking Add one three times makes Count read 3."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4b855a0035"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-4b855a0035.67a70139ab62",
+      "group_id": "pd-4b855a0035",
+      "source": "planted",
+      "criterion": {
+        "id": "c-67a70139ab62",
+        "text": "On /controls, every click on Add one raises Count by exactly one."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4b855a0035"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-4b855a0035.98e0c446cbcf",
+      "group_id": "pd-4b855a0035",
+      "source": "planted",
+      "criterion": {
+        "id": "c-98e0c446cbcf",
+        "text": "On /controls, clicking Do nothing leaves Count at 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4b855a0035"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-4b855a0035.9920c9ce6cc9",
+      "group_id": "pd-4b855a0035",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9920c9ce6cc9",
+        "text": "On first loading /controls, Count reads 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4b855a0035"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-52435f0eae.02e3813cfd6c",
+      "group_id": "pd-52435f0eae",
+      "source": "planted",
+      "criterion": {
+        "id": "c-02e3813cfd6c",
+        "text": "After signing in and then requesting /control/expire-sessions, GET /account with the old session cookie redirects to /login."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-52435f0eae"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-52435f0eae.72a731ada093",
+      "group_id": "pd-52435f0eae",
+      "source": "planted",
+      "criterion": {
+        "id": "c-72a731ada093",
+        "text": "After /control/expire-sessions, signing in again on /login shows the Account page."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-52435f0eae"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-52435f0eae.866c8a50d087",
+      "group_id": "pd-52435f0eae",
+      "source": "planted",
+      "criterion": {
+        "id": "c-866c8a50d087",
+        "text": "After /control/expire-sessions, reloading /account in a signed-in browser shows the sign-in page."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-52435f0eae"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-52435f0eae.ae64eb7a7224",
+      "group_id": "pd-52435f0eae",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ae64eb7a7224",
+        "text": "GET /control/expire-sessions answers 200 with the text ok."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-52435f0eae"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-52435f0eae.fa5e9597e64b",
+      "group_id": "pd-52435f0eae",
+      "source": "planted",
+      "criterion": {
+        "id": "c-fa5e9597e64b",
+        "text": "After /control/expire-sessions, a session cookie issued before it no longer opens the Account page, while signing in again does."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-52435f0eae"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-9e92566e3e.144f20ee058d",
+      "group_id": "pd-9e92566e3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-144f20ee058d",
+        "text": "POST /api/login with {\"email\": \"a@example.com\", \"password\": \"pw\"} answers 200 with user.email a@example.com."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-9e92566e3e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-9e92566e3e.783f688e7b62",
+      "group_id": "pd-9e92566e3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-783f688e7b62",
+        "text": "POST /api/login with an email but an empty password answers 400."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-9e92566e3e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-9e92566e3e.7980415d455f",
+      "group_id": "pd-9e92566e3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7980415d455f",
+        "text": "POST /api/login with a body that is not JSON answers 400."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-9e92566e3e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-9e92566e3e.9196e76bdf37",
+      "group_id": "pd-9e92566e3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9196e76bdf37",
+        "text": "POST /api/login with an empty JSON object answers 400."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-9e92566e3e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-9e92566e3e.c6a20dfc3818",
+      "group_id": "pd-9e92566e3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c6a20dfc3818",
+        "text": "POST /api/login with an empty JSON object replies with JSON {\"error\": \"email and password are required\"}."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-9e92566e3e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-a8eb303fc2.25bb2060cf6a",
+      "group_id": "pd-a8eb303fc2",
+      "source": "planted",
+      "criterion": {
+        "id": "c-25bb2060cf6a",
+        "text": "On /controls, clicking Add one once makes Count read 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a8eb303fc2"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-a8eb303fc2.2790d1943880",
+      "group_id": "pd-a8eb303fc2",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2790d1943880",
+        "text": "Pressing Tab repeatedly from the top of /controls never focuses a Hidden action button."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a8eb303fc2"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-a8eb303fc2.98e0c446cbcf",
+      "group_id": "pd-a8eb303fc2",
+      "source": "planted",
+      "criterion": {
+        "id": "c-98e0c446cbcf",
+        "text": "On /controls, clicking Do nothing leaves Count at 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a8eb303fc2"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-a8eb303fc2.de9f32cb3848",
+      "group_id": "pd-a8eb303fc2",
+      "source": "planted",
+      "criterion": {
+        "id": "c-de9f32cb3848",
+        "text": "/controls shows no Hidden action button."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a8eb303fc2"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-a8eb303fc2.ec378e8d2806",
+      "group_id": "pd-a8eb303fc2",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ec378e8d2806",
+        "text": "A screen reader finds no button named Hidden action on /controls."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a8eb303fc2"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-cd2ce8ba3e.56500196865e",
+      "group_id": "pd-cd2ce8ba3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-56500196865e",
+        "text": "On /echo, typing Ann into User and then pressing Tab shows Hello, Ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-cd2ce8ba3e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-cd2ce8ba3e.d4f77f53bffe",
+      "group_id": "pd-cd2ce8ba3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d4f77f53bffe",
+        "text": "On /echo, clicking Reset after typing Ann empties User and shows Hello, nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-cd2ce8ba3e"
+      },
+      "answer": "PASS"
+    },
+    {
+      "case_id": "pd-cd2ce8ba3e.e38bbb0193e9",
+      "group_id": "pd-cd2ce8ba3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-e38bbb0193e9",
+        "text": "On /echo, typing Ann into User (without leaving the field) shows Reversed: nnA."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-cd2ce8ba3e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-cd2ce8ba3e.e41841e22039",
+      "group_id": "pd-cd2ce8ba3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-e41841e22039",
+        "text": "On /echo, the greeting updates after each character: after typing just the letter a into User it reads Hello, a."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-cd2ce8ba3e"
+      },
+      "answer": "FAIL"
+    },
+    {
+      "case_id": "pd-cd2ce8ba3e.fe5cc6b901a6",
+      "group_id": "pd-cd2ce8ba3e",
+      "source": "planted",
+      "criterion": {
+        "id": "c-fe5cc6b901a6",
+        "text": "On /echo, typing Ann into User shows Hello, Ann while the cursor is still in the field."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-cd2ce8ba3e"
+      },
+      "answer": "FAIL"
+    },
+    {
       "case_id": "sm-pr-286-bug-fix",
       "group_id": "sm-pr-286",
       "source": "real-bug",

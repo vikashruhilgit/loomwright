@@ -2,6 +2,1423 @@
   "schema_version": 1,
   "cases": [
     {
+      "case_id": "pd-1b2e57db28.1b4e96ec5d1e",
+      "group_id": "pd-1b2e57db28",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1b4e96ec5d1e",
+        "text": "GET /account with no cookie answers 302 with Location /login."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1b2e57db28"
+      }
+    },
+    {
+      "case_id": "pd-1b2e57db28.1f553917f400",
+      "group_id": "pd-1b2e57db28",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1f553917f400",
+        "text": "Signing in on /login with User ann and Password pw lands on a page headed Account."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1b2e57db28"
+      }
+    },
+    {
+      "case_id": "pd-1b2e57db28.99e0e53fa783",
+      "group_id": "pd-1b2e57db28",
+      "source": "planted",
+      "criterion": {
+        "id": "c-99e0e53fa783",
+        "text": "POST /login with user=ann and pass=pw answers 303 with Location /account."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1b2e57db28"
+      }
+    },
+    {
+      "case_id": "pd-1b2e57db28.c00b5ae4c6be",
+      "group_id": "pd-1b2e57db28",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c00b5ae4c6be",
+        "text": "The selvedge_session cookie set by a successful POST /login has Path=/."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1b2e57db28"
+      }
+    },
+    {
+      "case_id": "pd-1b2e57db28.d3a8ddbf3d12",
+      "group_id": "pd-1b2e57db28",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d3a8ddbf3d12",
+        "text": "After signing in on /login as ann, the page reads Signed in as ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1b2e57db28"
+      }
+    },
+    {
+      "case_id": "pd-1b2e57db28.f52c414a1d3e",
+      "group_id": "pd-1b2e57db28",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f52c414a1d3e",
+        "text": "After signing in on /login, opening /account again shows the Account page rather than the sign-in form."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-1b2e57db28"
+      }
+    },
+    {
+      "case_id": "pd-26ec0979c4.4cea99b74641",
+      "group_id": "pd-26ec0979c4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-4cea99b74641",
+        "text": "After POST /api/login with valid credentials, GET /api/forecast with the returned cookie answers 200."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-26ec0979c4"
+      }
+    },
+    {
+      "case_id": "pd-26ec0979c4.7d0f7e02e511",
+      "group_id": "pd-26ec0979c4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7d0f7e02e511",
+        "text": "GET /api/forecast without a cookie answers 401."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-26ec0979c4"
+      }
+    },
+    {
+      "case_id": "pd-26ec0979c4.9005c241b632",
+      "group_id": "pd-26ec0979c4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9005c241b632",
+        "text": "GET /api/forecast without a cookie replies with JSON {\"error\": \"unauthorized\"}."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-26ec0979c4"
+      }
+    },
+    {
+      "case_id": "pd-26ec0979c4.db90a28a2c7a",
+      "group_id": "pd-26ec0979c4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-db90a28a2c7a",
+        "text": "After a successful /api/login, GET /api/forecast with a different, invented selvedge_api value answers 401."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-26ec0979c4"
+      }
+    },
+    {
+      "case_id": "pd-26ec0979c4.f68aca4147c9",
+      "group_id": "pd-26ec0979c4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f68aca4147c9",
+        "text": "GET /api/forecast with a made-up selvedge_api cookie answers 401."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-26ec0979c4"
+      }
+    },
+    {
+      "case_id": "pd-31308bbcb7.3aa6345a3e33",
+      "group_id": "pd-31308bbcb7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3aa6345a3e33",
+        "text": "POST /login with an empty user and empty pass answers 401."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-31308bbcb7"
+      }
+    },
+    {
+      "case_id": "pd-31308bbcb7.629802a4857a",
+      "group_id": "pd-31308bbcb7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-629802a4857a",
+        "text": "Two GET /account requests with the same session cookie both answer 200."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-31308bbcb7"
+      }
+    },
+    {
+      "case_id": "pd-31308bbcb7.6a056d43dab8",
+      "group_id": "pd-31308bbcb7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-6a056d43dab8",
+        "text": "After signing in and viewing /account, opening / and then /account again does not send the user to /login."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-31308bbcb7"
+      }
+    },
+    {
+      "case_id": "pd-31308bbcb7.d3cd06a78cb7",
+      "group_id": "pd-31308bbcb7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d3cd06a78cb7",
+        "text": "After signing in on /login as ann, reloading /account still shows Signed in as ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-31308bbcb7"
+      }
+    },
+    {
+      "case_id": "pd-31308bbcb7.d8e0eb9d7cad",
+      "group_id": "pd-31308bbcb7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d8e0eb9d7cad",
+        "text": "Signing in on /login as ann lands on a page headed Account that reads Signed in as ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-31308bbcb7"
+      }
+    },
+    {
+      "case_id": "pd-34f0647cc7.1f83556f84e6",
+      "group_id": "pd-34f0647cc7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1f83556f84e6",
+        "text": "On /slow, two seconds after clicking Load price the Price reads 42."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-34f0647cc7"
+      }
+    },
+    {
+      "case_id": "pd-34f0647cc7.7a91b72e9a22",
+      "group_id": "pd-34f0647cc7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7a91b72e9a22",
+        "text": "On /slow, half a second after clicking Load price the Price still reads pending."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-34f0647cc7"
+      }
+    },
+    {
+      "case_id": "pd-34f0647cc7.a32a41ebf7b1",
+      "group_id": "pd-34f0647cc7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-a32a41ebf7b1",
+        "text": "On /slow, before Load price is clicked, the Price reads pending."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-34f0647cc7"
+      }
+    },
+    {
+      "case_id": "pd-34f0647cc7.ae2c7fa9ca00",
+      "group_id": "pd-34f0647cc7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ae2c7fa9ca00",
+        "text": "On /slow, clicking Load price makes the Price read 42 within 3 seconds."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-34f0647cc7"
+      }
+    },
+    {
+      "case_id": "pd-34f0647cc7.d9fdd6c81209",
+      "group_id": "pd-34f0647cc7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d9fdd6c81209",
+        "text": "On /slow, clicking Load price and waiting 3 seconds leaves a numeric Price on the page."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-34f0647cc7"
+      }
+    },
+    {
+      "case_id": "pd-34f0647cc7.f08e2447d5e0",
+      "group_id": "pd-34f0647cc7",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f08e2447d5e0",
+        "text": "GET /api/price answers 200 with the text 42."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-34f0647cc7"
+      }
+    },
+    {
+      "case_id": "pd-416d758dc5.048808ccd5a6",
+      "group_id": "pd-416d758dc5",
+      "source": "planted",
+      "criterion": {
+        "id": "c-048808ccd5a6",
+        "text": "On /echo, choosing Size L leaves the order line reading gift wrap no."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-416d758dc5"
+      }
+    },
+    {
+      "case_id": "pd-416d758dc5.2142ca370529",
+      "group_id": "pd-416d758dc5",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2142ca370529",
+        "text": "On /echo, ticking Gift wrap and then unticking it makes the order line say gift wrap no."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-416d758dc5"
+      }
+    },
+    {
+      "case_id": "pd-416d758dc5.3c6f4992fd79",
+      "group_id": "pd-416d758dc5",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3c6f4992fd79",
+        "text": "On /echo, choosing Size M with Gift wrap unticked makes the order line read size M, gift wrap no."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-416d758dc5"
+      }
+    },
+    {
+      "case_id": "pd-416d758dc5.7c56689e1d2c",
+      "group_id": "pd-416d758dc5",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7c56689e1d2c",
+        "text": "On /echo, ticking Gift wrap makes the order line read size S, gift wrap yes, last key none."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-416d758dc5"
+      }
+    },
+    {
+      "case_id": "pd-416d758dc5.cec47dab44eb",
+      "group_id": "pd-416d758dc5",
+      "source": "planted",
+      "criterion": {
+        "id": "c-cec47dab44eb",
+        "text": "On first loading /echo, the order line reads size S, gift wrap no, last key none."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-416d758dc5"
+      }
+    },
+    {
+      "case_id": "pd-4c61b1d7f9.1b4e96ec5d1e",
+      "group_id": "pd-4c61b1d7f9",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1b4e96ec5d1e",
+        "text": "GET /account with no cookie answers 302 with Location /login."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4c61b1d7f9"
+      }
+    },
+    {
+      "case_id": "pd-4c61b1d7f9.27dc88b12384",
+      "group_id": "pd-4c61b1d7f9",
+      "source": "planted",
+      "criterion": {
+        "id": "c-27dc88b12384",
+        "text": "With ann (password annpw) signed in first and bob (password bobpw) second, GET /account with ann's session cookie shows Your password is annpw."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4c61b1d7f9"
+      }
+    },
+    {
+      "case_id": "pd-4c61b1d7f9.d4cb325497c3",
+      "group_id": "pd-4c61b1d7f9",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d4cb325497c3",
+        "text": "When ann signs in and then bob signs in from a second browser, ann's /account still reads Signed in as ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4c61b1d7f9"
+      }
+    },
+    {
+      "case_id": "pd-4c61b1d7f9.dd7520a1ca92",
+      "group_id": "pd-4c61b1d7f9",
+      "source": "planted",
+      "criterion": {
+        "id": "c-dd7520a1ca92",
+        "text": "Two users signed in at the same time each see their own name on /account."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4c61b1d7f9"
+      }
+    },
+    {
+      "case_id": "pd-4c61b1d7f9.e8b13ba3dddf",
+      "group_id": "pd-4c61b1d7f9",
+      "source": "planted",
+      "criterion": {
+        "id": "c-e8b13ba3dddf",
+        "text": "After signing in on /login as ann with password pw, the Account page reads Signed in as ann and Your password is pw."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-4c61b1d7f9"
+      }
+    },
+    {
+      "case_id": "pd-5394083454.18de31dfa1ba",
+      "group_id": "pd-5394083454",
+      "source": "planted",
+      "criterion": {
+        "id": "c-18de31dfa1ba",
+        "text": "On a freshly started app, one GET /account without a cookie makes /control/hits?path=/account answer 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-5394083454"
+      }
+    },
+    {
+      "case_id": "pd-5394083454.3184d024d5f9",
+      "group_id": "pd-5394083454",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3184d024d5f9",
+        "text": "One signed-in and one signed-out request to /account make /control/hits?path=/account answer 2."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-5394083454"
+      }
+    },
+    {
+      "case_id": "pd-5394083454.7bfa7ba71f89",
+      "group_id": "pd-5394083454",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7bfa7ba71f89",
+        "text": "After POST /login as ann and one GET /account with the session cookie, /control/hits?path=/account answers 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-5394083454"
+      }
+    },
+    {
+      "case_id": "pd-5394083454.a6303b87c0e6",
+      "group_id": "pd-5394083454",
+      "source": "planted",
+      "criterion": {
+        "id": "c-a6303b87c0e6",
+        "text": "On a freshly started app, /control/hits?path=/account answers 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-5394083454"
+      }
+    },
+    {
+      "case_id": "pd-5394083454.bac36cd18ce0",
+      "group_id": "pd-5394083454",
+      "source": "planted",
+      "criterion": {
+        "id": "c-bac36cd18ce0",
+        "text": "After three GET /account requests without a cookie, /control/hits?path=/account answers 3."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-5394083454"
+      }
+    },
+    {
+      "case_id": "pd-73164cfd01.18212d933cf0",
+      "group_id": "pd-73164cfd01",
+      "source": "planted",
+      "criterion": {
+        "id": "c-18212d933cf0",
+        "text": "After POST /api/login with valid credentials, GET /api/forecast sending the returned selvedge_api cookie answers 200."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-73164cfd01"
+      }
+    },
+    {
+      "case_id": "pd-73164cfd01.325afb190bb1",
+      "group_id": "pd-73164cfd01",
+      "source": "planted",
+      "criterion": {
+        "id": "c-325afb190bb1",
+        "text": "POST /api/login with valid credentials answers 200 and sets an HttpOnly selvedge_api cookie."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-73164cfd01"
+      }
+    },
+    {
+      "case_id": "pd-73164cfd01.8318c01b81d1",
+      "group_id": "pd-73164cfd01",
+      "source": "planted",
+      "criterion": {
+        "id": "c-8318c01b81d1",
+        "text": "GET /api/forecast without a cookie answers 401 with JSON {\"error\": \"unauthorized\"}."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-73164cfd01"
+      }
+    },
+    {
+      "case_id": "pd-73164cfd01.b86dfb473308",
+      "group_id": "pd-73164cfd01",
+      "source": "planted",
+      "criterion": {
+        "id": "c-b86dfb473308",
+        "text": "A client that signs in through /api/login and keeps its cookies gets a forecast with two days, mon and tue."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-73164cfd01"
+      }
+    },
+    {
+      "case_id": "pd-73164cfd01.ba2dfba64143",
+      "group_id": "pd-73164cfd01",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ba2dfba64143",
+        "text": "After signing in through /api/login, the /api/forecast reply lists mon with a high of 21."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-73164cfd01"
+      }
+    },
+    {
+      "case_id": "pd-7b1fe3102b.124e7e9667b3",
+      "group_id": "pd-7b1fe3102b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-124e7e9667b3",
+        "text": "GET / answers 200 with a page headed Plain page."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7b1fe3102b"
+      }
+    },
+    {
+      "case_id": "pd-7b1fe3102b.3637608111e1",
+      "group_id": "pd-7b1fe3102b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3637608111e1",
+        "text": "GET /Cart (capital C) answers 404."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7b1fe3102b"
+      }
+    },
+    {
+      "case_id": "pd-7b1fe3102b.3f2b26a0debc",
+      "group_id": "pd-7b1fe3102b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3f2b26a0debc",
+        "text": "GET /does-not-exist replies with the text not found: /does-not-exist."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7b1fe3102b"
+      }
+    },
+    {
+      "case_id": "pd-7b1fe3102b.853ca9a29ad0",
+      "group_id": "pd-7b1fe3102b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-853ca9a29ad0",
+        "text": "GET /api/nothing answers 404."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7b1fe3102b"
+      }
+    },
+    {
+      "case_id": "pd-7b1fe3102b.8c9ff5f4205b",
+      "group_id": "pd-7b1fe3102b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-8c9ff5f4205b",
+        "text": "GET /does-not-exist answers 404."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7b1fe3102b"
+      }
+    },
+    {
+      "case_id": "pd-7c5c68400c.28ff2499a921",
+      "group_id": "pd-7c5c68400c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-28ff2499a921",
+        "text": "Clicking Close in the cart on /cart hides the Cart dialog."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7c5c68400c"
+      }
+    },
+    {
+      "case_id": "pd-7c5c68400c.7f01ddf549a7",
+      "group_id": "pd-7c5c68400c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7f01ddf549a7",
+        "text": "In the cart on /cart, setting Quantity to 10 shows a Total of 60."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7c5c68400c"
+      }
+    },
+    {
+      "case_id": "pd-7c5c68400c.968c4d1c81ac",
+      "group_id": "pd-7c5c68400c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-968c4d1c81ac",
+        "text": "In the cart on /cart, setting Quantity to 3 shows a Total of 18."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7c5c68400c"
+      }
+    },
+    {
+      "case_id": "pd-7c5c68400c.9a07827344dc",
+      "group_id": "pd-7c5c68400c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9a07827344dc",
+        "text": "In the cart on /cart, setting Quantity to 2 shows a Total of 12."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7c5c68400c"
+      }
+    },
+    {
+      "case_id": "pd-7c5c68400c.bb1cfd18bb9a",
+      "group_id": "pd-7c5c68400c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-bb1cfd18bb9a",
+        "text": "When the cart on /cart is first opened, Quantity is 1 and the Total reads 6."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-7c5c68400c"
+      }
+    },
+    {
+      "case_id": "pd-875d42831a.04fb6e4f744a",
+      "group_id": "pd-875d42831a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-04fb6e4f744a",
+        "text": "On /controls, clicking Do nothing changes nothing on the page."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-875d42831a"
+      }
+    },
+    {
+      "case_id": "pd-875d42831a.25bb2060cf6a",
+      "group_id": "pd-875d42831a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-25bb2060cf6a",
+        "text": "On /controls, clicking Add one once makes Count read 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-875d42831a"
+      }
+    },
+    {
+      "case_id": "pd-875d42831a.3797ffe25eb0",
+      "group_id": "pd-875d42831a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-3797ffe25eb0",
+        "text": "On /controls, clicking Add one twice makes Count read 2."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-875d42831a"
+      }
+    },
+    {
+      "case_id": "pd-875d42831a.98e0c446cbcf",
+      "group_id": "pd-875d42831a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-98e0c446cbcf",
+        "text": "On /controls, clicking Do nothing leaves Count at 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-875d42831a"
+      }
+    },
+    {
+      "case_id": "pd-875d42831a.e196fd25914f",
+      "group_id": "pd-875d42831a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-e196fd25914f",
+        "text": "On /controls, clicking Do nothing twice and then Add one once makes Count read 1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-875d42831a"
+      }
+    },
+    {
+      "case_id": "pd-902cdd9072.13ec003887b5",
+      "group_id": "pd-902cdd9072",
+      "source": "planted",
+      "criterion": {
+        "id": "c-13ec003887b5",
+        "text": "POST /login with user=ann and an empty pass answers 401."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-902cdd9072"
+      }
+    },
+    {
+      "case_id": "pd-902cdd9072.99e0e53fa783",
+      "group_id": "pd-902cdd9072",
+      "source": "planted",
+      "criterion": {
+        "id": "c-99e0e53fa783",
+        "text": "POST /login with user=ann and pass=pw answers 303 with Location /account."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-902cdd9072"
+      }
+    },
+    {
+      "case_id": "pd-902cdd9072.b7c79e3a92e6",
+      "group_id": "pd-902cdd9072",
+      "source": "planted",
+      "criterion": {
+        "id": "c-b7c79e3a92e6",
+        "text": "Submitting the sign-in form on /login with a User but no Password shows the sign-in form again."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-902cdd9072"
+      }
+    },
+    {
+      "case_id": "pd-902cdd9072.ceb36ac875ac",
+      "group_id": "pd-902cdd9072",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ceb36ac875ac",
+        "text": "POST /login with an empty user and pass=pw answers 401."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-902cdd9072"
+      }
+    },
+    {
+      "case_id": "pd-902cdd9072.f4732eb4471d",
+      "group_id": "pd-902cdd9072",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f4732eb4471d",
+        "text": "POST /login with user=ann and an empty pass sets no selvedge_session cookie."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-902cdd9072"
+      }
+    },
+    {
+      "case_id": "pd-a5088fe63c.01c2ce144349",
+      "group_id": "pd-a5088fe63c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-01c2ce144349",
+        "text": "In the cart on /cart, clearing the Quantity field shows a Total of 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a5088fe63c"
+      }
+    },
+    {
+      "case_id": "pd-a5088fe63c.4fa6eb10da8a",
+      "group_id": "pd-a5088fe63c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-4fa6eb10da8a",
+        "text": "In the cart on /cart, setting Quantity to 0 shows a Total of 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a5088fe63c"
+      }
+    },
+    {
+      "case_id": "pd-a5088fe63c.5952d55ee686",
+      "group_id": "pd-a5088fe63c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-5952d55ee686",
+        "text": "Before Open cart is clicked, /cart shows no Cart dialog."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a5088fe63c"
+      }
+    },
+    {
+      "case_id": "pd-a5088fe63c.9d5c63344f03",
+      "group_id": "pd-a5088fe63c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9d5c63344f03",
+        "text": "In the cart on /cart, setting Quantity to 4 shows a Total of 24."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a5088fe63c"
+      }
+    },
+    {
+      "case_id": "pd-a5088fe63c.fdb9003cfb56",
+      "group_id": "pd-a5088fe63c",
+      "source": "planted",
+      "criterion": {
+        "id": "c-fdb9003cfb56",
+        "text": "In the cart on /cart, changing Quantity from 4 to 0 changes the Total from 24 to 0."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-a5088fe63c"
+      }
+    },
+    {
+      "case_id": "pd-ae3bf1bedc.0bc37c14fee9",
+      "group_id": "pd-ae3bf1bedc",
+      "source": "planted",
+      "criterion": {
+        "id": "c-0bc37c14fee9",
+        "text": "A request to /control/cart-label with no name answers 200 with the text ok."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ae3bf1bedc"
+      }
+    },
+    {
+      "case_id": "pd-ae3bf1bedc.47acc5fbb8ab",
+      "group_id": "pd-ae3bf1bedc",
+      "source": "planted",
+      "criterion": {
+        "id": "c-47acc5fbb8ab",
+        "text": "After /control/cart-label?name=Checkout and then /control/cart-label with no name, the button on /cart has the accessible name Open cart."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ae3bf1bedc"
+      }
+    },
+    {
+      "case_id": "pd-ae3bf1bedc.54b47a052d81",
+      "group_id": "pd-ae3bf1bedc",
+      "source": "planted",
+      "criterion": {
+        "id": "c-54b47a052d81",
+        "text": "After /control/cart-label?name=Basket and then /control/cart-label?name= (empty), the /cart button's accessible name is its visible text, Open cart."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ae3bf1bedc"
+      }
+    },
+    {
+      "case_id": "pd-ae3bf1bedc.c1f7ab545488",
+      "group_id": "pd-ae3bf1bedc",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c1f7ab545488",
+        "text": "After /control/cart-label?name=Checkout, the button on /cart has the accessible name Checkout while its visible text still reads Open cart."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ae3bf1bedc"
+      }
+    },
+    {
+      "case_id": "pd-ae3bf1bedc.c4463e709e24",
+      "group_id": "pd-ae3bf1bedc",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c4463e709e24",
+        "text": "After /control/cart-label?name=Checkout and then /control/cart-label with no name, no button on /cart is named Checkout."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ae3bf1bedc"
+      }
+    },
+    {
+      "case_id": "pd-b4fe27801b.1d34b9224a8a",
+      "group_id": "pd-b4fe27801b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1d34b9224a8a",
+        "text": "After clicking Close in the cart on /cart, no Total is shown on the page."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-b4fe27801b"
+      }
+    },
+    {
+      "case_id": "pd-b4fe27801b.28ff2499a921",
+      "group_id": "pd-b4fe27801b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-28ff2499a921",
+        "text": "Clicking Close in the cart on /cart hides the Cart dialog."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-b4fe27801b"
+      }
+    },
+    {
+      "case_id": "pd-b4fe27801b.7299170d1e9d",
+      "group_id": "pd-b4fe27801b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7299170d1e9d",
+        "text": "Clicking Open cart on /cart shows a dialog named Cart."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-b4fe27801b"
+      }
+    },
+    {
+      "case_id": "pd-b4fe27801b.968c4d1c81ac",
+      "group_id": "pd-b4fe27801b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-968c4d1c81ac",
+        "text": "In the cart on /cart, setting Quantity to 3 shows a Total of 18."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-b4fe27801b"
+      }
+    },
+    {
+      "case_id": "pd-b4fe27801b.d77ec3164385",
+      "group_id": "pd-b4fe27801b",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d77ec3164385",
+        "text": "After the cart on /cart is closed with its Close button, the Quantity field is no longer visible."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-b4fe27801b"
+      }
+    },
+    {
+      "case_id": "pd-c32454b4d0.2b553addab75",
+      "group_id": "pd-c32454b4d0",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2b553addab75",
+        "text": "On /echo, typing Ann into User and clicking Reset shows the greeting Hello, nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c32454b4d0"
+      }
+    },
+    {
+      "case_id": "pd-c32454b4d0.49cd752a6eaf",
+      "group_id": "pd-c32454b4d0",
+      "source": "planted",
+      "criterion": {
+        "id": "c-49cd752a6eaf",
+        "text": "On /echo, typing Ann into User and then deleting it shows the greeting Hello, nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c32454b4d0"
+      }
+    },
+    {
+      "case_id": "pd-c32454b4d0.95783ae1ee47",
+      "group_id": "pd-c32454b4d0",
+      "source": "planted",
+      "criterion": {
+        "id": "c-95783ae1ee47",
+        "text": "On first loading /echo, the greeting reads Hello, nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c32454b4d0"
+      }
+    },
+    {
+      "case_id": "pd-c32454b4d0.b57f42161e00",
+      "group_id": "pd-c32454b4d0",
+      "source": "planted",
+      "criterion": {
+        "id": "c-b57f42161e00",
+        "text": "On /echo, after typing into User and then clearing it, the greeting and the reversed line read Hello, nobody and Reversed: nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c32454b4d0"
+      }
+    },
+    {
+      "case_id": "pd-c32454b4d0.c6d2aae4c515",
+      "group_id": "pd-c32454b4d0",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c6d2aae4c515",
+        "text": "On /echo, typing Ann into User shows Hello, Ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c32454b4d0"
+      }
+    },
+    {
+      "case_id": "pd-c32454b4d0.d57ebdee1882",
+      "group_id": "pd-c32454b4d0",
+      "source": "planted",
+      "criterion": {
+        "id": "c-d57ebdee1882",
+        "text": "On /echo, typing Ann into User and clicking Reset shows Reversed: nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c32454b4d0"
+      }
+    },
+    {
+      "case_id": "pd-c492857eba.09364180f977",
+      "group_id": "pd-c492857eba",
+      "source": "planted",
+      "criterion": {
+        "id": "c-09364180f977",
+        "text": "After /control/cart-label?name=Checkout, two separate visits to /cart both show a button with the accessible name Checkout."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c492857eba"
+      }
+    },
+    {
+      "case_id": "pd-c492857eba.4f1f6ee07a05",
+      "group_id": "pd-c492857eba",
+      "source": "planted",
+      "criterion": {
+        "id": "c-4f1f6ee07a05",
+        "text": "After /control/cart-label?name=Checkout, the first load of /cart shows a button with the accessible name Checkout."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c492857eba"
+      }
+    },
+    {
+      "case_id": "pd-c492857eba.672e6ece72f7",
+      "group_id": "pd-c492857eba",
+      "source": "planted",
+      "criterion": {
+        "id": "c-672e6ece72f7",
+        "text": "After /control/cart-label?name=Checkout, the /cart button still has the accessible name Checkout when /cart is loaded a second time."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c492857eba"
+      }
+    },
+    {
+      "case_id": "pd-c492857eba.9cf90c7dd183",
+      "group_id": "pd-c492857eba",
+      "source": "planted",
+      "criterion": {
+        "id": "c-9cf90c7dd183",
+        "text": "A request to /control/cart-label?name=Checkout answers 200 with the text ok."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c492857eba"
+      }
+    },
+    {
+      "case_id": "pd-c492857eba.c1d9b4b885a8",
+      "group_id": "pd-c492857eba",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c1d9b4b885a8",
+        "text": "After /control/cart-label?name=Checkout, reloading /cart three times leaves the button named Checkout."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-c492857eba"
+      }
+    },
+    {
+      "case_id": "pd-d563d4e3bf.5f84f618f695",
+      "group_id": "pd-d563d4e3bf",
+      "source": "planted",
+      "criterion": {
+        "id": "c-5f84f618f695",
+        "text": "POST /api/login with {\"email\": \"a@example.com\", \"password\": 12345} answers 400."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-d563d4e3bf"
+      }
+    },
+    {
+      "case_id": "pd-d563d4e3bf.67c580afdf8b",
+      "group_id": "pd-d563d4e3bf",
+      "source": "planted",
+      "criterion": {
+        "id": "c-67c580afdf8b",
+        "text": "POST /api/login with {\"email\": \"a@example.com\", \"password\": \"pw\"} answers 200 with \"echo\": \"pw\"."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-d563d4e3bf"
+      }
+    },
+    {
+      "case_id": "pd-d563d4e3bf.738ec48ce396",
+      "group_id": "pd-d563d4e3bf",
+      "source": "planted",
+      "criterion": {
+        "id": "c-738ec48ce396",
+        "text": "POST /api/login with {\"email\": [\"a@example.com\"], \"password\": \"pw\"} answers 400 and sets no cookie."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-d563d4e3bf"
+      }
+    },
+    {
+      "case_id": "pd-d563d4e3bf.aa80e7699b16",
+      "group_id": "pd-d563d4e3bf",
+      "source": "planted",
+      "criterion": {
+        "id": "c-aa80e7699b16",
+        "text": "POST /api/login with {\"email\": \"a@example.com\", \"password\": \"\"} answers 400."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-d563d4e3bf"
+      }
+    },
+    {
+      "case_id": "pd-d563d4e3bf.ea523c8f5107",
+      "group_id": "pd-d563d4e3bf",
+      "source": "planted",
+      "criterion": {
+        "id": "c-ea523c8f5107",
+        "text": "POST /api/login with {\"email\": true, \"password\": \"pw\"} answers 400."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-d563d4e3bf"
+      }
+    },
+    {
+      "case_id": "pd-ea49a018ac.0c04ddfb84bd",
+      "group_id": "pd-ea49a018ac",
+      "source": "planted",
+      "criterion": {
+        "id": "c-0c04ddfb84bd",
+        "text": "On /echo, typing <b>Ann</b> into User shows Reversed: >b/<nnA>b<."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ea49a018ac"
+      }
+    },
+    {
+      "case_id": "pd-ea49a018ac.1324cf191c66",
+      "group_id": "pd-ea49a018ac",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1324cf191c66",
+        "text": "On /echo, typing <b>Ann</b> into User shows the greeting Hello, <b>Ann</b> with the tags as literal text."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ea49a018ac"
+      }
+    },
+    {
+      "case_id": "pd-ea49a018ac.2d7109d6c7c4",
+      "group_id": "pd-ea49a018ac",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2d7109d6c7c4",
+        "text": "On /echo, typing a<b into User shows the greeting Hello, a<b."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ea49a018ac"
+      }
+    },
+    {
+      "case_id": "pd-ea49a018ac.c6d2aae4c515",
+      "group_id": "pd-ea49a018ac",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c6d2aae4c515",
+        "text": "On /echo, typing Ann into User shows Hello, Ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ea49a018ac"
+      }
+    },
+    {
+      "case_id": "pd-ea49a018ac.f435de0478af",
+      "group_id": "pd-ea49a018ac",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f435de0478af",
+        "text": "On /echo, typing <i>hi</i> into User shows the greeting Hello, <i>hi</i>, not an italic hi."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-ea49a018ac"
+      }
+    },
+    {
+      "case_id": "pd-eae14853d4.1195d3afeee2",
+      "group_id": "pd-eae14853d4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-1195d3afeee2",
+        "text": "In a browser, visiting /cookie?set=1 and then /cookie shows cookie: selvedge_fixture=seen."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-eae14853d4"
+      }
+    },
+    {
+      "case_id": "pd-eae14853d4.2816181aecf7",
+      "group_id": "pd-eae14853d4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-2816181aecf7",
+        "text": "GET /cookie?set=1 replies with a Set-Cookie header that sets selvedge_fixture=seen."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-eae14853d4"
+      }
+    },
+    {
+      "case_id": "pd-eae14853d4.30d3875d5d9f",
+      "group_id": "pd-eae14853d4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-30d3875d5d9f",
+        "text": "GET /cookie with the header \"Cookie: a=1\" shows cookie: a=1."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-eae14853d4"
+      }
+    },
+    {
+      "case_id": "pd-eae14853d4.31fc71eb7964",
+      "group_id": "pd-eae14853d4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-31fc71eb7964",
+        "text": "GET /cookie without ?set=1 sets no cookie."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-eae14853d4"
+      }
+    },
+    {
+      "case_id": "pd-eae14853d4.78ef4139bbca",
+      "group_id": "pd-eae14853d4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-78ef4139bbca",
+        "text": "In a fresh browser, reloading /cookie?set=1 shows cookie: selvedge_fixture=seen."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-eae14853d4"
+      }
+    },
+    {
+      "case_id": "pd-eae14853d4.df9cea1c5cf7",
+      "group_id": "pd-eae14853d4",
+      "source": "planted",
+      "criterion": {
+        "id": "c-df9cea1c5cf7",
+        "text": "GET /cookie with no Cookie header shows cookie: none."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-eae14853d4"
+      }
+    },
+    {
+      "case_id": "pd-f87e8f1c1a.7ca5895c0bd6",
+      "group_id": "pd-f87e8f1c1a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-7ca5895c0bd6",
+        "text": "On /echo, typing Ann into User and then clicking Reset makes the reversed line read Reversed: nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-f87e8f1c1a"
+      }
+    },
+    {
+      "case_id": "pd-f87e8f1c1a.c6d2aae4c515",
+      "group_id": "pd-f87e8f1c1a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-c6d2aae4c515",
+        "text": "On /echo, typing Ann into User shows Hello, Ann."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-f87e8f1c1a"
+      }
+    },
+    {
+      "case_id": "pd-f87e8f1c1a.e298209d9d11",
+      "group_id": "pd-f87e8f1c1a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-e298209d9d11",
+        "text": "On /echo, after typing Zed and clicking Reset, the greeting no longer mentions Zed."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-f87e8f1c1a"
+      }
+    },
+    {
+      "case_id": "pd-f87e8f1c1a.eef2fc436d43",
+      "group_id": "pd-f87e8f1c1a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-eef2fc436d43",
+        "text": "On /echo, typing Ann into User and then clicking Reset makes the greeting read Hello, nobody."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-f87e8f1c1a"
+      }
+    },
+    {
+      "case_id": "pd-f87e8f1c1a.f7339d3f7346",
+      "group_id": "pd-f87e8f1c1a",
+      "source": "planted",
+      "criterion": {
+        "id": "c-f7339d3f7346",
+        "text": "On /echo, clicking Reset empties the User field."
+      },
+      "target": {
+        "kind": "variant",
+        "path": "variants/pd-f87e8f1c1a"
+      }
+    },
+    {
       "case_id": "sm-pr-226-bug-fix",
       "group_id": "sm-pr-226",
       "source": "real-bug",
