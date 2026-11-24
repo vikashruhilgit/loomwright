@@ -255,6 +255,19 @@ validate "crit(c1).polarity = 'negative'; steps(c1).splice(1, 0, { type: 'read',
 validate "steps(c3).splice(0, 5, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'goto', url: 'http://localhost:4100/mail' }, { type: 'click', locator: { role: 'button', name: 'Save draft' } }, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'expect', op: 'changed_from', value: false });"
 [ "$rc" -eq 0 ] && ok "a negative that reads its baseline on another page, acts, then goes back and reads again is accepted (the prompt's cross-page shape)" || ko "cross-page negative: rc=$rc err='$err'"
 
+echo "-- at_load reads"
+AT_LOAD="crit(c1).steps = [{ type: 'goto', url: 'http://localhost:4100/slow' }, { type: 'read', property: 'text', locator: { testid: 'price' }, at_load: true }, { type: 'expect', op: 'equals', value: 'pending' }];"
+validate "$AT_LOAD"
+[ "$rc" -eq 0 ] && ok "a read at_load before any action, in a positive criterion, checked with equals, is accepted" || ko "at_load ok: rc=$rc err='$err'"
+validate "steps(c1)[3].at_load = true;"
+want_problem "a read at_load after an action (click, fill) is rejected at_load_misused" "$c1" at_load_misused
+validate "$AT_LOAD crit(c1).polarity = 'negative';"
+want_problem "a read at_load in a negative criterion is rejected at_load_misused" "$c1" at_load_misused
+validate "$AT_LOAD steps(c1).push({ type: 'read', property: 'text', locator: { testid: 'price' }, at_load: true }, { type: 'expect', op: 'changed_from', value: false });"
+want_problem "an at_load read checked with changed_from is rejected at_load_misused" "$c1" at_load_misused
+validate "$AT_LOAD steps(c1)[1].at_load = 'yes';"
+want_problem "at_load that is not a boolean is rejected plan_schema_violation" "$c1" plan_schema_violation
+
 echo "-- interpretation, polarity, assumptions, coverage, criteria_sha256 (AC13)"
 validate "delete crit(c1).interpretation;"
 want_problem "AC13 a planned criterion with no interpretation is rejected missing_interpretation" "$c1" missing_interpretation

@@ -542,12 +542,16 @@ Step types (no field beyond these is accepted):
   request whose method is not `GET` is an action (rule 1 and the negative baseline apply to it).
 - `read` — `property`: `text`, `value`, `checked`, `count`, `attribute:<name>` (each with a
   `locator`), or with no locator: `url`; `response_status` (a number), `response_text` (the body,
-  as text) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
+  as text, trimmed like `text`) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
   pointer into the parsed body, e.g. `response_json:/0/createdBy/name`: a string, number or
   boolean, or no value when the body is not JSON or the pointer names nothing, null, an object or
   an array) of the last `request` before it; or `cookie:<name>`, a fingerprint of that cookie
   (`sha256:` and 16 hex digits of its value's sha256, or no value when it is absent), never the
-  value.
+  value. Optional `at_load: true` judges the `expect` after it on the read as taken, with no stable
+  wait: the state right after the page loaded ("Price reads pending as /slow loads"). It is allowed
+  only before the criterion's first action, in a positive criterion, checked with `equals`,
+  `contains` or `matches` (`at_load_misused`); a value the page replaced before `goto` returned
+  is not seen.
 - `expect` — `op` and `value`, compared with the last read: `equals`, `contains`, `matches` (a
   regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
   from the previous read of the same locator and property, a negative criterion's baseline form).
@@ -588,6 +592,7 @@ Plan-lint problems (the codes after `plan_invalid:`):
 - `prefix_too_long` — a snapshot prefix has more than 15 steps.
 - `prefix_mutation_refused` — a snapshot prefix holds a `request` whose method is not `GET`.
 - `response_without_request` — a `read` of `response_status`, `response_text` or `response_json:…` with no `request` step before it in the criterion.
+- `at_load_misused` — a `read` with `at_load: true` after an action, in a negative criterion, or checked by an `expect` other than `equals`, `contains` or `matches`.
 - `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, `criterion_not_testable` without a rewrite, or `side_effect_not_observable` without a detail.
 - `plan_schema_violation` — the plan or a step is malformed: not JSON, a missing or wrongly typed value, an unknown `op`, `state` or `read` property.
 
@@ -679,11 +684,12 @@ replay_of}`. `entry` is `SELVEDGE_ENTRY` (`session` by default, or `ci` / `loomw
 nothing else decides a verdict: `run` calls the same derivation once its evidence is closed. Per
 criterion, the first match wins: no `criterion_end` line is BLOCKED `run_interrupted`; a
 `not_planned` end is NOT_VERIFIABLE with its reason; any other end but `completed` is BLOCKED with
-its reason; an empty judged read is NOT_VERIFIABLE `no_value_read` (even for `equals ""`); an
+its reason; an empty judged read is NOT_VERIFIABLE `no_value_read` (even for `equals ""`); a
+criterion with a `material: true` assumption is NOT_VERIFIABLE `material_assumption`, whether its
+`expect` matched or not (a guessed premise decides neither PASS nor FAIL); an
 `expect` that mismatched after the stable wait is FAIL, with `read_value` and `expected`; an
 `expect` that held on an empty read is NOT_VERIFIABLE `no_value_read` even when a later one held
-(reported on that pair); a match
-with a `material: true` assumption is NOT_VERIFIABLE `material_assumption`; else PASS. Every
+(reported on that pair); else PASS. Every
 `expect` in a criterion is a check: the judged one is the first that mismatched, else the last one,
 and the judged read is the read it checked, so an earlier failed check is never outweighed by a
 later one that held. Re-running
@@ -1005,7 +1011,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `side_effect_not_observable` | NOT_VERIFIABLE | the criterion names no effect a check can read, on any page the planner looked at or in any reply a `request` step can read (an email sent, a queued job no page or endpoint reports); it is not planned, and its detail names the pages and endpoints looked at |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
 | `no_value_read` | NOT_VERIFIABLE | the criterion's final `read` gave an empty value (`""` or none: a `response_json:` pointer that names nothing, a body that is not JSON, a `cookie:` that is absent), so nothing was verified, even when the `expect` would hold |
-| `material_assumption` | NOT_VERIFIABLE | the `expect` held, but the plan records an assumption marked `material: true` for the criterion; `verdict.json` carries its text |
+| `material_assumption` | NOT_VERIFIABLE | the plan records an assumption marked `material: true` for the criterion, so neither a held nor a mismatched `expect` is trusted; `verdict.json` carries its text |
 | `origins_empty` | config | `origins` is absent or empty; add the app you test, e.g. `http://localhost:3000` |
 | `origin_invalid` | config | an origin is not exactly `scheme://host[:port]` |
 | `remote_origin_without_allow_remote` | config | a non-local origin is listed without `"allow_remote": true` |

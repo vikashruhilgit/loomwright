@@ -17,7 +17,8 @@
 //                              one `read` step's value: text (innerText, trimmed), value
 //                              (inputValue), checked (boolean), count (number), url, or
 //                              attribute:<name> (string, or null when the attribute is absent);
-//                              response_status (number), response_text (string),
+//                              response_status (number), response_text (string, trimmed like
+//                              text: a body's trailing newline is not part of its value),
 //                              response_json:<pointer> (a scalar, or null) of state.reply;
 //                              cookie:<name> (cookieFingerprint, or null when there is no cookie)
 //   readEntry(step, value)     one read as expectMatches takes it: { key, value }, the key naming
@@ -237,7 +238,7 @@ export async function readValue(page, step, state = {}) {
     const reply = state && state.reply;
     if (!reply) throw new Error(`read ${p}: no request step has replied in this criterion`);
     if (p === 'response_status') return reply.status;
-    if (p === 'response_text') return reply.text;
+    if (p === 'response_text') return String(reply.text).trim();
     return responseJsonValue(reply.text, p.slice(RESPONSE_JSON_PREFIX.length));
   }
   const loc = locate(page, step.locator);

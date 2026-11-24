@@ -206,7 +206,8 @@ F1="$(folder anon "$R" '{"criteria":[
 {"text":"The anonymous forecast reply names the error \"unauthorized\"","steps":['"$REQ_GET"',{"type":"read","property":"response_json:/error"},{"type":"expect","op":"equals","value":"unauthorized"}]},
 {"text":"The anonymous forecast reply text contains \"unauthorized\"","steps":['"$REQ_GET"',{"type":"read","property":"response_text"},{"type":"expect","op":"contains","value":"unauthorized"}]},
 {"text":"The anonymous forecast reply has a field nope equal to \"x\"","steps":['"$REQ_GET"',{"type":"read","property":"response_json:/nope"},{"type":"expect","op":"equals","value":"x"}]},
-{"text":"The big reply holds exactly 64 KiB of text","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/big"},{"type":"read","property":"response_text"},{"type":"expect","op":"matches","value":"^x{65536}$"}]}]}')"
+{"text":"The big reply holds exactly 64 KiB of text","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/big"},{"type":"read","property":"response_text"},{"type":"expect","op":"matches","value":"^x{65536}$"}]},
+{"text":"GET /api/ok answers the text ok","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/ok"},{"type":"read","property":"response_text"},{"type":"expect","op":"equals","value":"ok"}]}]}')"
 [ -n "$F1" ] && ok "setup: the anonymous-reply plan freezes (the lint accepts request steps and reply reads)" || ko "setup: folder anon: $(cat "$TMP/o/freeze-anon.err" "$TMP/o/init-anon.err" 2>/dev/null)"
 run anon "$F1" "$PW"
 check "Acceptance 1: goto, request GET /api/forecast, read response_status, expect equals 401: PASS, derived from the status read (read_value 401)" \
@@ -217,6 +218,7 @@ check "the request step's evidence line records method, url, status 401 and no j
 check "response_json:/error reads \"unauthorized\" and response_text contains it: both PASS" 'vc(2).verdict === "PASS" && vc(2).read_value === "unauthorized" && vc(3).verdict === "PASS"'
 check "a pointer that names nothing reads no value: NOT_VERIFIABLE no_value_read, never PASS" 'vc(4).verdict === "NOT_VERIFIABLE" && vc(4).reason === "no_value_read"'
 check "a 70000-character reply is kept to the 64 KiB cap" 'vc(5).verdict === "PASS" && evOf(5).filter((x) => x.type === "read").every((x) => x.value.length === 65536)'
+check "response_text is trimmed like a text read: a body \"ok\\n\" equals \"ok\" (PASS, read_value \"ok\")" 'vc(6).verdict === "PASS" && vc(6).read_value === "ok"'
 
 LOGIN='{"type":"request","method":"POST","url":"$O/api/login","json":{"email":"ada@example.com","password":"{{PASS}}"}}'
 F2="$(folder signin "$R" '{"criteria":[

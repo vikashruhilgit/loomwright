@@ -174,7 +174,11 @@
             { "type": "string", "pattern": "^cookie:[A-Za-z0-9_.-]+$" }
           ]
         },
-        "locator": { "$ref": "#/$defs/locator" }
+        "locator": { "$ref": "#/$defs/locator" },
+        "at_load": {
+          "description": "true: the expect after this read is judged on this read as taken, with no stable wait (the state right after the page loaded). Only before the criterion's first action, in a positive criterion, checked with equals, contains or matches.",
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },

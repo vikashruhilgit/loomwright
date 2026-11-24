@@ -23,7 +23,7 @@ export const STEP_FIELDS = Object.freeze({
   press: Object.freeze({ required: Object.freeze(['key']), optional: Object.freeze(['locator']) }),
   wait_for: Object.freeze({ required: Object.freeze(['locator', 'state']), optional: Object.freeze([]) }),
   request: Object.freeze({ required: Object.freeze(['method', 'url']), optional: Object.freeze(['json']) }),
-  read: Object.freeze({ required: Object.freeze(['property']), optional: Object.freeze(['locator']) }),
+  read: Object.freeze({ required: Object.freeze(['property']), optional: Object.freeze(['locator', 'at_load']) }),
   expect: Object.freeze({ required: Object.freeze(['op', 'value']), optional: Object.freeze([]) }),
 });
 
@@ -248,6 +248,7 @@ function checkFieldValues(step, at, add) {
       } else if (!readTakesNoLocator(step.property) && !('locator' in step)) {
         add('plan_schema_violation', `${at}: read ${step.property} needs a locator`);
       }
+      if ('at_load' in step && typeof step.at_load !== 'boolean') add('plan_schema_violation', `${at}.at_load must be true or false`);
       break;
     case 'expect': {
       const { op, value } = step;

@@ -19,6 +19,9 @@
 //  - a read cookie:<name> is a fingerprint, never a value: an expect on it is changed_from only,
 //    against an earlier read of the same cookie (a baseline), so "a cookie exists" is "it changed
 //    from what it was before";
+//  - a read with `at_load: true` (judged without the stable wait) comes before the criterion's first
+//    action, in a positive criterion, and the expects that check it are equals, contains or matches
+//    (at_load_misused): it reads the page as it loaded, never a state an action is still producing;
 //  - every step passes validateSteps (plan-steps.mjs, the one step validator).
 //
 // Node >= 18, standard library only.
@@ -48,6 +51,7 @@ export const PLAN_PROBLEMS = Object.freeze([
   'prefix_too_long',
   'prefix_mutation_refused',
   'response_without_request',
+  'at_load_misused',
   'invalid_not_planned',
   'plan_schema_violation',
 ]);
@@ -162,10 +166,35 @@ function lintReplyReads(id, steps, add) {
   });
 }
 
+// The ops an at_load read may be checked with: each compares the value read, none a change.
+export const AT_LOAD_OPS = Object.freeze(['equals', 'contains', 'matches']);
+
+// The at_load rule (header): one problem per offending read or expect.
+function lintAtLoad(id, entry, steps, add) {
+  const firstAction = steps.findIndex((s) => isActionStep(s));
+  let atLoadRead = -1;
+  steps.forEach((s, i) => {
+    if (!isPlainObject(s)) return;
+    if (s.type === 'read') {
+      atLoadRead = s.at_load === true ? i : -1;
+      if (atLoadRead < 0) return;
+      if (firstAction >= 0 && firstAction < i) {
+        add(id, 'at_load_misused', `steps[${i}] read at_load comes after an action (steps[${firstAction}] ${steps[firstAction].type}); it reads the page as it loaded, so put it before any action, or drop at_load`);
+      }
+      if (entry.polarity === 'negative') {
+        add(id, 'at_load_misused', `steps[${i}] read at_load in a negative criterion: a negative check needs the stable wait (a side effect still landing would pass it); drop at_load`);
+      }
+    } else if (s.type === 'expect' && atLoadRead >= 0 && !AT_LOAD_OPS.includes(s.op)) {
+      add(id, 'at_load_misused', `steps[${i}] expect ${s.op} checks the at_load read steps[${atLoadRead}]; an at_load read is checked with ${AT_LOAD_OPS.join(', ')} only`);
+    }
+  });
+}
+
 function lintSteps(id, entry, add) {
   const steps = entry.steps;
   if (!Array.isArray(steps)) return;
   lintReplyReads(id, steps, add);
+  lintAtLoad(id, entry, steps, add);
   const n = steps.length;
   const last = n ? steps[n - 1] : null;
   const prev = n > 1 ? steps[n - 2] : null;

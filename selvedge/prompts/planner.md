@@ -89,7 +89,10 @@ Each step is an object with `type` and exactly these fields:
 - `read` — `property`: `text`, `value`, `checked`, `count` or `attribute:<name>` (each with a
   `locator`), or, with no locator: `url`; `response_status`, `response_text` or
   `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`) of the
-  last `request` before it; `cookie:<name>` (a fingerprint of that cookie, never its value)
+  last `request` before it; `cookie:<name>` (a fingerprint of that cookie, never its value).
+  Optional `at_load: true` checks the page as it loaded, without waiting for it to settle, for a
+  criterion about the first state ("right after /slow loads, Price reads pending"): only before
+  any action, in a positive criterion, checked with `equals`, `contains` or `matches`
 - `expect` — `op` and `value`, compared with the last `read`: `equals`, `contains`, `matches` (a
   regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
   from the previous read of the same locator and property)
@@ -171,5 +174,7 @@ the sign-in `request`, read `cookie:session` again, `expect changed_from true`.
 4. **State what you assumed.** `interpretation` is one sentence; `unverified_assumptions` lists,
    as `{"text", "material"}`, what you took for granted and could not confirm (`material: true`
    when the verdict would change if it were wrong). An empty list is allowed when there is none.
+   A criterion with a `material: true` assumption is NOT_VERIFIABLE whatever its read shows, so
+   confirm the assumption while planning (a snapshot, a `GET` reply) and drop it when you can.
 5. If the snapshot budget ran out before you could find a criterion's controls, list it under
    `not_planned` with `exploration_budget` rather than guessing locators.
