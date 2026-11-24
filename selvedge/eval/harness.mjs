@@ -248,9 +248,10 @@ function checkedCases(repo, set, outside) {
   return raw.map((c) => ({
     case_id: c.case_id,
     group_id: c.group_id,
+    source: c.source,
     criterion: c.criterion,
     target: c.target,
-    app: c.target.kind === 'commit' ? c.target.repo : 'sample-app',
+    app: c.target.kind === 'commit' ? c.target.repo : 'sample-app', // every variant target, planted or not
     known: set === 'held-out' ? answers[c.case_id] : c.answer,
     setup: setupFor(c.target, entries),
   }));
@@ -499,7 +500,7 @@ function report(meta, cases, groups, workDir) {
     set: meta.set,
     engine: meta.engine,
     ts: new Date().toISOString(),
-    cases: cases.map((c) => ({ case_id: c.case_id, group_id: c.group_id, app: c.app, known: c.known })),
+    cases: cases.map((c) => ({ case_id: c.case_id, group_id: c.group_id, source: c.source, app: c.app, known: c.known })),
     plans,
     replays,
     not_replayed: notReplayed,

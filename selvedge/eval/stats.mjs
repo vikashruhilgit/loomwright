@@ -105,6 +105,13 @@ export function rate(k, n) {
   return { numerator: k, denominator: n, rate: n === 0 ? null : round6(k / n), ci95: { lower: round6(ci.lower), upper: round6(ci.upper) } };
 }
 
+// withoutSplit(group row) → the row with only group_id, criteria and abstained: no known_fail /
+// known_pass split, and no pass_on_known_fail / fail_on_known_pass, which would point at the withheld
+// groups Selvedge got wrong.
+export function withoutSplit(g) {
+  return { group_id: g.group_id, criteria: g.criteria, abstained: g.abstained };
+}
+
 function emptyTally() {
   return { criteria: 0, known_fail: 0, known_pass: 0, pass_on_known_fail: 0, fail_on_known_pass: 0, abstained: 0 };
 }
@@ -138,7 +145,8 @@ function repeatability(cases, series) {
 //   input.set        'held-out' | 'tuning'
 //   input.engine     {selvedge_version, planner_model}
 //   input.ts         ISO time
-//   input.cases      [{case_id, group_id, app, known: 'PASS' | 'FAIL'}] — `known` is used here and
+//   input.cases      [{case_id, group_id, source, app, known: 'PASS' | 'FAIL'}] — `source` 'planted'
+//                    marks a planted case. `known` is used here and
 //                    never written to the report
 //   input.plans      [plan 1, plan 2, …], each {<case_id>: {verdict, evidence_class, reason}}: the
 //                    first run of each fresh plan
@@ -156,6 +164,7 @@ export function buildReport(input) {
   const reasons = {};
   const byGroup = new Map();
   const byApp = new Map();
+  const plantedGroups = new Set(cases.filter((c) => c.source === 'planted').map((c) => c.group_id));
   let budgetExceeded = 0;
   for (const c of cases) {
     const v = main[c.case_id];
@@ -179,6 +188,13 @@ export function buildReport(input) {
   }
   const sortedReasons = Object.fromEntries(Object.keys(reasons).sort().map((k) => [k, reasons[k]]));
   const grouped = (m, key) => [...m.keys()].sort().map((k) => ({ [key]: k, ...m.get(k) }));
+  // A held-out planted group's answers live only in the outside folder, and its criteria are
+  // committed in held-out/cases.json, so its FAIL/PASS split would narrow every answer, and its
+  // error counts would point at the groups Selvedge got wrong: keep only criteria and abstained.
+  // Real-bug and non-defect answers can be worked out from committed data, so they keep theirs.
+  // per_app is left whole: the planted cases' total split is already public, as the false-PASS
+  // denominator less the real-bug and non-defect known-FAIL count, both derivable from committed data.
+  const perGroup = grouped(byGroup, 'group_id').map((g) => (set === 'held-out' && plantedGroups.has(g.group_id) ? withoutSplit(g) : g));
   const totals = runs.reduce((a, r) => ({ planner_tokens: a.planner_tokens + (r.planner_tokens || 0), duration_ms: a.duration_ms + (r.duration_ms || 0) }), { planner_tokens: 0, duration_ms: 0 });
   const report = {
     set,
@@ -194,7 +210,7 @@ export function buildReport(input) {
     abstention_reasons: sortedReasons,
     budget_exceeded: budgetExceeded,
     model_judged: modelJudged,
-    per_group: grouped(byGroup, 'group_id'),
+    per_group: perGroup,
     per_app: grouped(byApp, 'app'),
     repeatability: {
       runner: repeatability(cases.filter((c) => !skipReplay.has(c.case_id)), [main, ...replays]),
