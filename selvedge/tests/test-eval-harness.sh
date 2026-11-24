@@ -134,6 +134,11 @@ out(mj.rates.false_pass.numerator === 0 && mj.rates.false_pass.denominator === 5
   out(Array.isArray(r.per_group) && g1 && g1.known_fail === 2 && g1.fail_on_known_pass === 1 && app && app.pass_on_known_fail === 1 && r.per_app.some((a) => a.app === 'o/r'), 'AC9 groups per defect (group_id) and per app (repo, or sample-app for a variant)', JSON.stringify({ g: r.per_group, a: r.per_app }));
   out(r.runs.length === 2 && r.runs[0].planner_tokens === 120 && r.runs[0].duration_ms === 900 && r.totals.planner_tokens === 200 && r.totals.duration_ms === 1000, 'AC9 tokens and duration per run, with totals', JSON.stringify({ runs: r.runs, totals: r.totals }));
   out(!JSON.stringify(r).includes('"answer"') && !JSON.stringify(r).includes('"known"'), 'AC11 a report carries no answer and no known key', '');
+  const pd = r.per_group.find((g) => g.group_id === 'pd-x');
+  out(pd && !('known_fail' in pd) && !('known_pass' in pd) && pd.criteria === 1 && pd.pass_on_known_fail === 1 && g1.known_pass === 1, 'a held-out planted group carries no FAIL/PASS split (its criteria are committed); a real-bug group keeps its split', JSON.stringify(r.per_group));
+  const t = build({ set: 'tuning', fail: [['PASS', 1, 'structured-read', 'pd-x', 'sample-app']], pass: [['PASS', 1, 'structured-read', 'pd-x', 'sample-app']] });
+  const tpd = t.per_group.find((g) => g.group_id === 'pd-x');
+  out(tpd && tpd.known_fail === 1 && tpd.known_pass === 1, 'a tuning planted group keeps its split (tuning answers are committed)', JSON.stringify(t.per_group));
 }
 // AC10 — a tuning report never feeds the gate or the two-revision rule.
 const tun = build({ set: 'tuning', fail: [['PASS', 70]], pass: [['PASS', 10]] });

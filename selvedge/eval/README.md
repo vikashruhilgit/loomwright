@@ -204,8 +204,10 @@ and `per_app` (counts per `group_id` and per app: the target repo, or `sample-ap
 `repeatability` (`runner` and `planner`, each with `repeats`, `cases`, `flipped` and `flips`, an
 array of `{case_id, verdicts}`), `runs` (planner tokens and duration per run), `totals` and `gate`
 (`{verdict: "met" | "not met", failed}`, or null for tuning). It carries no `answer` key and no map
-of case ids to PASS or FAIL, so `check-leak` passes on it. Now that the held-out set has planted
-groups, check the per-group counts and flip lists of planted groups for answer exposure before committing a report.
+of case ids to PASS or FAIL, so `check-leak` passes on it. In a held-out report, a planted group's
+`per_group` row has no `known_fail` or `known_pass`: its criteria are committed, so its FAIL/PASS
+split would narrow every answer. Before committing a held-out report, check its flip lists for
+planted cases, which name each case with the verdicts it got.
 
 ### Harness reason tokens
 

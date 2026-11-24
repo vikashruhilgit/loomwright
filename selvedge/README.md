@@ -1045,17 +1045,17 @@ rule, the outside folder, the harness and every command are in [`eval/README.md`
 
 Generated from [`eval/results.json`](eval/results.json), which holds every report; the latest of each set is shown. Gate: false-PASS point estimate at most 0.05 and abstention at most 0.2 on a held-out set with a known-FAIL denominator at or above its floor.
 
-**Held-out set — selvedge 0.9.0, planner sonnet, 2026-11-22, 126 case(s).**
+**Held-out set — selvedge 0.11.1, planner sonnet, 2026-11-24, 235 case(s).**
 
-Phase 3 gate: **not met** (known-FAIL denominator 21 is below the floor 60 (FLOORS.held_out_fail); abstention 0.5873 > 0.2).
+Phase 3 gate: **not met** (abstention 0.4553 > 0.2).
 
 | Rate | Numerator / denominator | Point estimate | 95% interval (Clopper-Pearson) |
 |---|---|---|---|
-| false-PASS (PASS on known-FAIL) | 0 / 21 | 0.0000 | 0.0000 – 0.1611 |
-| false-FAIL (FAIL on known-PASS) | 0 / 105 | 0.0000 | 0.0000 – 0.0345 |
-| abstention (BLOCKED + NOT_VERIFIABLE) | 74 / 126 | 0.5873 | 0.4962 – 0.6742 |
+| false-PASS (PASS on known-FAIL) | 0 / 85 | 0.0000 | 0.0000 – 0.0425 |
+| false-FAIL (FAIL on known-PASS) | 4 / 150 | 0.0267 | 0.0073 – 0.0669 |
+| abstention (BLOCKED + NOT_VERIFIABLE) | 107 / 235 | 0.4553 | 0.3904 – 0.5213 |
 
-model-judged criteria, counted apart: 0. Runner flips: 1 of 126 case(s) over 3 run(s) of one frozen plan; planner flips: 37 of 126 case(s) over 3 fresh plan(s).
+model-judged criteria, counted apart: 0. Runner flips: 0 of 212 case(s) over 1 run(s) of one frozen plan; planner flips: 0 of 235 case(s) over 1 fresh plan(s).
 
 **Tuning set — selvedge 0.11.0, planner sonnet, 2026-11-23, 72 case(s).**
 

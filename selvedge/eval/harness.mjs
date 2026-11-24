@@ -47,7 +47,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EVAL_REL, heldOutDir, loadSet, main as evalSetMain, readAnswers } from './eval-set.mjs';
-import { buildReport, GATE, revisionRule } from './stats.mjs';
+import { buildReport, GATE, revisionRule, SAMPLE_APP } from './stats.mjs';
 import { DEFAULT_PLANNER_MODEL } from '../lib/plan-planner.mjs';
 import { isMain } from '../lib/env-config.mjs';
 import { realpathOrResolve } from '../lib/env-approvals.mjs';
@@ -250,7 +250,7 @@ function checkedCases(repo, set, outside) {
     group_id: c.group_id,
     criterion: c.criterion,
     target: c.target,
-    app: c.target.kind === 'commit' ? c.target.repo : 'sample-app',
+    app: c.target.kind === 'commit' ? c.target.repo : SAMPLE_APP,
     known: set === 'held-out' ? answers[c.case_id] : c.answer,
     setup: setupFor(c.target, entries),
   }));

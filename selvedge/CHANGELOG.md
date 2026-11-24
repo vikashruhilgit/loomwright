@@ -8,6 +8,13 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.11.2 — 2026-11-24
+
+- A held-out eval report no longer gives a planted group's FAIL/PASS split. Its `per_group` row
+  drops `known_fail` and `known_pass`, because the group's criteria are committed and the split
+  would narrow each withheld answer. Real-bug, non-defect and tuning groups keep theirs.
+- First held-out report (0.11.1, 235 cases): false-PASS 0/85, abstention 107/235; gate not met.
+
 ## 0.11.1 — 2026-11-23
 
 - `node selvedge/eval/harness.mjs run` now checks the browser before it brings any target up or
