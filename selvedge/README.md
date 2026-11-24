@@ -1033,9 +1033,9 @@ and `verdict.json` records each criterion's reason beside its verdict.
 `selvedge/eval/` holds a set of acceptance criteria whose right answers are known, used to measure
 how often Selvedge says PASS when the answer is FAIL. It is an owner-only measurement tool, not part
 of the CLI: nothing in `bin/` or `lib/` reads it. The set is split by underlying defect into a
-tuning side and a held-out side, and the held-out answers file lives outside this repository (in
-this release every held-out answer can still be worked out from committed data; only the planted
-variants, once they land, will be withheld). The set's sizes and the measured rates appear here
+tuning side and a held-out side, and the held-out answers file lives outside this repository (the
+answers of held-out real-bug and non-defect cases can still be worked out from committed data;
+the held-out planted variants and their answers are withheld). The set's sizes and the measured rates appear here
 only in the results block below, which `node selvedge/eval/harness.mjs readme` generates from
 [`eval/results.json`](eval/results.json) and `tests/test-eval-harness.sh` holds equal to it;
 `node selvedge/eval/eval-set.mjs count` prints each count beside its floor. The layout, the split
