@@ -13,7 +13,8 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
 - A held-out eval report no longer gives a planted group's FAIL/PASS split or error counts. Its
   `per_group` row holds only `group_id`, `criteria` and `abstained`: the group's criteria are
   committed, so the split would narrow each withheld answer and the error counts would point at the
-  groups Selvedge got wrong. Real-bug, non-defect and tuning groups keep every field.
+  groups Selvedge got wrong. Real-bug and non-defect groups keep every field, and so does every
+  group in a tuning report.
 - First held-out report (0.11.1, 235 cases): false-PASS 0/85, abstention 107/235; gate not met.
 
 ## 0.11.1 — 2026-11-23
