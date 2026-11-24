@@ -148,7 +148,7 @@ function repeatability(cases, series) {
 //   input.engine     {selvedge_version, planner_model}
 //   input.ts         ISO time
 //   input.cases      [{case_id, group_id, source, app, known: 'PASS' | 'FAIL'}] — `source` 'planted'
-//                    marks a planted case; — `known` is used here and
+//                    marks a planted case. `known` is used here and
 //                    never written to the report
 //   input.plans      [plan 1, plan 2, …], each {<case_id>: {verdict, evidence_class, reason}}: the
 //                    first run of each fresh plan
