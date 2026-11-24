@@ -105,9 +105,6 @@ export function rate(k, n) {
   return { numerator: k, denominator: n, rate: n === 0 ? null : round6(k / n), ci95: { lower: round6(ci.lower), upper: round6(ci.upper) } };
 }
 
-// The app name harness.mjs gives every variant target, planted or not; use a case's `source` to know which.
-export const SAMPLE_APP = 'sample-app';
-
 // withoutSplit(group row) → the row with only group_id, criteria and abstained: no known_fail /
 // known_pass split, and no pass_on_known_fail / fail_on_known_pass, which would point at the withheld
 // groups Selvedge got wrong.
