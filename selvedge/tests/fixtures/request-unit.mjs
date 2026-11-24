@@ -31,7 +31,21 @@ out.get_with_json = codes([goto, { type: 'request', method: 'GET', url: `${O}/`,
 out.json_not_object = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, json: '{"a":1}' }]);
 out.json_array = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, json: [1] }]);
 out.json_too_deep = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, json: { a: { b: { c: { d: { e: { f: 1 } } } } } } }]);
-out.header_field = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { authorization: 'x' } }]);
+out.header_field = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { authorization: 'Bearer {{TOKEN}}', 'x-trace': '1' } }]);
+out.forbidden_header = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { Cookie: 'a=b' } }]);
+out.sec_header = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { 'Sec-Fetch-Mode': 'cors' } }]);
+out.header_not_string = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { 'x-n': 1 } }]);
+out.raw_body = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: '{not json' }]);
+out.body_and_json = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'x', json: { a: 1 } }]);
+out.get_with_body = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, body: 'x' }]);
+out.body_not_string = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: { a: 1 } }]);
+const hdrs = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`x-h${i}`, 'v']));
+out.headers_at_max = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: hdrs(S.REQUEST_HEADERS_MAX) }]);
+out.headers_over_max = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: hdrs(S.REQUEST_HEADERS_MAX + 1) }]);
+out.header_dup = codes([goto, { type: 'request', method: 'GET', url: `${O}/`, headers: { 'X-Foo': 'a', 'x-foo': 'b' } }]);
+out.body_at_max = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'b'.repeat(S.REQUEST_BODY_MAX_CHARS) }]);
+out.body_over_max = codes([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'b'.repeat(S.REQUEST_BODY_MAX_CHARS + 1) }]);
+out.body_placeholders = S.placeholderNames([goto, { type: 'request', method: 'POST', url: `${O}/`, body: 'k={{BODY_K}}', headers: { authorization: '{{HDR_T}}' } }]);
 out.cross_origin = codes([goto, { type: 'request', method: 'GET', url: `${OTHER}/api/x` }]);
 out.no_goto_first = codes([{ type: 'request', method: 'GET', url: `${O}/api/x` }]);
 out.after_second_goto = codes([goto, { type: 'goto', url: `${OTHER}/` }, { type: 'request', method: 'GET', url: `${OTHER}/api/x` }]);
@@ -54,6 +68,8 @@ out.is_action = [
 out.prefix_get = S.validateSteps([{ type: 'request', method: 'GET', url: `${O}/api/x` }], { config, prefix: true, pageOrigin: O }).map((p) => p.code);
 out.prefix_post = S.validateSteps([{ type: 'request', method: 'POST', url: `${O}/api/x`, json: { a: 1 } }], { config, prefix: true, pageOrigin: O }).map((p) => p.code);
 out.prefix_delete = S.validateSteps([{ type: 'request', method: 'DELETE', url: `${O}/api/x` }], { config, prefix: true, pageOrigin: O }).map((p) => p.code);
+out.prefix_post_remote = S.validateSteps([{ type: 'request', method: 'POST', url: 'https://shop.example/api/x', json: { a: 1 } }], { config, prefix: true, pageOrigin: 'https://shop.example' }).map((p) => p.code);
+out.prefix_get_remote = S.validateSteps([{ type: 'request', method: 'GET', url: 'https://shop.example/api/x' }], { config, prefix: true, pageOrigin: 'https://shop.example' }).map((p) => p.code);
 
 // -- the plan lint (validatePlan): reply reads, cookie reads, the negative baseline
 const crit = (texts) => {

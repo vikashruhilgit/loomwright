@@ -255,6 +255,33 @@ validate "crit(c1).polarity = 'negative'; steps(c1).splice(1, 0, { type: 'read',
 validate "steps(c3).splice(0, 5, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'goto', url: 'http://localhost:4100/mail' }, { type: 'click', locator: { role: 'button', name: 'Save draft' } }, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'expect', op: 'changed_from', value: false });"
 [ "$rc" -eq 0 ] && ok "a negative that reads its baseline on another page, acts, then goes back and reads again is accepted (the prompt's cross-page shape)" || ko "cross-page negative: rc=$rc err='$err'"
 
+echo "-- absent, and an absence hidden in a lookahead"
+validate "steps(c1)[4] = { type: 'expect', op: 'absent', value: '14-day' };"
+[ "$rc" -eq 0 ] && ok "expect absent with a non-blank text is accepted" || ko "absent ok: rc=$rc err='$err'"
+validate "steps(c1)[4] = { type: 'expect', op: 'absent', value: ' ' };"
+want_problem "expect absent with a blank text is rejected existence_only_expect" "$c1" existence_only_expect
+validate "steps(c1)[4] = { type: 'expect', op: 'absent', value: 3 };"
+want_problem "expect absent with a number is rejected plan_schema_violation" "$c1" plan_schema_violation
+validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: '^(?![\\\\s\\\\S]*14-day)[\\\\s\\\\S]+\$' };"
+want_problem "a final matches with a whole-text negative lookahead (the 0.11.2 tuning shape) is rejected existence_only_expect" "$c1" existence_only_expect
+validate "steps(c1).splice(4, 0, { type: 'expect', op: 'matches', value: '^(?!.*card).+\$' });"
+want_problem "an earlier expect with a whole-text negative lookahead is rejected too" "$c1" existence_only_expect
+validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: '^(?!0)\\\\d+\$' };"
+[ "$rc" -eq 0 ] && ok "a format lookahead (^(?!0)\\d+\$: no leading zero) is accepted" || ko "format lookahead: rc=$rc err='$err'"
+
+echo "-- at_load reads"
+AT_LOAD="crit(c1).steps = [{ type: 'goto', url: 'http://localhost:4100/slow' }, { type: 'read', property: 'text', locator: { testid: 'price' }, at_load: true }, { type: 'expect', op: 'equals', value: 'pending' }];"
+validate "$AT_LOAD"
+[ "$rc" -eq 0 ] && ok "a read at_load before any action, in a positive criterion, checked with equals, is accepted" || ko "at_load ok: rc=$rc err='$err'"
+validate "steps(c1)[3].at_load = true;"
+want_problem "a read at_load after an action (click, fill) is rejected at_load_misused" "$c1" at_load_misused
+validate "$AT_LOAD crit(c1).polarity = 'negative';"
+want_problem "a read at_load in a negative criterion is rejected at_load_misused" "$c1" at_load_misused
+validate "$AT_LOAD steps(c1).push({ type: 'read', property: 'text', locator: { testid: 'price' }, at_load: true }, { type: 'expect', op: 'changed_from', value: false });"
+want_problem "an at_load read checked with changed_from is rejected at_load_misused" "$c1" at_load_misused
+validate "$AT_LOAD steps(c1)[1].at_load = 'yes';"
+want_problem "at_load that is not a boolean is rejected plan_schema_violation" "$c1" plan_schema_violation
+
 echo "-- interpretation, polarity, assumptions, coverage, criteria_sha256 (AC13)"
 validate "delete crit(c1).interpretation;"
 want_problem "AC13 a planned criterion with no interpretation is rejected missing_interpretation" "$c1" missing_interpretation
@@ -349,7 +376,11 @@ const checks = {
   states: eq(d.step_wait_for.properties.state.enum, S.WAIT_STATES),
   read: eq(d.step_read.properties.property.anyOf[0].enum, S.READ_PROPERTIES) && d.step_read.properties.property.anyOf[1].pattern === S.READ_ATTRIBUTE_PATTERN
     && d.step_read.properties.property.anyOf[2].pattern === S.READ_RESPONSE_JSON_PATTERN && d.step_read.properties.property.anyOf[3].pattern === S.READ_COOKIE_PATTERN
-    && d.step_read.properties.property.anyOf.length === 4,
+    && d.step_read.properties.property.anyOf[4].pattern === S.READ_RESPONSE_HEADER_PATTERN && d.step_read.properties.property.anyOf[5].pattern === S.READ_COOKIE_ATTRIBUTE_PATTERN
+    && d.step_read.properties.property.anyOf[6].pattern === S.READ_RESPONSE_JSON_EACH_PATTERN && d.step_read.properties.property.anyOf[7].pattern === S.READ_RESPONSE_JSON_LENGTH_PATTERN
+    && d.step_read.properties.property.anyOf.length === 8,
+  request_bounds: d.step_request.properties.headers.maxProperties === S.REQUEST_HEADERS_MAX && d.step_request.properties.body.maxLength === S.REQUEST_BODY_MAX_CHARS
+    && d.step_request.properties.headers.propertyNames.pattern === S.REQUEST_HEADER_NAME_PATTERN,
   request: eq(d.step_request.properties.method.enum, S.REQUEST_METHODS),
   criterion: eq(Object.keys(d.criterion_plan.properties), V.CRITERION_PLAN_KEYS) && d.criterion_plan.additionalProperties === false
     && eq(d.criterion_plan.properties.polarity.enum, V.POLARITIES)

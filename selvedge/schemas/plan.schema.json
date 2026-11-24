@@ -60,7 +60,7 @@
       "required": ["id", "reason"],
       "properties": {
         "id": { "type": "string", "pattern": "^c-[0-9a-f]{12}$" },
-        "reason": { "enum": ["criterion_not_testable", "side_effect_not_observable", "exploration_budget"] },
+        "reason": { "enum": ["criterion_not_testable", "side_effect_not_observable", "exploration_budget", "criterion_plan_invalid"] },
         "rewrite": { "description": "Required (non-empty) for criterion_not_testable.", "type": "string" },
         "detail": { "description": "Required (non-empty) for side_effect_not_observable: the pages looked at.", "type": "string" }
       },
@@ -146,7 +146,7 @@
       "additionalProperties": false
     },
     "step_request": {
-      "description": "One fetch from inside the page to the origin of the page it is on (the last goto before it). GET reads; any other method is an action. No headers, no raw body.",
+      "description": "One fetch from inside the page to the origin of the page it is on (the last goto before it). GET reads; any other method is an action. A body is json or a raw body, never both, and never on a GET.",
       "type": "object",
       "required": ["type", "method", "url"],
       "properties": {
@@ -156,6 +156,18 @@
         "json": {
           "description": "A non-GET JSON body: a plain object whose string leaves are literals or {{NAME}} resolved from the environment at run time. Never written to evidence (only its keys).",
           "type": "object"
+        },
+        "body": {
+          "description": "A non-GET raw text body (at most 8192 characters; literals or {{NAME}}), sent as given: text/plain unless headers name a content-type. Never written to evidence.",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "headers": {
+          "description": "Request headers: at most 16, name to string value (literals or {{NAME}}). A header fetch forbids page code to set (Cookie, Host, Origin, Referer, Sec-*, Proxy-*, ...) is refused.",
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$" },
+          "additionalProperties": { "type": "string" }
         }
       },
       "additionalProperties": false
@@ -166,15 +178,23 @@
       "properties": {
         "type": { "const": "read" },
         "property": {
-          "description": "url, response_status, response_text, response_json:<JSON Pointer> and cookie:<name> take no locator; every other property needs one. response_* read the last reply of a request step; cookie:<name> reads a fingerprint (sha256 prefix) of the cookie, never its value.",
+          "description": "url, focused, response_status, response_text, response_json:<JSON Pointer>, response_header:<name>, cookie:<name> and cookie_attribute:<name>:<attribute> take no locator; every other property needs one. response_* read the last reply of a request step; cookie:<name> reads a fingerprint (sha256 prefix) of the cookie, never its value; cookie_attribute reads one attribute of it; focused reads the element holding keyboard focus.",
           "anyOf": [
-            { "enum": ["text", "value", "checked", "count", "url", "response_status", "response_text"] },
+            { "enum": ["text", "value", "checked", "count", "url", "focused", "response_status", "response_text"] },
             { "type": "string", "pattern": "^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$" },
             { "type": "string", "pattern": "^response_json:(/([^~/]|~[01])*)+$" },
-            { "type": "string", "pattern": "^cookie:[A-Za-z0-9_.-]+$" }
+            { "type": "string", "pattern": "^cookie:[A-Za-z0-9_.-]+$" },
+            { "type": "string", "pattern": "^response_header:[A-Za-z0-9][A-Za-z0-9-]*$" },
+            { "type": "string", "pattern": "^cookie_attribute:[A-Za-z0-9_.-]+:(http_only|secure|same_site|path|domain)$" },
+            { "type": "string", "pattern": "^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)+$" },
+            { "type": "string", "pattern": "^response_json_length:(/([^~/]|~[01])*)*$" }
           ]
         },
-        "locator": { "$ref": "#/$defs/locator" }
+        "locator": { "$ref": "#/$defs/locator" },
+        "at_load": {
+          "description": "true: the expect after this read is judged on this read as taken, with no stable wait (the state right after the page loaded). Only before the criterion's first action, in a positive criterion, checked with equals, contains or matches.",
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
@@ -183,9 +203,9 @@
       "required": ["type", "op", "value"],
       "properties": {
         "type": { "const": "expect" },
-        "op": { "enum": ["equals", "contains", "matches", "gt", "lt", "changed_from"] },
+        "op": { "enum": ["equals", "contains", "absent", "matches", "gt", "lt", "changed_from"] },
         "value": {
-          "description": "equals: string, number or boolean; contains/matches: string; gt/lt: number; changed_from: boolean (whether the last read must differ from the previous read of the same locator/property).",
+          "description": "equals: string, number or boolean; contains/absent/matches: string (absent: the value read does not contain it); gt/lt: number; changed_from: boolean (whether the last read must differ from the previous read of the same locator/property).",
           "type": ["string", "number", "boolean"]
         }
       },

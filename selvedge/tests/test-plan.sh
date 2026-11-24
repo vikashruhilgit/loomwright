@@ -176,7 +176,7 @@ check "AC6 runs.jsonl gains one freeze line {event, ts, run_id, criteria_sha256,
 check "AC6 the planner got SELVEDGE_RUN_DIR, SELVEDGE_CRITERIA (planner-input.json), SELVEDGE_PLAN_OUT (plan.json), SELVEDGE_BIN (this CLI) and SELVEDGE_PLANNER_USAGE" \
   'const v = JSON.parse(txt(E.TMP + "/log-ac6/env.json")); v.SELVEDGE_RUN_DIR === dir && v.SELVEDGE_CRITERIA === dir + "/planner-input.json" && v.SELVEDGE_PLAN_OUT === dir + "/plan.json" && v.SELVEDGE_BIN === E.BIN_REAL && v.SELVEDGE_PLANNER_USAGE === dir + "/planner-usage.json"'
 check "the planner input lists the allowed origins and the criteria_sha256 the plan must carry" \
-  'const p = JSON.parse(txt(E.TMP + "/log-ac6/input.json")); JSON.stringify(p.origins) === JSON.stringify([E.AURL]) && p.criteria_sha256 === j("plan.json").criteria_sha256 && p.snapshot_budget === 20 && p.token_budget === null'
+  'const p = JSON.parse(txt(E.TMP + "/log-ac6/input.json")); JSON.stringify(p.origins) === JSON.stringify([E.AURL]) && p.criteria_sha256 === j("plan.json").criteria_sha256 && p.snapshot_budget === 20 && p.token_budget === null && JSON.stringify(p.env_names) === "[]"'
 
 check "the planner without --base got SELVEDGE_BASE \"\" (its snapshots read the working tree, as the plan does)" \
   'JSON.parse(txt(E.TMP + "/log-ac6/env.json")).SELVEDGE_BASE === ""'
@@ -209,16 +209,49 @@ check "AC4b the frozen plan lists it under not_planned with criterion_not_testab
 echo "-- AC6 the lint runs before hashing; planner failures"
 runs_before="$(grep -c . "$R/.selvedge/runs.jsonl")"
 export RUNS_BEFORE="$runs_before"
-run ac6-invalid "$R" "$PLANNER" STUB_PLANNER_MODE=invalid -- "$CRITERIA"
-check "AC6 a stub that writes an invalid plan: exit 2, stderr plan_invalid: <c1>: missing_final_read_expect, no plan.sha256, no freeze.json, no runs.jsonl line" \
-  'rc === 2 && err.includes("plan_invalid: " + E.C1 + ": missing_final_read_expect") && dir !== "" && has("plan.json") && !has("plan.sha256") && !has("freeze.json") && jl(E.R + "/.selvedge/runs.jsonl").length === Number(E.RUNS_BEFORE)'
+run ac6-invalid "$R" "$PLANNER" STUB_PLANNER_MODE=badsha -- "$CRITERIA"
+check "AC6 a stub whose plan has a problem of the plan as a whole (criteria_sha_mismatch): exit 2 plan_invalid, no plan.sha256, no freeze.json, no runs.jsonl line" \
+  'rc === 2 && err.includes("plan_invalid: (plan): criteria_sha_mismatch") && dir !== "" && has("plan.json") && !has("plan.sha256") && !has("freeze.json") && jl(E.R + "/.selvedge/runs.jsonl").length === Number(E.RUNS_BEFORE)'
+run ac6-half "$R" "$PLANNER" STUB_PLANNER_MODE=half -- "$CRITERIA"
+check "one criterion whose steps break the lint is set aside, the rest freeze: exit 0, the problem line on stderr, <c1> under not_planned criterion_plan_invalid with the problem as detail, <c3> still planned" \
+  'const p = j("plan.json"); const np = p.not_planned.find((x) => x.id === E.C1); rc === 0 && has("plan.sha256") && err.includes("plan_invalid: " + E.C1 + ": missing_final_read_expect") && err.includes("set aside under not_planned (criterion_plan_invalid); the other criteria froze") && np && np.reason === "criterion_plan_invalid" && np.detail.startsWith("missing_final_read_expect") && !(E.C1 in p.steps_by_criterion) && (E.C3 in p.steps_by_criterion)'
+out="$(node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const P = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/plan.mjs").href);
+const V = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/plan-validate.mjs").href);
+const C = await import(pathToFileURL(process.env.SELVEDGE_LIB + "/criteria.mjs").href);
+const criteria = JSON.parse(readFileSync(process.env.CRITERIA, "utf8"));
+const o = process.env.AURL;
+const good = { interpretation: "x.", polarity: "positive", unverified_assumptions: [], steps: [{ type: "goto", url: o + "/" }, { type: "read", property: "url" }, { type: "expect", op: "equals", value: o + "/" }] };
+const bad = { ...good, steps: [{ type: "goto", url: o + "/" }] };
+const plan = { schema_version: 1, target: "web", criteria_sha256: C.criteriaSha256(criteria.criteria), origins: [o], steps_by_criterion: { [process.env.C1]: bad, [process.env.C2]: good, [process.env.C3]: good }, not_planned: [] };
+const config = { origins: [o] };
+const first = V.validatePlan(plan, { criteria, config });
+const a = P.setAsideInvalid(plan, first, criteria.criteria);
+const again = V.validatePlan(plan, { criteria, config });
+const np2 = plan.not_planned.find((x) => x.id === process.env.C2);
+console.log(first.some((p) => p.id === process.env.C2 && p.code === "vague_criterion_planned") && a && again.length === 0 && np2.reason === "criterion_not_testable" && np2.rewrite && plan.not_planned.find((x) => x.id === process.env.C1).reason === "criterion_plan_invalid" && (process.env.C3 in plan.steps_by_criterion) ? "yes" : JSON.stringify({ first, again, np: plan.not_planned }));
+' 2>&1)"
+[ "$out" = "yes" ] && ok "a vague criterion the planner planned anyway is set aside under criterion_not_testable with its rewrite (the reason the lint accepts), so the re-lint is clean and the rest freeze" || ko "set aside vague: $out"
+run ac6-allbad "$R" "$PLANNER" STUB_PLANNER_MODE=invalid -- "$CRITERIA"
+check "every criterion breaking the lint: all set aside, the plan still freezes (exit 0) with an empty steps_by_criterion" \
+  'const p = j("plan.json"); rc === 0 && has("plan.sha256") && Object.keys(p.steps_by_criterion).length === 0 && [E.C1, E.C3].every((id) => p.not_planned.some((x) => x.id === id && x.reason === "criterion_plan_invalid"))'
+export RUNS_BEFORE="$(grep -c . "$R/.selvedge/runs.jsonl")"
+HALF_DIR="$(cat "$TMP/o/ac6-half.out")"
+out="$(cd "$R" && bash "$CLI" plan --validate /dev/stdin --criteria "$HALF_DIR/criteria.json" < "$HALF_DIR/plan.json" 2>/dev/null)"; rc=$?
+{ [ "$rc" -eq 0 ] && [ "$out" = "plan valid: /dev/stdin" ]; } && ok "plan --validate reads a plan from stdin (the planner's lint tool): plan valid: /dev/stdin" || ko "validate stdin: rc=$rc out='$out'"
+err="$(cd "$R" && printf '%s' '{"schema_version":1}' | bash "$CLI" plan --validate /dev/stdin --criteria "$HALF_DIR/criteria.json" 2>&1 >/dev/null)"; rc=$?
+{ [ "$rc" -eq 2 ] && grep -qF "plan_invalid: (plan): plan_schema_violation" <<<"$err"; } && ok "plan --validate on stdin lists the problems of a bad plan, exit 2" || ko "validate stdin bad: rc=$rc err='$err'"
+err="$(cd "$R" && SELVEDGE_BASE= bash "$CLI" plan --validate /dev/stdin --criteria "$HALF_DIR/criteria.json" --base HEAD < "$HALF_DIR/plan.json" 2>&1 >/dev/null)"; rc=$?
+{ [ "$rc" -eq 2 ] && grep -qF "conflicts with SELVEDGE_BASE" <<<"$err"; } && ok "under a planner (SELVEDGE_BASE set), plan --validate cannot read another allowlist (--base conflicts)" || ko "validate pinned base: rc=$rc err='$err'"
 run ac6-exit1 "$R" "$PLANNER" STUB_PLANNER_MODE=exit1 -- "$CRITERIA"
 check "AC6 a stub that writes a valid plan and exits 1: exit 2 planner_failed (exited 1), no plan.sha256" \
   'rc === 2 && err.includes("planner_failed") && err.includes("exited 1") && dir !== "" && has("plan.json") && !has("plan.sha256") && !has("freeze.json")'
 run ac6-noplan "$R" "$PLANNER" STUB_PLANNER_MODE=noplan -- "$CRITERIA"
 check "AC6 a stub that exits 0 and writes no plan: exit 2 planner_failed (wrote no plan), no plan.sha256" \
   'rc === 2 && err.includes("planner_failed") && err.includes("wrote no plan") && dir !== "" && !has("plan.json") && !has("plan.sha256")'
-check "AC6 none of the three failures added a runs.jsonl line" 'jl(E.R + "/.selvedge/runs.jsonl").length === Number(E.RUNS_BEFORE)'
+check "AC6 neither planner failure added a runs.jsonl line" 'jl(E.R + "/.selvedge/runs.jsonl").length === Number(E.RUNS_BEFORE)'
 run notokens "$R" "$PLANNER" STUB_PLANNER_NO_USAGE=1 SELVEDGE_PLANNER_TOKEN_BUDGET=5000 -- "$CRITERIA"
 check "a planner that reports no tokens: frozen with planner_tokens null; SELVEDGE_PLANNER_TOKEN_BUDGET is recorded in freeze.json" \
   'rc === 0 && j("freeze.json").planner_tokens === null && j("freeze.json").planner_token_budget === 5000'
@@ -240,6 +273,10 @@ check "AC11 the runs.jsonl freeze line carries plan_time_actions 5 too" \
   'const ls = jl(E.R + "/.selvedge/runs.jsonl"); const l = ls[ls.length - 1]; l.run_id === path.basename(E.F) && l.plan_time_actions === 5'
 
 echo "-- AC14 frozen folders, revisions"
+RA="$TMP/repo-auth"; mkdir -p "$RA" && git -C "$RA" init -q && printf '{"schema_version":1,"origins":["%s"],"auth":{"env":["APP_EMAIL","APP_PASS"]}}\n' "$AURL" > "$RA/selvedge.json"
+run authnames "$RA" "$PLANNER" STUB_PLANNER_LOG="$TMP/log-auth" APP_EMAIL=a@b.test APP_PASS=s3cret-value -- "$CRITERIA"
+check "with auth.env in selvedge.json the planner input lists those names as env_names, never their values" \
+  'const t = txt(E.TMP + "/log-auth/input.json"); rc === 0 && JSON.stringify(JSON.parse(t).env_names) === "[\"APP_EMAIL\",\"APP_PASS\"]" && !t.includes("s3cret-value") && !t.includes("a@b.test")'
 R14="$TMP/repo14"; newrepo "$R14"
 mkdir -p "$R14/.selvedge"
 SHA="$(node -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(p.criteria_sha256)' "$AC6_DIR/plan.json")"
@@ -279,8 +316,8 @@ check "AC18 SELVEDGE_PLANNER unset: claude ran and the plan from its result text
   'rc === 0 && has("plan.sha256") && j("plan.json").steps_by_criterion[E.C1].unverified_assumptions[0].text === "the home page is the page meant"'
 check "AC18 claude saw -p, --output-format json, --model sonnet, and the prompt text of prompts/planner.md followed by the input" \
   'const a = JSON.parse(txt(E.STUB_CLAUDE_ARGV)); const md = txt(E.PLANNER_MD).replace(/\s+$/, ""); a[0] === "-p" && a[1].startsWith(md) && a[1].includes("## Input (planner-input.json)") && a[1].includes(E.C1) && !a[1].includes(E.C2) && a[a.indexOf("--output-format") + 1] === "json" && a[a.indexOf("--model") + 1] === "sonnet"'
-check "AC18 --allowedTools is exactly Bash(<SELVEDGE_BIN> snapshot:*), its one value, last" \
-  'const a = JSON.parse(txt(E.STUB_CLAUDE_ARGV)); const k = a.indexOf("--allowedTools"); k === a.length - 2 && a[k + 1] === "Bash(" + E.BIN_REAL + " snapshot:*)" && a.filter((x) => /^--allowed-?tools$/i.test(x)).length === 1'
+check "AC18 --allowedTools is exactly Bash(<SELVEDGE_BIN> snapshot:*) and Bash(<SELVEDGE_BIN> plan --validate:*), its two values, last" \
+  'const a = JSON.parse(txt(E.STUB_CLAUDE_ARGV)); const k = a.indexOf("--allowedTools"); k === a.length - 3 && a[k + 1] === "Bash(" + E.BIN_REAL + " snapshot:*)" && a[k + 2] === "Bash(" + E.BIN_REAL + " plan --validate:*)" && a.filter((x) => /^--allowed-?tools$/i.test(x)).length === 1'
 check "AC18 the result usage is recorded: input 1000 + 200 cache-read + 50 cache-creation = 1250, output 300" \
   'JSON.stringify(j("freeze.json").planner_tokens) === JSON.stringify({ input_tokens: 1250, output_tokens: 300 })'
 run ac18-model "$R18" -u SELVEDGE_PLANNER PATH="$STUBBIN:$PATH" SELVEDGE_PLANNER_MODEL=opus -- "$CRITERIA"

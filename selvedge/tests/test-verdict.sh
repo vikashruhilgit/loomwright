@@ -347,8 +347,8 @@ check "AC5 expect held + material: true → NOT_VERIFIABLE material_assumption, 
   'rc === 3 && c(0).verdict === "NOT_VERIFIABLE" && c(0).reason === "material_assumption" && c(0).matched === true && c(0).unverified_assumptions[0].text === "the total is shown without tax" && c(0).unverified_assumptions[0].material === true'
 D="$(mk 20261116T120000Z-aaaa09 '{"shapes":["material_fail","pass"]}')"
 vd ac5-fail "$D"
-check "a mismatched expect stays FAIL under a material assumption; a material: false one does not stop PASS" \
-  'rc === 1 && c(0).verdict === "FAIL" && c(1).verdict === "PASS" && c(1).unverified_assumptions[0].material === false'
+check "a mismatched expect under a material assumption is NOT_VERIFIABLE material_assumption, not FAIL; a material: false one does not stop PASS" \
+  'rc === 3 && c(0).verdict === "NOT_VERIFIABLE" && c(0).reason === "material_assumption" && c(0).matched === false && c(1).verdict === "PASS" && c(1).unverified_assumptions[0].material === false'
 
 echo "-- prior_revisions (AC6)"
 # runs.jsonl: revision 1 of these criteria (CS) ran FAIL; before that line sit a run line of OTHER

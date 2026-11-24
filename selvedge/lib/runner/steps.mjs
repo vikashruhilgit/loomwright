@@ -17,12 +17,22 @@
 //                              one `read` step's value: text (innerText, trimmed), value
 //                              (inputValue), checked (boolean), count (number), url, or
 //                              attribute:<name> (string, or null when the attribute is absent);
-//                              response_status (number), response_text (string),
+//                              focused (the focused element's aria-snapshot line, e.g. `button
+//                              "Save"`, or null when focus is on no element);
+//                              response_header:<name> (string, or null) of state.reply;
+//                              response_json_each:<array>|<item> (JSON text of each element's
+//                              value, or null) and response_json_length:<array> (a number, or
+//                              null) of state.reply;
+//                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
+//                              same_site / path / domain strings; null when there is no cookie);
+//                              response_status (number), response_text (string, trimmed like
+//                              text: a body's trailing newline is not part of its value),
 //                              response_json:<pointer> (a scalar, or null) of state.reply;
 //                              cookie:<name> (cookieFingerprint, or null when there is no cookie)
 //   readEntry(step, value)     one read as expectMatches takes it: { key, value }, the key naming
 //                              the read's locator and property
 //   expectMatches(step, reads) whether an `expect` step holds over the criterion's reads so far
+//                              (absent: the last read does not contain the value)
 //                              (the last read is the value checked; changed_from compares it with
 //                              the previous read of the same locator and property)
 //
@@ -34,8 +44,10 @@
 // layer's host_not_allowed and remote_mutation_refused would not apply (probed with Playwright
 // 1.65.1). Neither is a Node-side HTTP client. The fetch is same-origin with the page (the lint's
 // origin rule), credentials 'same-origin' (the context's cookies go with it), redirect 'follow',
-// cache 'no-store'; a json body is sent as application/json. The reply text is kept up to
-// RESPONSE_TEXT_CAP characters (truncated: true past it). A refusal by either guard layer throws
+// cache 'no-store'; a json body is sent as application/json, a raw `body` as given (text/plain
+// unless the step's `headers` name a content-type), with the step's `headers` added. The reply
+// text is kept up to RESPONSE_TEXT_CAP characters (truncated: true past it), and its headers
+// (lower-cased names; Set-Cookie is never visible to page code) up to RESPONSE_HEADERS_CAP. A refusal by either guard layer throws
 // GuardRefusal naming the guard's reason (host_not_allowed, remote_mutation_refused, ...): the
 // route layer aborts the fetch, and the runner finds its record among the guard's blocks; the
 // proxy answers 403 with its X-Selvedge-Blocked header, read like reasonOfResponse does for goto.
@@ -57,9 +69,16 @@ import { reasonOfResponse } from './route-guard.mjs';
 
 const ATTRIBUTE_PREFIX = 'attribute:';
 const RESPONSE_JSON_PREFIX = 'response_json:';
+const RESPONSE_JSON_EACH_PREFIX = 'response_json_each:';
+const RESPONSE_JSON_LENGTH_PREFIX = 'response_json_length:';
+const RESPONSE_HEADER_PREFIX = 'response_header:';
 const COOKIE_PREFIX = 'cookie:';
+const COOKIE_ATTRIBUTE_PREFIX = 'cookie_attribute:';
+// cookie_attribute's names → the Playwright cookie field.
+const COOKIE_FIELDS = Object.freeze({ http_only: 'httpOnly', secure: 'secure', same_site: 'sameSite', path: 'path', domain: 'domain' });
 
 export const RESPONSE_TEXT_CAP = 64 * 1024;
+export const RESPONSE_HEADERS_CAP = 64;
 export const COOKIE_FINGERPRINT_HEX = 16;
 
 // A refusal by one of the guard's layers, while a request step ran: `reason` is the guard's.
@@ -76,20 +95,24 @@ export const GUARD_REASONS = Object.freeze([REASONS.host_not_allowed, REASONS.re
 
 // The fixed page-side function a request step runs (header). Self-contained: page.evaluate sends
 // its source to the page, so it refers to nothing outside itself; everything it needs is an argument.
-async function pageFetch([method, url, body, cap, blockedHeader]) {
+async function pageFetch([method, url, body, headers, cap, headerCap, blockedHeader]) {
   try {
-    const init = { method, credentials: 'same-origin', redirect: 'follow', cache: 'no-store' };
-    if (body !== null) {
-      init.headers = { 'content-type': 'application/json' };
-      init.body = body;
-    }
+    const init = { method, credentials: 'same-origin', redirect: 'follow', cache: 'no-store', headers: headers || {} };
+    if (body !== null) init.body = body;
     const res = await fetch(url, init);
     const text = await res.text();
+    const replyHeaders = {};
+    let n = 0;
+    res.headers.forEach((v, k) => {
+      if (n < headerCap) replyHeaders[k] = v;
+      n += 1;
+    });
     return {
       ok: true,
       status: res.status,
       contentType: res.headers.get('content-type'),
       blocked: res.headers.get(blockedHeader),
+      headers: replyHeaders,
       text: text.length > cap ? text.slice(0, cap) : text,
       truncated: text.length > cap,
     };
@@ -110,9 +133,17 @@ const originOfUrl = (u) => {
 // (openGuardedContext's `blocks`), read to name the reason of a request the route layer aborted.
 export async function sendRequest(page, step, blocks = null) {
   const url = new URL(step.url, page.url()).href;
-  const body = step.json === undefined ? null : JSON.stringify(step.json);
+  const headers = { ...(step.headers || {}) };
+  const named = (h) => Object.keys(headers).some((k) => k.toLowerCase() === h);
+  let body = null;
+  if (step.json !== undefined) {
+    body = JSON.stringify(step.json);
+    if (!named('content-type')) headers['content-type'] = 'application/json';
+  } else if (typeof step.body === 'string') {
+    body = step.body;
+  }
   const before = Array.isArray(blocks) ? blocks.length : 0;
-  const r = await page.evaluate(pageFetch, [step.method, url, body, RESPONSE_TEXT_CAP, BLOCKED_HEADER]);
+  const r = await page.evaluate(pageFetch, [step.method, url, body, headers, RESPONSE_TEXT_CAP, RESPONSE_HEADERS_CAP, BLOCKED_HEADER]);
   if (!r || r.ok !== true) {
     const fresh = Array.isArray(blocks) ? blocks.slice(before) : [];
     const origin = originOfUrl(url);
@@ -125,7 +156,7 @@ export async function sendRequest(page, step, blocks = null) {
   if (r.status === 403 && GUARD_REASONS.includes(r.blocked)) {
     throw new GuardRefusal(r.blocked, `${step.method} ${url}: the guard refused it (${r.blocked}, proxy layer)`);
   }
-  return { status: r.status, text: r.text, content_type: r.contentType, truncated: r.truncated === true };
+  return { status: r.status, text: r.text, content_type: r.contentType, headers: r.headers || {}, truncated: r.truncated === true };
 }
 
 // cookieFingerprint(value) → `sha256:<COOKIE_FINGERPRINT_HEX hex>` (never the value itself).
@@ -163,6 +194,37 @@ export function responseJsonValue(text, pointer) {
   }
   const v = resolvePointer(doc, pointer);
   return ['string', 'number', 'boolean'].includes(typeof v) ? v : null;
+}
+
+// The array a response_json_each / response_json_length read looks at: the parsed body's value at
+// `pointer` when it is an array, else null (not JSON, no such value, not an array).
+function responseArray(text, pointer) {
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const v = resolvePointer(doc, pointer);
+  return Array.isArray(v) ? v : null;
+}
+
+// response_json_each:<array>|<item> → JSON text of each element's value at <item> (null where it is
+// missing), or null when <array> is not a non-empty array.
+export function responseJsonEach(text, spec) {
+  const cut = spec.indexOf('|');
+  const list = responseArray(text, spec.slice(0, cut));
+  if (!list || list.length === 0) return null;
+  return JSON.stringify(list.map((el) => {
+    const v = resolvePointer(el, spec.slice(cut + 1));
+    return v === undefined ? null : v;
+  }));
+}
+
+// response_json_length:<pointer> → the array's length, or null when it is not an array.
+export function responseJsonLength(text, pointer) {
+  const list = responseArray(text, pointer);
+  return list ? list.length : null;
 }
 
 // The Playwright locator for a plan-step locator (role / label / text / testid; never CSS).
@@ -228,16 +290,38 @@ export async function runStep(page, step, ctx = {}) {
 export async function readValue(page, step, state = {}) {
   const p = step.property;
   if (p === 'url') return page.url();
+  if (p === 'focused') {
+    // runner-owned: :focus is never a plan locator (plans hold no CSS)
+    const f = page.locator('*:focus');
+    if ((await f.count()) === 0) return null;
+    const line = String(await f.first().ariaSnapshot()).split('\n')[0].replace(/^\s*-\s*/, '').replace(/:$/, '').trim();
+    return line === '' ? null : line;
+  }
+  if (typeof p === 'string' && p.startsWith(COOKIE_ATTRIBUTE_PREFIX)) {
+    const rest = p.slice(COOKIE_ATTRIBUTE_PREFIX.length);
+    const cut = rest.lastIndexOf(':');
+    const name = rest.slice(0, cut);
+    const field = COOKIE_FIELDS[rest.slice(cut + 1)];
+    const found = (await page.context().cookies([page.url()])).find((c) => c.name === name);
+    return found && field && found[field] !== undefined ? found[field] : null;
+  }
   if (typeof p === 'string' && p.startsWith(COOKIE_PREFIX)) {
     const name = p.slice(COOKIE_PREFIX.length);
     const found = (await page.context().cookies([page.url()])).find((c) => c.name === name);
     return found ? cookieFingerprint(found.value) : null;
   }
-  if (p === 'response_status' || p === 'response_text' || (typeof p === 'string' && p.startsWith(RESPONSE_JSON_PREFIX))) {
+  if (p === 'response_status' || p === 'response_text' || (typeof p === 'string' && (p.startsWith(RESPONSE_JSON_PREFIX) || p.startsWith(RESPONSE_JSON_EACH_PREFIX)
+    || p.startsWith(RESPONSE_JSON_LENGTH_PREFIX) || p.startsWith(RESPONSE_HEADER_PREFIX)))) {
     const reply = state && state.reply;
     if (!reply) throw new Error(`read ${p}: no request step has replied in this criterion`);
     if (p === 'response_status') return reply.status;
-    if (p === 'response_text') return reply.text;
+    if (p.startsWith(RESPONSE_HEADER_PREFIX)) {
+      const v = (reply.headers || {})[p.slice(RESPONSE_HEADER_PREFIX.length).toLowerCase()];
+      return typeof v === 'string' ? v : null;
+    }
+    if (p === 'response_text') return String(reply.text).trim();
+    if (p.startsWith(RESPONSE_JSON_EACH_PREFIX)) return responseJsonEach(reply.text, p.slice(RESPONSE_JSON_EACH_PREFIX.length));
+    if (p.startsWith(RESPONSE_JSON_LENGTH_PREFIX)) return responseJsonLength(reply.text, p.slice(RESPONSE_JSON_LENGTH_PREFIX.length));
     return responseJsonValue(reply.text, p.slice(RESPONSE_JSON_PREFIX.length));
   }
   const loc = locate(page, step.locator);
@@ -283,6 +367,9 @@ export function expectMatches(step, reads) {
       return last !== null && last !== undefined && String(last) === String(value);
     case 'contains':
       return typeof last === 'string' && last.includes(value);
+    case 'absent':
+      // no value read never matches (as contains); a number or boolean is compared as its text
+      return last !== null && last !== undefined && !String(last).includes(value);
     case 'matches':
       return last !== null && last !== undefined && new RegExp(value).test(String(last));
     case 'gt':

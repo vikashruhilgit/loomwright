@@ -9,7 +9,7 @@
 // neither re-implements it. It returns every problem it finds, never only the first.
 //
 // Node >= 18, standard library only.
-import { EnvError, REASONS, isOriginAllowed, parseOrigin } from './env-config.mjs';
+import { EnvError, REASONS, isLocalOrigin, isOriginAllowed, parseOrigin } from './env-config.mjs';
 
 export const STEP_TYPES = Object.freeze(['goto', 'click', 'fill', 'select', 'check', 'press', 'wait_for', 'request', 'read', 'expect']);
 
@@ -22,8 +22,8 @@ export const STEP_FIELDS = Object.freeze({
   check: Object.freeze({ required: Object.freeze(['locator']), optional: Object.freeze(['checked']) }),
   press: Object.freeze({ required: Object.freeze(['key']), optional: Object.freeze(['locator']) }),
   wait_for: Object.freeze({ required: Object.freeze(['locator', 'state']), optional: Object.freeze([]) }),
-  request: Object.freeze({ required: Object.freeze(['method', 'url']), optional: Object.freeze(['json']) }),
-  read: Object.freeze({ required: Object.freeze(['property']), optional: Object.freeze(['locator']) }),
+  request: Object.freeze({ required: Object.freeze(['method', 'url']), optional: Object.freeze(['json', 'body', 'headers']) }),
+  read: Object.freeze({ required: Object.freeze(['property']), optional: Object.freeze(['locator', 'at_load']) }),
   expect: Object.freeze({ required: Object.freeze(['op', 'value']), optional: Object.freeze([]) }),
 });
 
@@ -42,12 +42,29 @@ export const ACTION_TYPES = Object.freeze(['click', 'fill', 'select', 'check', '
 
 // A `request` step: one fetch from inside the page (runner/steps.mjs), to the origin of the page
 // the criterion is on. GET reads; every other method is an action. `json` is a plain object (a
-// non-GET body), its string leaves literals or {{NAME}}.
+// non-GET body), its string leaves literals or {{NAME}}. `body` is a raw text body instead (a
+// non-GET request that is not JSON, or malformed JSON on purpose); never both. `headers` names
+// request headers (string values, literals or {{NAME}}); a header the browser forbids page code
+// to set (FORBIDDEN_REQUEST_HEADERS) would be dropped silently, so it is refused.
 export const REQUEST_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 export const REQUEST_ACTION_METHODS = Object.freeze(REQUEST_METHODS.filter((m) => m !== 'GET'));
 // How deep a `json` body may nest, and how many leaves it may hold.
 export const REQUEST_JSON_MAX_DEPTH = 6;
 export const REQUEST_JSON_MAX_LEAVES = 64;
+export const REQUEST_BODY_MAX_CHARS = 8192;
+export const REQUEST_HEADERS_MAX = 16;
+export const REQUEST_HEADER_NAME_PATTERN = '^[A-Za-z0-9][A-Za-z0-9-]*$';
+// fetch() drops these (the Fetch standard's forbidden request headers): a plan cannot set them.
+export const FORBIDDEN_REQUEST_HEADERS = Object.freeze([
+  'accept-charset', 'accept-encoding', 'access-control-request-headers', 'access-control-request-method',
+  'connection', 'content-length', 'cookie', 'cookie2', 'date', 'dnt', 'expect', 'host', 'keep-alive',
+  'origin', 'referer', 'set-cookie', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'via',
+]);
+const FORBIDDEN_HEADER_PREFIXES = Object.freeze(['proxy-', 'sec-']);
+export function isForbiddenHeader(name) {
+  const n = String(name).toLowerCase();
+  return FORBIDDEN_REQUEST_HEADERS.includes(n) || FORBIDDEN_HEADER_PREFIXES.some((x) => n.startsWith(x));
+}
 
 // isActionStep(step) → true for a step that can change app state: ACTION_TYPES, or a `request`
 // whose method is not GET.
@@ -58,36 +75,61 @@ export function isActionStep(step) {
 }
 
 export const WAIT_STATES = Object.freeze(['attached', 'detached', 'visible', 'hidden']);
-export const READ_PROPERTIES = Object.freeze(['text', 'value', 'checked', 'count', 'url', 'response_status', 'response_text']);
+// focused: the element that holds keyboard focus, as its accessibility-tree line (`button "Save"`),
+// or no value when focus is on no element (the page body).
+export const READ_PROPERTIES = Object.freeze(['text', 'value', 'checked', 'count', 'url', 'focused', 'response_status', 'response_text']);
 export const READ_ATTRIBUTE_PATTERN = '^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$';
 // response_json:<RFC 6901 pointer> into the last reply's parsed body (at least one reference
 // token; `~` only as ~0 or ~1).
 export const READ_RESPONSE_JSON_PATTERN = '^response_json:(/([^~/]|~[01])*)+$';
 // cookie:<name>: a fingerprint of the context's cookie of that name, never its value.
 export const READ_COOKIE_PATTERN = '^cookie:[A-Za-z0-9_.-]+$';
+// response_json_each:<array pointer>|<item pointer>: the value at <item pointer> in every element of
+// the array at <array pointer> (empty: the body itself), as JSON text (`["Soccer","Tennis"]`; null for an element without
+// it), so "some element is named Soccer" is `contains "\"Soccer\""` and "no element has an email"
+// `absent "@"`; no value when the pointer is not a non-empty array. response_json_length:<pointer>:
+// the length of that array (0 for an empty one; no value when it is not an array).
+export const READ_RESPONSE_JSON_EACH_PATTERN = '^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)+$';
+export const READ_RESPONSE_JSON_LENGTH_PATTERN = '^response_json_length:(/([^~/]|~[01])*)*$';
+// response_header:<name>: a header of the last reply (its value, or no value when it is absent;
+// Set-Cookie is never readable by page code: read cookie_attribute instead).
+export const READ_RESPONSE_HEADER_PATTERN = '^response_header:[A-Za-z0-9][A-Za-z0-9-]*$';
+// cookie_attribute:<name>:<attribute>: one attribute of the context's cookie of that name (never
+// its value): http_only and secure (booleans), same_site (Strict, Lax or None), path, domain.
+export const COOKIE_ATTRIBUTES = Object.freeze(['http_only', 'secure', 'same_site', 'path', 'domain']);
+export const READ_COOKIE_ATTRIBUTE_PATTERN = `^cookie_attribute:[A-Za-z0-9_.-]+:(${COOKIE_ATTRIBUTES.join('|')})$`;
 // The reads about the last reply of a `request` step (response_without_request without one).
 export const RESPONSE_READ_PREFIX = 'response_';
 // The reads that take no locator.
 export function readTakesNoLocator(p) {
-  return p === 'url' || isResponseRead(p) || isCookieRead(p);
+  return p === 'url' || p === 'focused' || isResponseRead(p) || isCookieRead(p) || isCookieAttributeRead(p);
 }
 export function isResponseRead(p) {
-  return typeof p === 'string' && (p === 'response_status' || p === 'response_text' || new RegExp(READ_RESPONSE_JSON_PATTERN).test(p));
+  return typeof p === 'string' && (p === 'response_status' || p === 'response_text' || new RegExp(READ_RESPONSE_JSON_PATTERN).test(p)
+    || new RegExp(READ_RESPONSE_JSON_EACH_PATTERN).test(p) || new RegExp(READ_RESPONSE_JSON_LENGTH_PATTERN).test(p)
+    || new RegExp(READ_RESPONSE_HEADER_PATTERN).test(p));
+}
+export function isCookieAttributeRead(p) {
+  return typeof p === 'string' && new RegExp(READ_COOKIE_ATTRIBUTE_PATTERN).test(p);
 }
 export function isCookieRead(p) {
   return typeof p === 'string' && new RegExp(READ_COOKIE_PATTERN).test(p);
 }
-export const EXPECT_OPS = Object.freeze(['equals', 'contains', 'matches', 'gt', 'lt', 'changed_from']);
+// absent: the value read does not contain `value` (the read must still have read a value: an empty
+// read is NOT_VERIFIABLE no_value_read, and a locator that matches nothing fails its step).
+export const EXPECT_OPS = Object.freeze(['equals', 'contains', 'absent', 'matches', 'gt', 'lt', 'changed_from']);
 
 // A snapshot prefix: the plan step types except read/expect, at most PREFIX_MAX_STEPS of them. A
-// `request` in a prefix must be a GET (prefix_mutation_refused): looking never changes the app.
+// `request` in a prefix that is not a GET goes only to a local origin (localhost, 127.0.0.1, [::1]):
+// a planner may try a POST against the app it runs, as it may click a form's submit button, and it
+// counts as a plan-time action; to a remote origin it is prefix_mutation_refused.
 export const PREFIX_STEP_TYPES = Object.freeze(STEP_TYPES.filter((t) => t !== 'read' && t !== 'expect'));
 export const PREFIX_MAX_STEPS = 15;
 
 // `{{NAME}}` — an environment variable resolved at run time; allowed only in a fill/select value
-// and in a string leaf of a request's `json`.
+// and in a request's `json` string leaves, `body` and `headers` values.
 const PLACEHOLDER_RE = /\{\{([A-Z_][A-Z0-9_]*)\}\}/g;
-const PLACEHOLDER_FIELDS = Object.freeze({ fill: 'value', select: 'value', request: 'json' });
+const PLACEHOLDER_FIELDS = Object.freeze({ fill: ['value'], select: ['value'], request: ['json', 'body', 'headers'] });
 
 // Anything that looks like code, in any string field of a step. A step is data; a model that writes
 // script into one is refused, not interpreted.
@@ -119,7 +161,7 @@ export function isCodeLike(s) {
 
 export function isReadProperty(p) {
   return typeof p === 'string' && (READ_PROPERTIES.includes(p) || new RegExp(READ_ATTRIBUTE_PATTERN).test(p)
-    || isResponseRead(p) || isCookieRead(p));
+    || isResponseRead(p) || isCookieRead(p) || isCookieAttributeRead(p));
 }
 
 // The origin of an http(s) URL through the one origin parser, or null.
@@ -239,15 +281,39 @@ function checkFieldValues(step, at, add) {
         if (p) add('plan_schema_violation', `${at}: ${p}`);
         else if (step.method === 'GET') add('plan_schema_violation', `${at}: a GET request carries no json body`);
       }
+      if ('body' in step) {
+        if (typeof step.body !== 'string') add('plan_schema_violation', `${at}.body must be a string (a raw request body)`);
+        else if (step.body.length > REQUEST_BODY_MAX_CHARS) add('plan_schema_violation', `${at}.body holds ${step.body.length} characters; at most ${REQUEST_BODY_MAX_CHARS}`);
+        if ('json' in step) add('plan_schema_violation', `${at}: a request carries json or body, never both`);
+        if (step.method === 'GET') add('plan_schema_violation', `${at}: a GET request carries no body`);
+      }
+      if ('headers' in step) {
+        const h = step.headers;
+        if (!isPlainObject(h)) {
+          add('plan_schema_violation', `${at}.headers must be an object of header name to string value`);
+        } else {
+          const names = Object.keys(h);
+          if (names.length > REQUEST_HEADERS_MAX) add('plan_schema_violation', `${at}.headers names ${names.length} headers; at most ${REQUEST_HEADERS_MAX}`);
+          const seen = new Set();
+          for (const n of names) {
+            if (!new RegExp(REQUEST_HEADER_NAME_PATTERN).test(n)) add('plan_schema_violation', `${at}.headers: ${JSON.stringify(n)} is not a header name`);
+            else if (isForbiddenHeader(n)) add('plan_schema_violation', `${at}.headers: ${n} is a header the browser forbids page code to set (it would be dropped); it cannot be part of a plan`);
+            if (seen.has(n.toLowerCase())) add('plan_schema_violation', `${at}.headers names ${n} twice`);
+            seen.add(n.toLowerCase());
+            if (typeof h[n] !== 'string') add('plan_schema_violation', `${at}.headers.${n} must be a string`);
+          }
+        }
+      }
       break;
     case 'read':
       if (!isReadProperty(step.property)) {
-        add('plan_schema_violation', `${at}.property must be one of ${READ_PROPERTIES.join(', ')}, attribute:<name>, response_json:<JSON Pointer> or cookie:<name>`);
+        add('plan_schema_violation', `${at}.property must be one of ${READ_PROPERTIES.join(', ')}, attribute:<name>, response_json:<JSON Pointer>, response_json_each:<array pointer>|<item pointer>, response_json_length:<pointer>, response_header:<name>, cookie:<name> or cookie_attribute:<name>:<${COOKIE_ATTRIBUTES.join('|')}>`);
       } else if (readTakesNoLocator(step.property) && 'locator' in step) {
         add('plan_schema_violation', `${at}: read ${step.property} takes no locator`);
       } else if (!readTakesNoLocator(step.property) && !('locator' in step)) {
         add('plan_schema_violation', `${at}: read ${step.property} needs a locator`);
       }
+      if ('at_load' in step && typeof step.at_load !== 'boolean') add('plan_schema_violation', `${at}.at_load must be true or false`);
       break;
     case 'expect': {
       const { op, value } = step;
@@ -257,7 +323,7 @@ function checkFieldValues(step, at, add) {
         add('plan_schema_violation', `${at}: ${op} needs a number value`);
       } else if (op === 'changed_from' && typeof value !== 'boolean') {
         add('plan_schema_violation', `${at}: changed_from needs a boolean value (whether the last read must differ from the previous read)`);
-      } else if ((op === 'contains' || op === 'matches') && typeof value !== 'string') {
+      } else if ((op === 'contains' || op === 'absent' || op === 'matches') && typeof value !== 'string') {
         add('plan_schema_violation', `${at}: ${op} needs a string value`);
       } else if (op === 'equals' && !['string', 'number', 'boolean'].includes(typeof value)) {
         add('plan_schema_violation', `${at}: equals needs a string, number or boolean value`);
@@ -280,7 +346,7 @@ function checkFieldValues(step, at, add) {
 //    (isOriginAllowed). No config allows nothing: the check fails closed.
 //  - origins: when an array, every goto origin must also be one of these (the plan's `origins`).
 //  - prefix: a snapshot prefix — only PREFIX_STEP_TYPES, at most PREFIX_MAX_STEPS steps, and a
-//    request only as a GET (prefix_mutation_refused).
+//    request that is not a GET only to a local origin (prefix_mutation_refused).
 //  - pageOrigin: the origin of the page before the first step (a snapshot's <url>), or null.
 // A request's url must pass the same origin checks as a goto, and its origin must equal the origin
 // of the page at that point: the last goto before it (else pageOrigin). A cross-origin fetch would
@@ -312,8 +378,8 @@ export function validateSteps(steps, { config, origins, prefix = false, pageOrig
     if (prefix && !PREFIX_STEP_TYPES.includes(t)) {
       add('prefix_step_not_allowed', `${at}: ${t} is not allowed in a snapshot prefix (allowed: ${PREFIX_STEP_TYPES.join(', ')})`);
     }
-    if (prefix && t === 'request' && step.method !== 'GET') {
-      add('prefix_mutation_refused', `${at}: a snapshot prefix sends only GET requests (looking never changes the app); this one is ${JSON.stringify(step.method)}`);
+    if (prefix && t === 'request' && step.method !== 'GET' && !(typeof step.url === 'string' && isLocalOrigin(urlOrigin(step.url) || ''))) {
+      add('prefix_mutation_refused', `${at}: a snapshot prefix sends a ${JSON.stringify(step.method)} request only to a local origin (it would change a remote app while planning)`);
     }
     const { required, optional } = STEP_FIELDS[t];
     for (const k of Object.keys(step)) {
@@ -329,7 +395,7 @@ export function validateSteps(steps, { config, origins, prefix = false, pageOrig
       if (isCodeLike(s)) add('code_like_content', `${p} looks like code (${JSON.stringify(s.slice(0, 60))})`);
     }
     if (t === 'request') {
-      for (const k of keysOf(step.json)) if (isCodeLike(k)) add('code_like_content', `${at}.json key ${JSON.stringify(k.slice(0, 60))} looks like code`);
+      for (const k of [...keysOf(step.json), ...keysOf(step.headers)]) if (isCodeLike(k)) add('code_like_content', `${at} key ${JSON.stringify(k.slice(0, 60))} looks like code`);
     }
     if ((t === 'goto' || t === 'request') && typeof step.url === 'string' && !isCodeLike(step.url)) {
       const origin = urlOrigin(step.url);
@@ -347,22 +413,25 @@ export function validateSteps(steps, { config, origins, prefix = false, pageOrig
 }
 
 // The `{{NAME}}` placeholders a step list uses, in first-use order (only fill/select values and
-// a request's json string leaves).
+// a request's json string leaves, body and header values).
 export function placeholderNames(steps) {
   const names = [];
   if (!Array.isArray(steps)) return names;
   for (const step of steps) {
-    const field = isPlainObject(step) ? PLACEHOLDER_FIELDS[step.type] : undefined;
-    if (!field || !(field in step)) continue;
-    for (const leaf of stringLeaves(step[field])) {
-      for (const m of leaf.matchAll(PLACEHOLDER_RE)) if (!names.includes(m[1])) names.push(m[1]);
+    const fields = isPlainObject(step) ? PLACEHOLDER_FIELDS[step.type] : undefined;
+    if (!fields) continue;
+    for (const field of fields) {
+      if (!(field in step)) continue;
+      for (const leaf of stringLeaves(step[field])) {
+        for (const m of leaf.matchAll(PLACEHOLDER_RE)) if (!names.includes(m[1])) names.push(m[1]);
+      }
     }
   }
   return names;
 }
 
 // resolvePlaceholders(steps, env) → a new step list with every `{{NAME}}` in a fill/select value
-// (and a request's json string leaves) replaced by env[NAME]. The input is never changed (callers log the given steps, never the values).
+// (and a request's json string leaves, body and header values) replaced by env[NAME]. The input is never changed (callers log the given steps, never the values).
 // Any unset name throws EnvError placeholder_unset (blocked) naming every unset one: an unset value
 // is never resolved to an empty string.
 export function resolvePlaceholders(steps, env = process.env) {
@@ -373,8 +442,12 @@ export function resolvePlaceholders(steps, env = process.env) {
     throw e;
   }
   return steps.map((step) => {
-    const field = isPlainObject(step) ? PLACEHOLDER_FIELDS[step.type] : undefined;
-    if (!field || !(field in step)) return step;
-    return { ...step, [field]: mapStrings(step[field], (v) => v.replace(PLACEHOLDER_RE, (_, n) => env[n])) };
+    const fields = isPlainObject(step) ? PLACEHOLDER_FIELDS[step.type] : undefined;
+    if (!fields) return step;
+    const out = { ...step };
+    for (const field of fields) {
+      if (field in step) out[field] = mapStrings(step[field], (v) => v.replace(PLACEHOLDER_RE, (_, n) => env[n]));
+    }
+    return out;
   });
 }

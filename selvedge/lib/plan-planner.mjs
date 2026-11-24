@@ -11,7 +11,9 @@
 //    {"input_tokens": N, "output_tokens": M} to $SELVEDGE_PLANNER_USAGE. Its stdout and stderr go
 //    to selvedge's stderr.
 //  - unset (or empty): the built-in default, `claude -p <prompt> --output-format json --model <m>
-//    --allowedTools "Bash(<SELVEDGE_BIN> snapshot:*)"`. The prompt is selvedge/prompts/planner.md
+//    --allowedTools "Bash(<SELVEDGE_BIN> snapshot:*)" "Bash(<SELVEDGE_BIN> plan --validate:*)"`: it
+//    may look at pages and lint its own plan (from stdin, against the run folder's criteria.json)
+//    before it returns it. The prompt is selvedge/prompts/planner.md
 //    followed by the planner-input.json text; the model is SELVEDGE_PLANNER_MODEL (default sonnet).
 //    The plan is the JSON object in the result's `result` text (a ```json block, or the whole
 //    text); selvedge writes it to plan.json and the result's `usage` to planner-usage.json.
@@ -20,7 +22,7 @@
 // (exit 2). What the plan says is not judged here: plan.mjs runs the plan lint before anything is
 // hashed.
 //
-// Honest limit: `--allowedTools` admits only the snapshot command, but claude still applies the
+// Honest limit: `--allowedTools` admits only those two commands, but claude still applies the
 // user's own settings, so a tool those settings allow is allowed to the planner too.
 //
 // Node >= 18, standard library only.
@@ -43,15 +45,19 @@ function failed(message) {
   return new EnvError(REASONS.planner_failed, message);
 }
 
-// The exact --allowedTools rule the default planner gets: the snapshot command and nothing else.
+// The exact --allowedTools rules the default planner gets: the snapshot command, the plan lint,
+// and nothing else.
 export function snapshotToolRule(selvedgeBin) {
   return `Bash(${selvedgeBin} snapshot:*)`;
+}
+export function validateToolRule(selvedgeBin) {
+  return `Bash(${selvedgeBin} plan --validate:*)`;
 }
 
 // claudeArgv({ prompt, model, selvedgeBin }) → the default planner's argv (after `claude`).
 // --allowedTools is variadic, so it comes last: nothing after it can be read as another tool.
 export function claudeArgv({ prompt, model, selvedgeBin }) {
-  return ['-p', prompt, '--output-format', 'json', '--model', model, '--allowedTools', snapshotToolRule(selvedgeBin)];
+  return ['-p', prompt, '--output-format', 'json', '--model', model, '--allowedTools', snapshotToolRule(selvedgeBin), validateToolRule(selvedgeBin)];
 }
 
 // The default planner's prompt: the fixed prompt file, then the planner input.

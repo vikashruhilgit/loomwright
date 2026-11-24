@@ -16,11 +16,13 @@
 //   completed, the judged read empty ("" or none)       NOT_VERIFIABLE no_value_read — even when
 //                                                       the expect is `equals ""`
 //   completed, no expect result recorded                BLOCKED run_interrupted
+//   completed, a `material: true` assumption            NOT_VERIFIABLE material_assumption — matched
+//                                                       or not: a guessed premise the verdict rests
+//                                                       on decides neither PASS nor FAIL
 //   completed, the judged expect mismatched             FAIL (the stable wait ran before it)
 //   completed, any expect matched on an empty read      NOT_VERIFIABLE no_value_read (that pair is
 //                                                       the one reported; a later match never
 //                                                       outweighs it)
-//   completed, matched, a `material: true` assumption   NOT_VERIFIABLE material_assumption
 //   completed, matched                                  PASS
 // The judged expect is the FIRST mismatched expect line when there is one (every expect a plan
 // holds is a check: an earlier one that failed is never outweighed by a later one that held), else
@@ -194,6 +196,7 @@ function judgePlanned(cp, stepLines, end) {
   if (end.outcome !== CRITERION_OUTCOMES.completed) return set(VERDICTS.BLOCKED, end.reason);
   if (isEmptyRead(entry.read_value)) return set(VERDICTS.NOT_VERIFIABLE, REASONS.no_value_read);
   if (entry.matched === null) return set(VERDICTS.BLOCKED, REASONS.run_interrupted);
+  if (assumptions.some((a) => isPlainObject(a) && a.material === true)) return set(VERDICTS.NOT_VERIFIABLE, REASONS.material_assumption);
   if (entry.matched === false) return set(VERDICTS.FAIL);
   // Every expect is a check: one that held on an empty read verified nothing, and a later expect
   // that held never outweighs it (judged on that pair, read_value and expected from it).
@@ -203,7 +206,6 @@ function judgePlanned(cp, stepLines, end) {
     Object.assign(entry, { read_value: r ? r.value : null, expected: plannedExpect(cp.steps, stepLines[emptyAt].step) });
     return set(VERDICTS.NOT_VERIFIABLE, REASONS.no_value_read);
   }
-  if (assumptions.some((a) => isPlainObject(a) && a.material === true)) return set(VERDICTS.NOT_VERIFIABLE, REASONS.material_assumption);
   return set(VERDICTS.PASS);
 }
 

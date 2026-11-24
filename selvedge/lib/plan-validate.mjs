@@ -19,6 +19,9 @@
 //  - a read cookie:<name> is a fingerprint, never a value: an expect on it is changed_from only,
 //    against an earlier read of the same cookie (a baseline), so "a cookie exists" is "it changed
 //    from what it was before";
+//  - a read with `at_load: true` (judged without the stable wait) comes before the criterion's first
+//    action, in a positive criterion, and the expects that check it are equals, contains or matches
+//    (at_load_misused): it reads the page as it loaded, never a state an action is still producing;
 //  - every step passes validateSteps (plan-steps.mjs, the one step validator).
 //
 // Node >= 18, standard library only.
@@ -48,6 +51,7 @@ export const PLAN_PROBLEMS = Object.freeze([
   'prefix_too_long',
   'prefix_mutation_refused',
   'response_without_request',
+  'at_load_misused',
   'invalid_not_planned',
   'plan_schema_violation',
 ]);
@@ -65,6 +69,7 @@ export const NOT_PLANNED_REASONS = Object.freeze([
   REASONS.criterion_not_testable,
   REASONS.side_effect_not_observable,
   REASONS.exploration_budget,
+  REASONS.criterion_plan_invalid,
 ]);
 
 // A final expect with one of these ops checks only that something exists or shows.
@@ -97,10 +102,11 @@ function isCountAbsence(read, expect) {
     && ((expect.op === 'equals' && expect.value === 0) || (expect.op === 'lt' && typeof expect.value === 'number' && expect.value <= 1));
 }
 
-// A final expect that holds for any value read (so it checks nothing about the value): a detail
-// string, or null. `read` is the step before it (or null).
+// A final expect that holds for any value read (so it checks nothing about the value), or one that
+// hides an absence check in a regex: a detail string, or null. `read` is the step before it (or null).
 //  - contains "" (or only whitespace): it checks no visible character of the value (every text
-//    contains "");
+//    contains ""); absent "" names nothing (it never holds);
+//  - matches with a negative lookahead over the whole text (ABSENCE_LOOKAHEAD): use absent;
 //  - matches a pattern that matches "": it holds even when the read value is empty;
 //  - matches a pattern that matches EVERY text of ANY_TEXT_PROBES, as ".", "\S", "\w", "^.+$",
 //    ".." or "^.{2,}$" do: it holds for any ordinary text, so it checks only that something is
@@ -118,10 +124,20 @@ export const ANY_TEXT_PROBES = Object.freeze([
   '#1 $%',
   'Ab1 -_.,:;!?@#$%^&*()[]{}<>/\\|"\'`~+=',
 ]);
+// A negative lookahead (or lookbehind) that scans the whole text: `(?![\s\S]*x)`, `(?!.*x)`,
+// `(?![^]*x)`. Written to say "x is nowhere", it also passes whatever else the text holds, and one
+// wrong alternative in it fails a right page; `absent` says the same thing plainly.
+export const ABSENCE_LOOKAHEAD = /\(\?<?!(?:\[\\s\\S\]|\[\\S\\s\]|\[\\w\\W\]|\[\\d\\D\]|\[\^\]|\.)[*+]/;
 export function vacuousExpect(read, expect) {
   const { op, value } = expect;
   if (op === 'contains' && typeof value === 'string' && value.trim() === '') {
     return `expect contains ${JSON.stringify(value)} checks no visible character of the value; check a non-blank value`;
+  }
+  if (op === 'absent' && typeof value === 'string' && value.trim() === '') {
+    return `expect absent ${JSON.stringify(value)} names no visible character to be absent; name the text that must not be there`;
+  }
+  if (op === 'matches' && typeof value === 'string' && ABSENCE_LOOKAHEAD.test(value)) {
+    return `expect matches ${JSON.stringify(value)} hides an absence check in a negative lookahead over the whole text; use expect absent (one per text that must not be there), and read the narrowest value that holds it`;
   }
   if (op === 'matches' && typeof value === 'string') {
     let re = null;
@@ -162,10 +178,35 @@ function lintReplyReads(id, steps, add) {
   });
 }
 
+// The ops an at_load read may be checked with: each compares the value read, none a change.
+export const AT_LOAD_OPS = Object.freeze(['equals', 'contains', 'matches']);
+
+// The at_load rule (header): one problem per offending read or expect.
+function lintAtLoad(id, entry, steps, add) {
+  const firstAction = steps.findIndex((s) => isActionStep(s));
+  let atLoadRead = -1;
+  steps.forEach((s, i) => {
+    if (!isPlainObject(s)) return;
+    if (s.type === 'read') {
+      atLoadRead = s.at_load === true ? i : -1;
+      if (atLoadRead < 0) return;
+      if (firstAction >= 0 && firstAction < i) {
+        add(id, 'at_load_misused', `steps[${i}] read at_load comes after an action (steps[${firstAction}] ${steps[firstAction].type}); it reads the page as it loaded, so put it before any action, or drop at_load`);
+      }
+      if (entry.polarity === 'negative') {
+        add(id, 'at_load_misused', `steps[${i}] read at_load in a negative criterion: a negative check needs the stable wait (a side effect still landing would pass it); drop at_load`);
+      }
+    } else if (s.type === 'expect' && atLoadRead >= 0 && !AT_LOAD_OPS.includes(s.op)) {
+      add(id, 'at_load_misused', `steps[${i}] expect ${s.op} checks the at_load read steps[${atLoadRead}]; an at_load read is checked with ${AT_LOAD_OPS.join(', ')} only`);
+    }
+  });
+}
+
 function lintSteps(id, entry, add) {
   const steps = entry.steps;
   if (!Array.isArray(steps)) return;
   lintReplyReads(id, steps, add);
+  lintAtLoad(id, entry, steps, add);
   const n = steps.length;
   const last = n ? steps[n - 1] : null;
   const prev = n > 1 ? steps[n - 2] : null;
@@ -182,6 +223,12 @@ function lintSteps(id, entry, add) {
   }
   const vacuous = isPlainObject(last) && last.type === 'expect' ? vacuousExpect(endsInReadExpect ? prev : null, last) : null;
   if (vacuous) add(id, 'existence_only_expect', vacuous);
+  // an absence hidden in a lookahead, or a blank absent, in any earlier expect too
+  steps.slice(0, -1).forEach((s, i) => {
+    if (!isPlainObject(s) || s.type !== 'expect' || typeof s.value !== 'string') return;
+    const hidden = (s.op === 'matches' && ABSENCE_LOOKAHEAD.test(s.value)) || (s.op === 'absent' && s.value.trim() === '');
+    if (hidden) add(id, 'existence_only_expect', `steps[${i}] ${vacuousExpect(null, s)}`);
+  });
   if (entry.polarity !== 'negative') return;
   const firstAction = steps.findIndex((s) => isActionStep(s));
   if (firstAction >= 0 && !steps.slice(0, firstAction).some((s) => isPlainObject(s) && s.type === 'read')) {
@@ -243,6 +290,7 @@ function lintNotPlanned(list, ctx, add) {
     if ('detail' in np && typeof np.detail !== 'string') bad('detail must be a string');
     if (np.reason === REASONS.criterion_not_testable && !nonEmptyString(np.rewrite)) bad(`${REASONS.criterion_not_testable} needs a non-empty rewrite`);
     if (np.reason === REASONS.side_effect_not_observable && !nonEmptyString(np.detail)) bad(`${REASONS.side_effect_not_observable} needs a non-empty detail naming the pages looked at`);
+    if (np.reason === REASONS.criterion_plan_invalid && !nonEmptyString(np.detail)) bad(`${REASONS.criterion_plan_invalid} needs a non-empty detail naming the lint problems`);
     const text = ctx.textById.get(np.id);
     if (text !== undefined && classifyTestability(text).testability === 'vague' && np.reason !== REASONS.criterion_not_testable) {
       bad(`a vague criterion is not planned under ${REASONS.criterion_not_testable}, with a rewrite`);

@@ -24,6 +24,8 @@
 //   /slow         a "Load price" button and a value (data-testid "price") reading "pending"; the
 //                 click fetches /api/price, which the server answers only after SLOW_PRICE_MS
 //                 (1.5 s) with "42", and only then does the value read "42"
+//   /slow-auto    the same value, but the page fetches /api/price as it loads (no click): it reads
+//                 "pending" when the page has loaded and "42" about 1.5 s later
 //   /api/price    the slow answer above (text/plain "42")
 //   /controls     a "Do nothing" button (no handler: clicking it changes nothing), an empty value
 //                 (data-testid "empty", no text), a hidden "Hidden action" button, a "Covered action"
@@ -55,6 +57,7 @@
 //                 JSON {"error": "email and password are required"}. Every POST is counted
 //                 (/control/hits?path=/api/login)
 //   /api/big      GET: text/plain of BIG_REPLY_CHARS characters (past the runner's 64 KiB reply cap)
+//   /api/ok       GET: text/plain "ok\n" (a body with a trailing newline)
 //   anything else 404 text
 // Every request is recorded (method, path, Cookie header) in `events`.
 //
@@ -161,6 +164,16 @@ const price = document.getElementById('price');
 document.getElementById('load').addEventListener('click', () => {
   fetch('/api/price').then((r) => r.text()).then((t) => { price.textContent = t; });
 });
+</script>`,
+);
+
+const SLOW_AUTO = page(
+  'Slow auto',
+  `<main><h1>Slow auto</h1>
+<p>Price: <span data-testid="price" id="price">pending</span></p></main>
+<script>
+const price = document.getElementById('price');
+fetch('/api/price').then((r) => r.text()).then((t) => { price.textContent = t; });
 </script>`,
 );
 
@@ -336,6 +349,9 @@ export async function startAppServer({ port: listenPort = 0 } = {}) {
       case '/slow':
         send(200, SLOW);
         return;
+      case '/slow-auto':
+        send(200, SLOW_AUTO);
+        return;
       case '/api/price': {
         const timer = setTimeout(() => {
           res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
@@ -353,6 +369,9 @@ export async function startAppServer({ port: listenPort = 0 } = {}) {
         return;
       case '/api/big':
         text('x'.repeat(BIG_REPLY_CHARS));
+        return;
+      case '/api/ok':
+        text('ok\n');
         return;
       case '/cookie': {
         const headers = url.searchParams.get('set') === '1' ? { 'set-cookie': 'selvedge_fixture=seen; Path=/' } : {};

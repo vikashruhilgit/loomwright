@@ -29,7 +29,7 @@
 // Reason tokens, printed `harness: FAIL <token>: <detail>` on stderr. Each token sits on exactly one
 // code line, the line that records that failure, so a test can pin it:
 //   target_unavailable, results_invalid, readme_results_out_of_sync, readme_markers_missing,
-//   work_dir_invalid, run_incomplete, browser_unavailable
+//   work_dir_invalid, run_incomplete, browser_unavailable, credentials_invalid
 //
 // Before the first target is brought up (and before anything is written to the work dir), `run`
 // checks the browser: it loads the Playwright that every `selvedge run` child would load (the
@@ -63,6 +63,13 @@ const SETS = Object.freeze(['held-out', 'tuning']);
 // Removed from every selvedge child's environment: a budget would BLOCK a plan over it after its
 // tokens are spent (inflating abstention), and a stray run folder or base would misroute snapshot.
 const STRIPPED_ENV = Object.freeze(['SELVEDGE_PLANNER_TOKEN_BUDGET', 'SELVEDGE_RUN_DIR', 'SELVEDGE_BASE']);
+// SELVEDGE_EVAL_CREDENTIALS: a JSON file OUTSIDE the repository, {"<owner>/<repo>": {"NAME": "value"}},
+// the test accounts a commit target's seed creates. A commit target of a listed repo gets those
+// names as its workspace's selvedge.json auth.env (so the planner is told them and selvedge redacts
+// their values everywhere), and its plan and run get the values in their environment. Values are
+// never written by the harness: not to a workspace, a log line, meta.json or a report.
+export const CREDENTIALS_ENV = 'SELVEDGE_EVAL_CREDENTIALS';
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const PLAN_REASONS = Object.freeze(['planner_failed', 'plan_invalid', 'criteria_invalid', 'criteria_not_found']);
 
 const USAGE = `Usage: node selvedge/eval/harness.mjs <command> [--repo <dir>]
@@ -79,7 +86,10 @@ Commands:
 
 Environment: SELVEDGE_EVAL_HELD_OUT (the outside folder), SELVEDGE_EVAL_TARGET_DRIVER (default
 selvedge/eval/target-driver.sh), SELVEDGE_EVAL_SELVEDGE_BIN (default selvedge/bin/selvedge),
-SELVEDGE_PLANNER / SELVEDGE_PLANNER_MODEL (the planner, as for selvedge plan).
+SELVEDGE_PLANNER / SELVEDGE_PLANNER_MODEL (the planner, as for selvedge plan),
+SELVEDGE_EVAL_CREDENTIALS (a JSON file outside the repo: {"<owner>/<repo>": {"NAME": "value"}}, the
+test accounts of a commit target's seed; names go to the workspace's auth.env, values only to the
+environment of its plan and run).
 Exit codes: 0 ok, 1 a named failure on stderr, 2 usage error or cannot run.`;
 
 class UsageError extends Error {}
@@ -92,6 +102,7 @@ class Failure extends Error {
 
 // One constructor per reason token, so each token sits on exactly one code line.
 const resultsInvalid = (detail) => new Failure([`results_invalid: ${detail}`]);
+const credentialsInvalid = (detail) => new Failure([`credentials_invalid: ${detail}`]);
 const outOfSync = (detail) => new Failure([`readme_results_out_of_sync: ${detail}`]);
 const markersMissing = (detail) => new Failure([`readme_markers_missing: ${detail}`]);
 const workDirInvalid = (detail) => new Failure([`work_dir_invalid: ${detail}`]);
@@ -124,10 +135,49 @@ export function engineOf(env = process.env) {
 }
 
 // The environment every selvedge child gets.
-export function childEnv(env = process.env) {
+export function childEnv(env = process.env, extra = null) {
   const out = { ...env };
   for (const k of STRIPPED_ENV) delete out[k];
-  return out;
+  delete out[CREDENTIALS_ENV];
+  return extra ? { ...out, ...extra } : out;
+}
+
+// readCredentials(repo, env) → {"<owner>/<repo>": {NAME: value}} from SELVEDGE_EVAL_CREDENTIALS, or
+// {} when it is unset. Throws credentials_invalid (naming no value) on a file inside the repository,
+// one that does not parse, or a name or value of the wrong shape.
+export function readCredentials(repo, env = process.env) {
+  const file = env[CREDENTIALS_ENV];
+  if (file === undefined || file === '') return {};
+  if (insideRepo(repo, file)) throw credentialsInvalid(`${file} is inside the repository ${repo}; test credentials live outside it`);
+  let doc;
+  try {
+    doc = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (e) {
+    throw credentialsInvalid(`${file} is not readable JSON (${e && e.code ? e.code : 'parse error'})`);
+  }
+  if (!isObj(doc)) throw credentialsInvalid(`${file} must be an object of "<owner>/<repo>" to {NAME: value}`);
+  for (const [key, names] of Object.entries(doc)) {
+    if (!/^[^/\s]+\/[^/\s]+$/.test(key)) throw credentialsInvalid(`${file}: ${JSON.stringify(key)} is not "<owner>/<repo>"`);
+    if (!isObj(names) || Object.keys(names).length === 0) throw credentialsInvalid(`${file}: ${key} must map at least one NAME to a value`);
+    for (const [n, v] of Object.entries(names)) {
+      if (!ENV_NAME_RE.test(n)) throw credentialsInvalid(`${file}: ${key}: ${JSON.stringify(n)} is not an environment name (A-Z, 0-9, _)`);
+      if (typeof v !== 'string' || v === '') throw credentialsInvalid(`${file}: ${key}.${n} must be a non-empty string`);
+    }
+  }
+  return doc;
+}
+
+// The credentials a target gets: its repo's entry for a commit target, else null.
+export function credentialsFor(target, credentials) {
+  return target && target.kind === 'commit' && isObj(credentials) && isObj(credentials[target.repo]) ? credentials[target.repo] : null;
+}
+
+// The workspace selvedge.json of a target: only the driver's origin, and auth.env names when the
+// target has credentials (names only).
+export function workspaceConfig(origin, creds) {
+  const c = { schema_version: 1, origins: [origin], allow_remote: false, allow_remote_mutation: false };
+  if (creds) c.auth = { env: Object.keys(creds).sort() };
+  return c;
 }
 
 // --- results file ------------------------------------------------------------------------------
@@ -308,9 +358,9 @@ function selvedgeBin() {
 }
 
 // One selvedge child, async (plans run side by side). Resolves {code, stdout, stderr}.
-function selvedgeAsync(args, cwd, logBase) {
+function selvedgeAsync(args, cwd, logBase, extra = null) {
   return new Promise((done) => {
-    const child = spawn(selvedgeBin(), args, { cwd, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(selvedgeBin(), args, { cwd, env: childEnv(process.env, extra), stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
@@ -324,8 +374,8 @@ function selvedgeAsync(args, cwd, logBase) {
   });
 }
 
-function selvedgeSync(args, cwd, logBase) {
-  const r = spawnSync(selvedgeBin(), args, { cwd, env: childEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+function selvedgeSync(args, cwd, logBase, extra = null) {
+  const r = spawnSync(selvedgeBin(), args, { cwd, env: childEnv(process.env, extra), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   writeFileSync(`${logBase}.out`, r.stdout || '');
   writeFileSync(`${logBase}.err`, `${r.stderr || ''}${r.error ? `\n${r.error.message}` : ''}`);
   return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
@@ -363,8 +413,8 @@ function verdictsFrom(file, criteria, reasonIfMissing) {
 const notRun = (target, plan) => ({ target, plan, run: null, run_id: null, planner_tokens: null, duration_ms: null });
 
 // `selvedge run` (or `run --replay`): its verdicts, run id and duration.
-function runOnce(args, ws, logBase, criteria) {
-  const r = selvedgeSync(args, ws, logBase);
+function runOnce(args, ws, logBase, criteria, extra = null) {
+  const r = selvedgeSync(args, ws, logBase, extra);
   const m = /^verdict \S+ (.+verdict\.json)$/m.exec(r.stdout);
   const file = m ? m[1].trim() : null;
   const reason = (/^BLOCKED (\S+)/m.exec(r.stdout) || [])[1] || `run_exit_${r.code}`;
@@ -390,10 +440,11 @@ async function runTarget(g, tdir, opts) {
     mkdirSync(ws, { recursive: true });
     if (!existsSync(join(ws, '.git'))) execFileSync('git', ['init', '-q', ws], { stdio: 'ignore' });
     writeFileSync(join(ws, '.gitignore'), '.selvedge/\n');
-    writeFileSync(join(ws, 'selvedge.json'), jsonText({ schema_version: 1, origins: [origin], allow_remote: false, allow_remote_mutation: false }));
+    const creds = credentialsFor(g.target, opts.credentials);
+    writeFileSync(join(ws, 'selvedge.json'), jsonText(workspaceConfig(origin, creds)));
     writeFileSync(join(ws, 'criteria.json'), jsonText({ schema_version: 1, source: null, criteria }));
-    note(`${g.key}: up at ${origin}; ${opts.plannerRepeats} plan(s) of ${criteria.length} criterion(s)`);
-    const planned = await Promise.all(Array.from({ length: opts.plannerRepeats }, (_, i) => selvedgeAsync(['plan', 'criteria.json'], ws, join(tdir, 'logs', `plan-${i + 1}`))));
+    note(`${g.key}: up at ${origin}; ${opts.plannerRepeats} plan(s) of ${criteria.length} criterion(s)${creds ? `; test accounts ${Object.keys(creds).sort().join(', ')}` : ''}`);
+    const planned = await Promise.all(Array.from({ length: opts.plannerRepeats }, (_, i) => selvedgeAsync(['plan', 'criteria.json'], ws, join(tdir, 'logs', `plan-${i + 1}`), creds)));
     const plans = [];
     const frozenPlans = [];
     const replays = [];
@@ -414,12 +465,12 @@ async function runTarget(g, tdir, opts) {
       }
       const fl = freezes.find((l) => l.run_id === basename(dir));
       const ptok = fl ? tokensOf(fl.planner_tokens) : 0;
-      const first = runOnce(['run', '--non-interactive', dir], ws, join(tdir, 'logs', `run-${p + 1}-1`), criteria);
+      const first = runOnce(['run', '--non-interactive', dir], ws, join(tdir, 'logs', `run-${p + 1}-1`), criteria, creds);
       plans.push(first.verdicts);
       runs.push({ target: g.key, plan: p + 1, run: 1, run_id: first.runId, planner_tokens: ptok, duration_ms: first.duration_ms });
       if (p !== 0) continue;
       for (let r = 1; r < opts.runnerRepeats; r++) {
-        const rep = runOnce(['run', '--replay', dir, '--non-interactive'], ws, join(tdir, 'logs', `run-1-${r + 1}`), criteria);
+        const rep = runOnce(['run', '--replay', dir, '--non-interactive'], ws, join(tdir, 'logs', `run-1-${r + 1}`), criteria, creds);
         replays.push(rep.verdicts);
         runs.push({ target: g.key, plan: 1, run: r + 1, run_id: rep.runId, planner_tokens: 0, duration_ms: rep.duration_ms });
       }
@@ -544,7 +595,10 @@ async function cmdRun(opts) {
   const engine = engineOf();
   const workDir = opts.workDir || join(tmpdir(), 'selvedge-eval-work', `${opts.set}-${engine.selvedge_version}-${new Date().toISOString().replace(/[:.]/g, '')}-${randomBytes(3).toString('hex')}`);
   if (insideRepo(opts.repo, workDir)) throw workDirInvalid(`${workDir} is inside the repository ${opts.repo}; run folders, clones and logs live outside it`);
-  const meta = { set: opts.set, engine, planner_repeats: opts.plannerRepeats, runner_repeats: opts.runnerRepeats, case_ids_sha256: caseIdsHash(cases) };
+  opts.credentials = readCredentials(opts.repo);
+  // names only: whether a run had test accounts is part of what it measured
+  const credentialNames = Object.fromEntries(Object.entries(opts.credentials).map(([k, v]) => [k, Object.keys(v).sort()]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const meta = { set: opts.set, engine, planner_repeats: opts.plannerRepeats, runner_repeats: opts.runnerRepeats, case_ids_sha256: caseIdsHash(cases), credentials: credentialNames };
   const metaFile = join(workDir, 'meta.json');
   const resumed = existsSync(metaFile);
   if (resumed) {

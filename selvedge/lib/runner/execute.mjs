@@ -34,7 +34,10 @@
 // page.content() reads DOM_SETTLE_MS apart), both within STABLE_TIMEOUT_MS. The criterion's last
 // read runs again (a second read line, stable_wait: true) and the expect is judged on it alone. A value
 // that arrives by a timer alone, with no request and a DOM unchanged for longer than the settle
-// time, is not waited for (a documented limit).
+// time, is not waited for (a documented limit). A read with `at_load: true` (the lint allows it only
+// before the criterion's first action, in a positive criterion) skips the wait: its expect is judged
+// on the read as taken, the state right after the page loaded. A value the page replaced before
+// `goto` returned (its load event) is not seen (a documented limit).
 //
 // Trace (`run --trace`): the context is traced (DOM snapshots, no screenshots: an image of a typed
 // value cannot be redacted, no sources) and, before it closes, the trace is written to a private
@@ -218,9 +221,10 @@ export async function executeCriterion({ id, steps, resolved, chromium, config, 
       }
 
       if (step.type === 'expect') {
-        let matched = lastRead >= 0 ? null : expectMatches(step, reads);
+        const atLoad = lastRead >= 0 && resolved[lastRead].at_load === true;
+        let matched = lastRead >= 0 && !atLoad ? null : expectMatches(step, reads);
         let waited = false;
-        if (lastRead >= 0) {
+        if (lastRead >= 0 && !atLoad) {
           // the stable wait, then the last read once more (header)
           waited = true;
           try {
