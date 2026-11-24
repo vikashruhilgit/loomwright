@@ -108,10 +108,11 @@ export function rate(k, n) {
 // The app name harness.mjs gives every variant target, planted or not; use a case's `source` to know which.
 export const SAMPLE_APP = 'sample-app';
 
-// withoutSplit(group row) → the row without its known_fail / known_pass counts.
+// withoutSplit(group row) → the row with only group_id, criteria and abstained: no known_fail /
+// known_pass split, and no pass_on_known_fail / fail_on_known_pass, which would point at the withheld
+// groups Selvedge got wrong.
 export function withoutSplit(g) {
-  const { known_fail: _f, known_pass: _p, ...rest } = g;
-  return rest;
+  return { group_id: g.group_id, criteria: g.criteria, abstained: g.abstained };
 }
 
 function emptyTally() {
@@ -191,7 +192,8 @@ export function buildReport(input) {
   const sortedReasons = Object.fromEntries(Object.keys(reasons).sort().map((k) => [k, reasons[k]]));
   const grouped = (m, key) => [...m.keys()].sort().map((k) => ({ [key]: k, ...m.get(k) }));
   // A held-out planted group's answers live only in the outside folder, and its criteria are
-  // committed in held-out/cases.json, so its FAIL/PASS split would narrow every answer: drop it.
+  // committed in held-out/cases.json, so its FAIL/PASS split would narrow every answer, and its
+  // error counts would point at the groups Selvedge got wrong: keep only criteria and abstained.
   // Real-bug and non-defect answers can be worked out from committed data, so they keep theirs.
   // per_app is left whole: the planted cases' total split is already public, as the false-PASS
   // denominator less the real-bug and non-defect known-FAIL count, both derivable from committed data.

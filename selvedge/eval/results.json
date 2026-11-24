@@ -3100,148 +3100,106 @@
         {
           "group_id": "pd-1b2e57db28",
           "criteria": 6,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 6
         },
         {
           "group_id": "pd-26ec0979c4",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 3
         },
         {
           "group_id": "pd-31308bbcb7",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 5
         },
         {
           "group_id": "pd-34f0647cc7",
           "criteria": 6,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 1,
           "abstained": 2
         },
         {
           "group_id": "pd-416d758dc5",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 1
         },
         {
           "group_id": "pd-4c61b1d7f9",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 4
         },
         {
           "group_id": "pd-5394083454",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 3
         },
         {
           "group_id": "pd-73164cfd01",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 4
         },
         {
           "group_id": "pd-7b1fe3102b",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-7c5c68400c",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-875d42831a",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-902cdd9072",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 1,
           "abstained": 4
         },
         {
           "group_id": "pd-a5088fe63c",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 5
         },
         {
           "group_id": "pd-ae3bf1bedc",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 2
         },
         {
           "group_id": "pd-b4fe27801b",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-c32454b4d0",
           "criteria": 6,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-c492857eba",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-d563d4e3bf",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-ea49a018ac",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 0
         },
         {
           "group_id": "pd-eae14853d4",
           "criteria": 6,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 4
         },
         {
           "group_id": "pd-f87e8f1c1a",
           "criteria": 5,
-          "pass_on_known_fail": 0,
-          "fail_on_known_pass": 0,
           "abstained": 1
         },
         {

@@ -205,8 +205,9 @@ and `per_app` (counts per `group_id` and per app: the target repo, or `sample-ap
 array of `{case_id, verdicts}`), `runs` (planner tokens and duration per run), `totals` and `gate`
 (`{verdict: "met" | "not met", failed}`, or null for tuning). It carries no `answer` key and no map
 of case ids to PASS or FAIL, so `check-leak` passes on it. In a held-out report, a planted group's
-`per_group` row has no `known_fail` or `known_pass`: its criteria are committed, so its FAIL/PASS
-split would narrow every answer. `per_app` stays whole: the planted cases' total split is already
+`per_group` row holds only `group_id`, `criteria` and `abstained`: its criteria are committed, so
+its FAIL/PASS split would narrow every answer, and its `pass_on_known_fail` / `fail_on_known_pass`
+would point at the withheld groups Selvedge got wrong. `per_app` stays whole: the planted cases' total split is already
 public, as the false-PASS denominator less the real-bug and non-defect known-FAIL count. Before committing a held-out report, check its flip lists for
 planted cases, which name each case with the verdicts it got.
 
