@@ -400,7 +400,7 @@ h run --repo "$B" --set held-out --planner-repeats 0
 [ "$rc" -eq 2 ] && ok "run: --planner-repeats 0 is a usage error" || ko "--planner-repeats 0: rc=$rc"
 
 # --- each harness reason token on exactly one code line; listed in the header and eval/README.md --------
-TOKENS="target_unavailable results_invalid readme_results_out_of_sync readme_markers_missing work_dir_invalid run_incomplete browser_unavailable"
+TOKENS="target_unavailable results_invalid readme_results_out_of_sync readme_markers_missing work_dir_invalid run_incomplete browser_unavailable credentials_invalid"
 for t in $TOKENS; do
   n="$(grep -vE '^[[:space:]]*//' "$HARNESS" | grep -cE "(^|[^a-z_])${t}([^a-z_]|$)")"
   hd="$(grep -E '^//' "$HARNESS" | grep -cE "(^|[^a-z_])${t}([^a-z_]|$)")"
@@ -416,5 +416,39 @@ if [ -n "$tracked" ]; then
 else
   if [ "$rc" -eq 0 ] && ! grep -qF 'selvedge-eval-results:begin' "$PLUGIN_DIR/README.md"; then ok "check-readme: no results file committed yet, and no block in the real README"; else ko "check-readme on the real tree (no results file): rc=$rc $err"; fi
 fi
+
+echo "-- test accounts for commit targets (SELVEDGE_EVAL_CREDENTIALS)"
+mkdir -p "$TMP/outside"
+printf '%s\n' '{"karch4162/sports-management":{"SM_ADMIN_EMAIL":"admin@example.test","SM_ADMIN_PASSWORD":"pw-value-123"}}' >"$TMP/outside/creds.json"
+printf '%s\n' '{"karch4162/sports-management":{"bad-name":"x"}}' >"$TMP/outside/bad-name.json"
+printf '%s\n' '{"karch4162/sports-management":{"SM_X":""}}' >"$TMP/outside/empty.json"
+cat >"$TMP/creds-arms.mjs" <<'EOF'
+import { pathToFileURL } from 'node:url';
+const H = await import(pathToFileURL(process.env.HARNESS).href);
+const out = (good, label, detail = '') => console.log(`${good ? 'ok' : 'FAIL'}\t${label}${good ? '' : `\t${detail}`}`);
+const repo = process.env.REPO;
+const env = (f) => ({ [H.CREDENTIALS_ENV]: f });
+const err = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+out(JSON.stringify(H.readCredentials(repo, {})) === '{}', 'unset: no credentials, nothing read');
+const c = H.readCredentials(repo, env(process.env.GOOD));
+out(c['karch4162/sports-management'].SM_ADMIN_EMAIL === 'admin@example.test', 'a file outside the repo is read');
+const inside = err(() => H.readCredentials(repo, env(repo + '/creds.json')));
+out(inside && inside.startsWith('credentials_invalid') && inside.includes('inside the repository'), 'a file inside the repository is refused credentials_invalid', inside);
+const bad = err(() => H.readCredentials(repo, env(process.env.BAD_NAME)));
+out(bad && bad.startsWith('credentials_invalid') && !bad.includes('"x"'), 'a name that is not an environment name is refused, naming no value', bad);
+const empty = err(() => H.readCredentials(repo, env(process.env.EMPTY)));
+out(empty && empty.startsWith('credentials_invalid'), 'an empty value is refused', empty);
+const sm = { kind: 'commit', repo: 'karch4162/sports-management', sha: 'a'.repeat(40) };
+out(H.credentialsFor(sm, c) === c['karch4162/sports-management'], 'a commit target of a listed repo gets its accounts');
+out(H.credentialsFor({ kind: 'variant', path: 'variants/x' }, c) === null && H.credentialsFor({ ...sm, repo: 'other/repo' }, c) === null, 'a variant target, or a commit of another repo, gets none');
+const w = H.workspaceConfig('http://localhost:3471', H.credentialsFor(sm, c));
+out(JSON.stringify(w.auth) === '{"env":["SM_ADMIN_EMAIL","SM_ADMIN_PASSWORD"]}' && !JSON.stringify(w).includes('pw-value-123'), "the workspace selvedge.json carries the names as auth.env, never a value");
+out(!('auth' in H.workspaceConfig('http://localhost:1', null)), 'without accounts the workspace selvedge.json has no auth key (as before)');
+const ce = H.childEnv({ PATH: '/bin', [H.CREDENTIALS_ENV]: '/x', SELVEDGE_BASE: 'HEAD' }, { SM_ADMIN_PASSWORD: 'pw-value-123' });
+out(ce.SM_ADMIN_PASSWORD === 'pw-value-123' && !(H.CREDENTIALS_ENV in ce) && !('SELVEDGE_BASE' in ce) && ce.PATH === '/bin', "a target's plan and run get the values in their environment; the credentials file path and SELVEDGE_BASE are not passed on");
+EOF
+while IFS=$'\t' read -r st label detail; do
+  [ "$st" = "ok" ] && ok "$label" || ko "$label: $detail"
+done < <(HARNESS="$HARNESS" REPO="$REPO_ROOT" GOOD="$TMP/outside/creds.json" BAD_NAME="$TMP/outside/bad-name.json" EMPTY="$TMP/outside/empty.json" node "$TMP/creds-arms.mjs" 2>&1)
 
 finish

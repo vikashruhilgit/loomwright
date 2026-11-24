@@ -176,7 +176,7 @@ check "AC6 runs.jsonl gains one freeze line {event, ts, run_id, criteria_sha256,
 check "AC6 the planner got SELVEDGE_RUN_DIR, SELVEDGE_CRITERIA (planner-input.json), SELVEDGE_PLAN_OUT (plan.json), SELVEDGE_BIN (this CLI) and SELVEDGE_PLANNER_USAGE" \
   'const v = JSON.parse(txt(E.TMP + "/log-ac6/env.json")); v.SELVEDGE_RUN_DIR === dir && v.SELVEDGE_CRITERIA === dir + "/planner-input.json" && v.SELVEDGE_PLAN_OUT === dir + "/plan.json" && v.SELVEDGE_BIN === E.BIN_REAL && v.SELVEDGE_PLANNER_USAGE === dir + "/planner-usage.json"'
 check "the planner input lists the allowed origins and the criteria_sha256 the plan must carry" \
-  'const p = JSON.parse(txt(E.TMP + "/log-ac6/input.json")); JSON.stringify(p.origins) === JSON.stringify([E.AURL]) && p.criteria_sha256 === j("plan.json").criteria_sha256 && p.snapshot_budget === 20 && p.token_budget === null'
+  'const p = JSON.parse(txt(E.TMP + "/log-ac6/input.json")); JSON.stringify(p.origins) === JSON.stringify([E.AURL]) && p.criteria_sha256 === j("plan.json").criteria_sha256 && p.snapshot_budget === 20 && p.token_budget === null && JSON.stringify(p.env_names) === "[]"'
 
 check "the planner without --base got SELVEDGE_BASE \"\" (its snapshots read the working tree, as the plan does)" \
   'JSON.parse(txt(E.TMP + "/log-ac6/env.json")).SELVEDGE_BASE === ""'
@@ -254,6 +254,10 @@ check "AC11 the runs.jsonl freeze line carries plan_time_actions 5 too" \
   'const ls = jl(E.R + "/.selvedge/runs.jsonl"); const l = ls[ls.length - 1]; l.run_id === path.basename(E.F) && l.plan_time_actions === 5'
 
 echo "-- AC14 frozen folders, revisions"
+RA="$TMP/repo-auth"; mkdir -p "$RA" && git -C "$RA" init -q && printf '{"schema_version":1,"origins":["%s"],"auth":{"env":["APP_EMAIL","APP_PASS"]}}\n' "$AURL" > "$RA/selvedge.json"
+run authnames "$RA" "$PLANNER" STUB_PLANNER_LOG="$TMP/log-auth" APP_EMAIL=a@b.test APP_PASS=s3cret-value -- "$CRITERIA"
+check "with auth.env in selvedge.json the planner input lists those names as env_names, never their values" \
+  'const t = txt(E.TMP + "/log-auth/input.json"); rc === 0 && JSON.stringify(JSON.parse(t).env_names) === "[\"APP_EMAIL\",\"APP_PASS\"]" && !t.includes("s3cret-value") && !t.includes("a@b.test")'
 R14="$TMP/repo14"; newrepo "$R14"
 mkdir -p "$R14/.selvedge"
 SHA="$(node -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(p.criteria_sha256)' "$AC6_DIR/plan.json")"

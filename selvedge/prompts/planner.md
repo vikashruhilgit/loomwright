@@ -17,6 +17,13 @@ The input is the JSON block at the end of this prompt (`planner-input.json`):
 - `run_dir` — the run folder; its `criteria.json` is what `plan --validate` checks against.
 - `snapshot_budget` — how many snapshot calls this run folder allows in total.
 - `token_budget` — your token budget, or null.
+- `env_names` — the environment variables a run sets (names only, such as a test account's email
+  and password). Write a credential only as `{{NAME}}` with one of these names; never invent a
+  name. A criterion behind a sign-in signs in first (a `request` to the app's login endpoint, or
+  the login form filled with these names); you may sign in the same way in a snapshot prefix to
+  look at a walled page. With no name listed, a criterion that needs a sign-in still uses
+  `{{NAME}}` values (a run without them reports BLOCKED `placeholder_unset`, which tells the owner
+  what to set).
 
 ## Look before you write locators: `snapshot`
 

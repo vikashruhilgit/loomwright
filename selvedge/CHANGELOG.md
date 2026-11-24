@@ -8,6 +8,42 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.12.0 — 2026-11-24
+
+Engine revision 2 (Phase 2's second and last counted revision): the causes the 0.11.2 tuning run
+showed for abstention and false-FAIL, read on the tuning side only.
+
+- **Verdicts.** A criterion with a `material: true` assumption is NOT_VERIFIABLE
+  `material_assumption` whether its `expect` matched or not: a guessed premise decides neither
+  PASS nor FAIL.
+- **New check `absent`**: the value read does not contain a text. A `matches` whose pattern hides
+  an absence in a whole-text negative lookahead (`(?![\s\S]*x)`) is now `existence_only_expect`,
+  as is `absent` with a blank text.
+- **One bad criterion no longer blocks the rest.** The bare `selvedge plan` sets aside each
+  criterion whose own steps break the lint (`not_planned`, new reason `criterion_plan_invalid`,
+  NOT_VERIFIABLE, its problem lines as the detail) and freezes the others. `--freeze` and
+  `--validate` stay strict.
+- **The default planner lints its own plan** before returning it: `plan --validate /dev/stdin`
+  is its second allowed tool.
+- **Reads.** `response_text` is trimmed like `text`. `at_load: true` on a read judges it as
+  taken, without the stable wait, for a criterion about a page's first state (allowed only before
+  any action, in a positive criterion, with `equals`/`contains`/`matches`; new plan problem
+  `at_load_misused`). New: `response_header:<name>`, `cookie_attribute:<name>:<attribute>`
+  (HttpOnly, Secure, SameSite, path, domain; never the value), `focused` (the element holding
+  keyboard focus), `response_json_each:<array>|<item>` (one field of every element, as JSON
+  text) and `response_json_length:<array>`.
+- **Requests.** A `request` may carry a raw `body` instead of `json`, and `headers` (headers
+  `fetch` forbids page code to set are refused). A snapshot prefix may send a non-GET request to a
+  **local** origin, counted as a plan-time action as a click is; to a remote origin it stays
+  `prefix_mutation_refused`.
+- **Sign-ins.** `planner-input.json` lists `env_names` (the `auth.env` names, never values), and
+  the planner is told to use only those as `{{NAME}}` and that a 401 without credentials is a
+  sign-in, not `side_effect_not_observable`. The eval harness gives a commit target the test
+  accounts named in `SELVEDGE_EVAL_CREDENTIALS` (a file outside the repo; new token
+  `credentials_invalid`).
+- Tuning report on 0.11.2 (129 cases, before these changes): false-PASS 0/45, false-FAIL 3/84,
+  abstention 37/129 (28.7%). Kept out of `results.json`: it is the diagnosis these changes answer.
+
 ## 0.11.2 — 2026-11-24
 
 - A held-out eval report no longer gives a planted group's FAIL/PASS split or error counts. Its

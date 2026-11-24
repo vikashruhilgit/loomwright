@@ -7,7 +7,7 @@
 //
 // A run folder is `<repo root>/.selvedge/runs/<run-id>/` (plan-runs.mjs lists its files). The bare
 // form creates one, writes planner-input.json (the TESTABLE criteria only: a vague one never reaches
-// the planner), runs the planner (plan-planner.mjs: SELVEDGE_PLANNER, else `claude -p`), lists every
+// the planner; env_names, the auth.env names a {{NAME}} may use), runs the planner (plan-planner.mjs: SELVEDGE_PLANNER, else `claude -p`), lists every
 // vague criterion under not_planned with criterion_not_testable and its rewrite, then freezes.
 //
 // A freeze ALWAYS runs the plan lint (plan-validate.mjs) first: an invalid plan is never hashed (no
@@ -260,6 +260,8 @@ function cmdPlan(args, env) {
         run_dir: runDir,
         snapshot_budget: snapshots,
         token_budget: tokenBudget,
+        // the {{NAME}}s a run can resolve: selvedge.json's auth.env names (never their values)
+        env_names: config.auth && Array.isArray(config.auth.env) ? [...config.auth.env] : [],
       };
       writeFileSync(path.join(runDir, RUN_FILES.plannerInput), prettyJson(input));
       const { planner } = runPlanner({ root, runDir, base: flags.base, env, selvedgeBin: SELVEDGE_BIN, promptFile: PLANNER_PROMPT });

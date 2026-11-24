@@ -177,6 +177,18 @@ holding `criteria.json` and a `selvedge.json` that allows only the driver's orig
 `SELVEDGE_PLAYWRIGHT_MODULE`). `SELVEDGE_PLANNER_TOKEN_BUDGET` is removed from every selvedge child's
 environment: a plan over budget would be BLOCKED after its tokens were spent.
 
+**Test accounts.** A real repo that guards pages behind a sign-in lists its test accounts' names
+in `selvedge.json`'s `auth.env`; the eval workspace does the same when `SELVEDGE_EVAL_CREDENTIALS`
+names a JSON file **outside** this repository, `{"<owner>/<repo>": {"NAME": "value"}}` (for
+sports-management, the accounts its `supabase/seed.sql` creates, such as `SM_ADMIN_EMAIL` and
+`SM_ADMIN_PASSWORD`). A commit target of a listed repo then gets those names as `auth.env` (so the
+planner is told them as `env_names` and selvedge redacts their values in every file it writes), and
+its `plan` and `run` get the values in their environment. Values are never written by the harness:
+not to a workspace, a log, `meta.json` or a report; `meta.json` records the names per repo, so a
+`--resume` with other accounts is refused. A file inside the repository, a name that is not
+`A-Z0-9_`, or an empty value is `credentials_invalid`. Unset, nothing changes: a criterion behind a
+sign-in is BLOCKED `placeholder_unset`.
+
 **Scoring.** Abstention = (BLOCKED + NOT_VERIFIABLE) ÷ every criterion scored. False-PASS = PASS on
 a known-FAIL case ÷ every known-FAIL case. False-FAIL = FAIL on a known-PASS case ÷ every
 known-PASS case. Each comes with its numerator, denominator and exact Clopper-Pearson 95% interval
@@ -223,6 +235,7 @@ Printed `harness: FAIL <token>: <detail>` on stderr (exit 1). A failing set chec
 | `readme_results_out_of_sync` | the results block in `selvedge/README.md` is not what `readme` would write from `results.json` (or a block exists with no results file) |
 | `readme_markers_missing` | `selvedge/README.md` has one block marker without the other, or no markers and no "Measuring Selvedge" section to put them in |
 | `work_dir_invalid` | the work dir is inside the repository, already holds a run (without `--resume`), or holds a run of another set, engine, repeat count or case list |
+| `credentials_invalid` | `SELVEDGE_EVAL_CREDENTIALS` names a file inside the repository, one that is not readable JSON, or a repo key, name or value of the wrong shape (the detail never holds a value) |
 | `run_incomplete` | `score` (or the end of `run`) found a target with no finished result in the work dir |
 | `browser_unavailable` | `run`'s browser preflight failed: the Playwright every `selvedge run` child would load (`SELVEDGE_PLAYWRIGHT_MODULE`, resolved as the selvedge CLI does) does not load, or its chromium does not launch headless (typically its browser build is not installed). Checked after the set check and before any target is brought up, so no planner tokens are spent and nothing is written to the work dir or `results.json`; the detail leads with the error's first line |
 
