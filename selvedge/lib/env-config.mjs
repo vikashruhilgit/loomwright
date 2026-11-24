@@ -39,6 +39,7 @@ export const REASONS = Object.freeze({
   exploration_budget: 'exploration_budget',
   no_value_read: 'no_value_read',
   material_assumption: 'material_assumption',
+  criterion_plan_invalid: 'criterion_plan_invalid',
   // config / usage reasons
   origins_empty: 'origins_empty',
   origin_invalid: 'origin_invalid',

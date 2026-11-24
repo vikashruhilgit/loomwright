@@ -255,6 +255,20 @@ validate "crit(c1).polarity = 'negative'; steps(c1).splice(1, 0, { type: 'read',
 validate "steps(c3).splice(0, 5, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'goto', url: 'http://localhost:4100/mail' }, { type: 'click', locator: { role: 'button', name: 'Save draft' } }, { type: 'goto', url: 'http://localhost:4100/sent' }, { type: 'read', property: 'count', locator: { role: 'row' } }, { type: 'expect', op: 'changed_from', value: false });"
 [ "$rc" -eq 0 ] && ok "a negative that reads its baseline on another page, acts, then goes back and reads again is accepted (the prompt's cross-page shape)" || ko "cross-page negative: rc=$rc err='$err'"
 
+echo "-- absent, and an absence hidden in a lookahead"
+validate "steps(c1)[4] = { type: 'expect', op: 'absent', value: '14-day' };"
+[ "$rc" -eq 0 ] && ok "expect absent with a non-blank text is accepted" || ko "absent ok: rc=$rc err='$err'"
+validate "steps(c1)[4] = { type: 'expect', op: 'absent', value: ' ' };"
+want_problem "expect absent with a blank text is rejected existence_only_expect" "$c1" existence_only_expect
+validate "steps(c1)[4] = { type: 'expect', op: 'absent', value: 3 };"
+want_problem "expect absent with a number is rejected plan_schema_violation" "$c1" plan_schema_violation
+validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: '^(?![\\\\s\\\\S]*14-day)[\\\\s\\\\S]+\$' };"
+want_problem "a final matches with a whole-text negative lookahead (the 0.11.2 tuning shape) is rejected existence_only_expect" "$c1" existence_only_expect
+validate "steps(c1).splice(4, 0, { type: 'expect', op: 'matches', value: '^(?!.*card).+\$' });"
+want_problem "an earlier expect with a whole-text negative lookahead is rejected too" "$c1" existence_only_expect
+validate "steps(c1)[4] = { type: 'expect', op: 'matches', value: '^(?!0)\\\\d+\$' };"
+[ "$rc" -eq 0 ] && ok "a format lookahead (^(?!0)\\d+\$: no leading zero) is accepted" || ko "format lookahead: rc=$rc err='$err'"
+
 echo "-- at_load reads"
 AT_LOAD="crit(c1).steps = [{ type: 'goto', url: 'http://localhost:4100/slow' }, { type: 'read', property: 'text', locator: { testid: 'price' }, at_load: true }, { type: 'expect', op: 'equals', value: 'pending' }];"
 validate "$AT_LOAD"

@@ -24,6 +24,7 @@
 //   readEntry(step, value)     one read as expectMatches takes it: { key, value }, the key naming
 //                              the read's locator and property
 //   expectMatches(step, reads) whether an `expect` step holds over the criterion's reads so far
+//                              (absent: the last read does not contain the value)
 //                              (the last read is the value checked; changed_from compares it with
 //                              the previous read of the same locator and property)
 //
@@ -284,6 +285,9 @@ export function expectMatches(step, reads) {
       return last !== null && last !== undefined && String(last) === String(value);
     case 'contains':
       return typeof last === 'string' && last.includes(value);
+    case 'absent':
+      // no value read never matches (as contains); a number or boolean is compared as its text
+      return last !== null && last !== undefined && !String(last).includes(value);
     case 'matches':
       return last !== null && last !== undefined && new RegExp(value).test(String(last));
     case 'gt':

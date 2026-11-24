@@ -77,7 +77,9 @@ export function isResponseRead(p) {
 export function isCookieRead(p) {
   return typeof p === 'string' && new RegExp(READ_COOKIE_PATTERN).test(p);
 }
-export const EXPECT_OPS = Object.freeze(['equals', 'contains', 'matches', 'gt', 'lt', 'changed_from']);
+// absent: the value read does not contain `value` (the read must still have read a value: an empty
+// read is NOT_VERIFIABLE no_value_read, and a locator that matches nothing fails its step).
+export const EXPECT_OPS = Object.freeze(['equals', 'contains', 'absent', 'matches', 'gt', 'lt', 'changed_from']);
 
 // A snapshot prefix: the plan step types except read/expect, at most PREFIX_MAX_STEPS of them. A
 // `request` in a prefix must be a GET (prefix_mutation_refused): looking never changes the app.
@@ -258,7 +260,7 @@ function checkFieldValues(step, at, add) {
         add('plan_schema_violation', `${at}: ${op} needs a number value`);
       } else if (op === 'changed_from' && typeof value !== 'boolean') {
         add('plan_schema_violation', `${at}: changed_from needs a boolean value (whether the last read must differ from the previous read)`);
-      } else if ((op === 'contains' || op === 'matches') && typeof value !== 'string') {
+      } else if ((op === 'contains' || op === 'absent' || op === 'matches') && typeof value !== 'string') {
         add('plan_schema_violation', `${at}: ${op} needs a string value`);
       } else if (op === 'equals' && !['string', 'number', 'boolean'].includes(typeof value)) {
         add('plan_schema_violation', `${at}: equals needs a string, number or boolean value`);

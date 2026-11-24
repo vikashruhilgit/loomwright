@@ -11,13 +11,19 @@
 // vague criterion under not_planned with criterion_not_testable and its rewrite, then freezes.
 //
 // A freeze ALWAYS runs the plan lint (plan-validate.mjs) first: an invalid plan is never hashed (no
-// plan.sha256, exit 2 plan_invalid with one stderr line per problem). A folder that already holds
+// plan.sha256, exit 2 plan_invalid with one stderr line per problem). The bare form first sets aside
+// the planner's criteria whose own steps broke the lint (setAsideInvalid): each moves to
+// not_planned with criterion_plan_invalid and its problem lines as the detail, so one bad criterion
+// no longer stops the rest from freezing. A problem with the plan as a whole (its origins, its
+// criteria_sha256, a criterion unaccounted for, a bad not_planned entry) still fails the freeze.
+// --freeze and --validate stay strict: a plan written by hand is fixed by hand. A folder that already holds
 // plan.sha256 is already_frozen and nothing in it is written. Every re-plan of the same criteria
 // goes in a new folder and gets the next plan_revision.
 //
 // --validate runs the static lint against the run folder's criteria.json (the file beside the plan
 // unless --criteria names another) and selvedge.json (the working tree, or the committed
-// <ref>:selvedge.json with --base, exactly as `env check --base`). Every problem is one stderr line
+// <ref>:selvedge.json with --base, exactly as `env check --base`; under a planner, SELVEDGE_BASE
+// pins it as it pins snapshot's). The plan may be /dev/stdin (a planner linting its own plan). Every problem is one stderr line
 // `plan_invalid: <criterion id | (plan)>: <code>: <detail>`; any problem exits 2.
 //
 // stdout: --init, --freeze and the bare form print the run folder's path (one line); --validate
@@ -35,7 +41,7 @@ import { classifyTestability, criteriaSha256, readCriteriaFile } from './criteri
 import { PLAN_SCHEMA_VERSION, PLAN_SCOPE, PLAN_TARGETS, problemLine, validatePlan } from './plan-validate.mjs';
 import { RUN_FILES, assertNotFrozen, freezeRun, initRun, prettyJson } from './plan-runs.mjs';
 import { PLANNER_TOKEN_BUDGET_ENV, runPlanner } from './plan-planner.mjs';
-import { snapshotBudget } from './snapshot.mjs';
+import { pinnedBase, snapshotBudget } from './snapshot.mjs';
 
 const LIB_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This CLI (what a planner calls for `snapshot`) and the default planner's fixed prompt.
@@ -132,6 +138,31 @@ export function addVagueNotPlanned(plan, vague) {
   return plan;
 }
 
+// The problem codes that belong to one planned criterion's own entry (its steps, interpretation,
+// polarity, assumptions): every PLAN_PROBLEMS code but these plan-wide ones.
+const PLAN_WIDE_CODES = Object.freeze(['criterion_unaccounted', 'criteria_sha_mismatch', 'invalid_not_planned']);
+export const SET_ASIDE_DETAIL_MAX = 2000;
+
+// setAsideInvalid(plan, problems) → { plan, setAside: [id] } or null. When every problem names a
+// criterion planned under steps_by_criterion with a code of its own entry, each such criterion moves
+// to not_planned with criterion_plan_invalid and its problem lines (capped) as the detail; else null
+// (the plan fails as a whole).
+export function setAsideInvalid(plan, problems) {
+  if (!problems.length || plan === null || typeof plan !== 'object' || Array.isArray(plan)) return null;
+  const sbc = plan.steps_by_criterion;
+  if (sbc === null || typeof sbc !== 'object' || Array.isArray(sbc) || !Array.isArray(plan.not_planned ?? [])) return null;
+  const own = (p) => p.id !== PLAN_SCOPE && Object.prototype.hasOwnProperty.call(sbc, p.id) && !PLAN_WIDE_CODES.includes(p.code);
+  if (!problems.every(own)) return null;
+  const ids = [...new Set(problems.map((p) => p.id))];
+  if (!Array.isArray(plan.not_planned)) plan.not_planned = [];
+  for (const id of ids) {
+    const lines = problems.filter((p) => p.id === id).map((p) => `${p.code}${p.detail ? `: ${p.detail}` : ''}`).join('; ');
+    delete sbc[id];
+    plan.not_planned.push({ id, reason: REASONS.criterion_plan_invalid, detail: lines.length > SET_ASIDE_DETAIL_MAX ? `${lines.slice(0, SET_ASIDE_DETAIL_MAX - 1)}…` : lines });
+  }
+  return { plan, setAside: ids };
+}
+
 // Lint, then freeze. The lint runs before anything is hashed; an invalid plan throws PlanInvalid.
 function freezeChecked({ root, runDir, plan, criteria, config, env }) {
   const problems = validatePlan(plan, { criteria, config });
@@ -157,7 +188,8 @@ function cmdValidate(args) {
   const file = flags.validate;
   const criteriaFile = flags.criteria || path.join(path.dirname(file), 'criteria.json');
   const criteria = readCriteriaFile(criteriaFile);
-  const { config, source } = loadConfig({ base: flags.base });
+  // a planner's lint reads the allowlist its plan is frozen against (SELVEDGE_BASE), as its snapshots do
+  const { config, source } = loadConfig({ base: pinnedBase(flags) });
   const read = readPlan(file);
   const problems = read.problems || validatePlan(read.plan, { criteria, config });
   if (problems.length) {
@@ -237,6 +269,12 @@ function cmdPlan(args, env) {
       plan = read.plan;
     }
     addVagueNotPlanned(plan, vague);
+    const problems = validatePlan(plan, { criteria, config });
+    const aside = setAsideInvalid(plan, problems);
+    if (aside) {
+      for (const p of problems) process.stderr.write(`${problemLine(p)}\n`);
+      for (const id of aside.setAside) err(`${id}: its steps broke the plan lint; set aside under not_planned (${REASONS.criterion_plan_invalid}), the other criteria freeze`);
+    }
     reportFreeze(runDir, freezeChecked({ root, runDir, plan, criteria, config, env }));
     return 0;
   } catch (e) {

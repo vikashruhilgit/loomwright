@@ -78,7 +78,7 @@
               "type": "object",
               "required": ["op", "value"],
               "properties": {
-                "op": { "enum": ["equals", "contains", "matches", "gt", "lt", "changed_from"] },
+                "op": { "enum": ["equals", "contains", "absent", "matches", "gt", "lt", "changed_from"] },
                 "value": { "type": ["string", "number", "boolean"] }
               },
               "additionalProperties": false

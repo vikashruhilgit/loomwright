@@ -14,12 +14,13 @@ The input is the JSON block at the end of this prompt (`planner-input.json`):
 - `criteria_sha256` — copy it into the plan unchanged.
 - `origins` — the only origins your steps may visit (exact `scheme://host[:port]`).
 - `selvedge_bin` — the absolute path of the `selvedge` CLI, for `snapshot` (below).
+- `run_dir` — the run folder; its `criteria.json` is what `plan --validate` checks against.
 - `snapshot_budget` — how many snapshot calls this run folder allows in total.
 - `token_budget` — your token budget, or null.
 
 ## Look before you write locators: `snapshot`
 
-Your only tool runs the snapshot command. Write the command with the literal `selvedge_bin` path
+Your first tool runs the snapshot command. Write the command with the literal `selvedge_bin` path
 (no variable, no quoting around the path, nothing before it), or it is refused:
 
 ```
@@ -40,6 +41,23 @@ until a prefix performs that action, so snapshot the page in the state a criteri
 you name its controls. Every call counts against `snapshot_budget`; `NOT_VERIFIABLE
 exploration_budget` means it is spent. `BLOCKED host_not_allowed` means the origin is not listed:
 do not retry it.
+
+## Lint your plan before you return it: `plan --validate`
+
+Your second tool runs the plan lint on a plan you pass on stdin, against the run folder's
+criteria (`run_dir` in the input), with the literal `selvedge_bin` path as for `snapshot`:
+
+```
+<selvedge_bin> plan --validate /dev/stdin --criteria <run_dir>/criteria.json <<'EOF'
+{"schema_version": 1, ...the whole plan...}
+EOF
+```
+
+It prints `plan valid: /dev/stdin`, or one `plan_invalid: <criterion id>: <code>: <detail>` line
+per problem. Fix each problem it names and validate again, at most 3 times; return the plan only
+when it is valid or you are out of tries. A criterion whose steps still break the lint is set
+aside (NOT_VERIFIABLE `criterion_plan_invalid`) and the rest are frozen. Lint calls do not count
+against `snapshot_budget`.
 
 ## The plan you return
 
@@ -93,8 +111,10 @@ Each step is an object with `type` and exactly these fields:
   Optional `at_load: true` checks the page as it loaded, without waiting for it to settle, for a
   criterion about the first state ("right after /slow loads, Price reads pending"): only before
   any action, in a positive criterion, checked with `equals`, `contains` or `matches`
-- `expect` — `op` and `value`, compared with the last `read`: `equals`, `contains`, `matches` (a
-  regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
+- `expect` — `op` and `value`, compared with the last `read`: `equals`, `contains`, `absent` (the
+  value does not contain the text: "the page does not show 14-day" is `absent "14-day"` on the
+  narrowest element that would hold it), `matches` (a regular expression), `gt`, `lt`, or
+  `changed_from` (a boolean: whether the last read must differ
   from the previous read of the same locator and property)
 
 A `locator` is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"}` or
@@ -144,7 +164,8 @@ the sign-in `request`, read `cookie:session` again, `expect changed_from true`.
    element being visible, hidden, attached or present (`read count` then `gt 0`) proves nothing,
    and neither does a check any value meets: `contains ""`, a `matches` pattern that matches the
    empty string or every one of a fixed set of unlike one-line texts (`.`, `\S`, `^.+$`, `..`;
-   a format such as `^[a-z0-9-]+$` or `^\d+$` passes), or `read count` then `lt`.
+   a format such as `^[a-z0-9-]+$` or `^\d+$` passes), or `read count` then `lt`. Never write
+   "X is not there" as a negative lookahead (`(?![\s\S]*X)`): the lint rejects it; use `absent`.
 3. **Negative criteria** ("must not", "does not change") set `"polarity": "negative"`, `read` the
    side effect before their first action (the baseline), then read it again after the action and
    compare (`changed_from` false, or the count unchanged). Proving only that something is absent

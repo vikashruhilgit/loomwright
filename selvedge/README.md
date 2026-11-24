@@ -477,7 +477,10 @@ stderr. `--base <ref>` reads the origin allowlist from `<ref>:selvedge.json`, as
   plan_time_actions, planner_tokens, planner_token_budget}`.
 
 **Freezing** always runs the lint first: an invalid plan is never hashed (`plan_invalid`, no
-`plan.sha256`). A frozen folder is never written again: `--freeze` on it exits 2
+`plan.sha256`). The bare form first sets aside each criterion whose own steps broke the lint: it
+moves to `not_planned` with `criterion_plan_invalid` (NOT_VERIFIABLE), its problem lines as the
+`detail`, and the other criteria freeze; a problem with the plan as a whole still fails it.
+`--freeze` and `--validate` stay strict. A frozen folder is never written again: `--freeze` on it exits 2
 `already_frozen` and changes nothing. A new plan for the same criteria goes in a new folder
 (`--init`), and its `plan_revision` is 1 + the `event: "freeze"` lines in `.selvedge/runs.jsonl`
 with the same `criteria_sha256`, so every re-plan is a numbered revision. Each freeze appends one
@@ -501,10 +504,11 @@ a later run can say how much the planner changed in the app before it.
   call reads the allowlist the plan is checked against), and may write `{"input_tokens": N, "output_tokens": M}` to
   `$SELVEDGE_PLANNER_USAGE`. It comes from your environment, never from a file in the repo.
 - Unset, the default is `claude -p <prompt> --output-format json --model <model> --allowedTools
-  "Bash(<selvedge bin> snapshot:*)"`, with the fixed prompt
+  "Bash(<selvedge bin> snapshot:*)" "Bash(<selvedge bin> plan --validate:*)"` (it may look at pages,
+  and lint its own plan from stdin against the run folder's `criteria.json` before returning it), with the fixed prompt
   [`prompts/planner.md`](prompts/planner.md) followed by `planner-input.json`. The plan is the JSON
   object in the result text; the result's `usage` is recorded (input tokens include cache reads
-  and writes). Honest limit: `--allowedTools` admits only `snapshot`, but `claude` also applies
+  and writes). Honest limit: `--allowedTools` admits only `snapshot` and `plan --validate`, but `claude` also applies
   your own settings, so a tool they allow is allowed to the planner too.
 - A planner that cannot start (no `claude` on `PATH` included), exits non-zero, or leaves no plan
   is `planner_failed` (exit 2). What it wrote stays in the folder: fix `plan.json` there and run
@@ -522,7 +526,8 @@ A plan is `{"schema_version": 1, "target": "web", "criteria_sha256", "plan_revis
 "not_planned"?: [{"id", "reason", "rewrite"?, "detail"?}]}`. `polarity` is `positive` or
 `negative`; each assumption is `{"text", "material"}`; a `not_planned` reason is
 `criterion_not_testable` (with a non-empty `rewrite`), `side_effect_not_observable` (with a
-non-empty `detail` naming the pages looked at) or `exploration_budget`. The JSON Schema is
+non-empty `detail` naming the pages looked at), `exploration_budget`, or `criterion_plan_invalid`
+(with a non-empty `detail`; `plan` writes it when it sets a criterion aside). The JSON Schema is
 [`schemas/plan.schema.json`](schemas/plan.schema.json).
 
 Step types (no field beyond these is accepted):
@@ -552,8 +557,10 @@ Step types (no field beyond these is accepted):
   only before the criterion's first action, in a positive criterion, checked with `equals`,
   `contains` or `matches` (`at_load_misused`); a value the page replaced before `goto` returned
   is not seen.
-- `expect` — `op` and `value`, compared with the last read: `equals`, `contains`, `matches` (a
-  regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
+- `expect` — `op` and `value`, compared with the last read: `equals`, `contains`, `absent` (the
+  value read does not contain the text: "the page does not show 14-day"; it still needs a value
+  read, so an empty read is NOT_VERIFIABLE and a locator that matches nothing fails its step),
+  `matches` (a regular expression), `gt`, `lt`, or `changed_from` (a boolean: whether the last read must differ
   from the previous read of the same locator and property, a negative criterion's baseline form).
 
 A locator is exactly one of `{"role", "name"?, "exact"?}`, `{"label"}`, `{"text"}` or
@@ -574,7 +581,7 @@ method, url, the top-level keys of its `json` and the reply's status, never the 
 Plan-lint problems (the codes after `plan_invalid:`):
 
 - `missing_final_read_expect` — a criterion's steps do not end in `read` then `expect` (a value read after the last action).
-- `existence_only_expect` — an `expect` on a `cookie:<name>` read that is not `changed_from` against an earlier read of the same cookie (a cookie read is a fingerprint, so "a cookie exists" is "it changed from its baseline"); or the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` a blank string, `matches` a pattern that matches the empty string or every one of a fixed set of unlike one-line texts, as `.`, `\S`, `^.+$` or `..` do, while a format such as `^[a-z0-9-]+$` or `^\d+$` passes, or `read count` then `lt`).
+- `existence_only_expect` — an `expect` on a `cookie:<name>` read that is not `changed_from` against an earlier read of the same cookie (a cookie read is a fingerprint, so "a cookie exists" is "it changed from its baseline"); or the final `expect` checks only existence or visibility (`visible`, `hidden`, `exists`, `attached`, `detached`, or `read count` then `gt 0`), or holds for any value read (`contains` or `absent` a blank string, `matches` a pattern that matches the empty string or every one of a fixed set of unlike one-line texts, as `.`, `\S`, `^.+$` or `..` do, while a format such as `^[a-z0-9-]+$` or `^\d+$` passes, or `read count` then `lt`); or any `expect matches` whose pattern hides an absence in a negative lookahead over the whole text (`(?![\s\S]*x)`, `(?!.*x)`): use `absent`.
 - `unknown_step_type` — a step `type` that is not one of the step types above.
 - `unknown_field` — a field a step, a criterion entry or the plan does not have.
 - `invalid_locator` — a locator that is not exactly one role, label, text or test-id form (CSS, XPath and any other key are refused).
@@ -593,7 +600,7 @@ Plan-lint problems (the codes after `plan_invalid:`):
 - `prefix_mutation_refused` — a snapshot prefix holds a `request` whose method is not `GET`.
 - `response_without_request` — a `read` of `response_status`, `response_text` or `response_json:…` with no `request` step before it in the criterion.
 - `at_load_misused` — a `read` with `at_load: true` after an action, in a negative criterion, or checked by an `expect` other than `equals`, `contains` or `matches`.
-- `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, `criterion_not_testable` without a rewrite, or `side_effect_not_observable` without a detail.
+- `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, `criterion_not_testable` without a rewrite, or `side_effect_not_observable` or `criterion_plan_invalid` without a detail.
 - `plan_schema_violation` — the plan or a step is malformed: not JSON, a missing or wrongly typed value, an unknown `op`, `state` or `read` property.
 
 ## `run` and `verdict`
@@ -1008,6 +1015,7 @@ and `verdict.json` records each criterion's reason beside its verdict.
 | `run_interrupted` | BLOCKED | `evidence.jsonl` has no end line for a planned criterion: the run stopped before the criterion finished |
 | `needs_auth` | BLOCKED | `auth.signed_in_check` did not match (no session, or an expired one) and nobody could sign in; run `selvedge auth setup` (or `--headed`) |
 | `criterion_not_testable` | NOT_VERIFIABLE | the criterion is vague (no observable value); it is not planned and carries a rewrite |
+| `criterion_plan_invalid` | NOT_VERIFIABLE | the planner's steps for this criterion broke the plan lint; `plan` set them aside under `not_planned` (the problem lines are its `detail`) and froze the other criteria |
 | `side_effect_not_observable` | NOT_VERIFIABLE | the criterion names no effect a check can read, on any page the planner looked at or in any reply a `request` step can read (an email sent, a queued job no page or endpoint reports); it is not planned, and its detail names the pages and endpoints looked at |
 | `exploration_budget` | NOT_VERIFIABLE | the run folder's snapshot calls are used up, so the planner could not explore further |
 | `no_value_read` | NOT_VERIFIABLE | the criterion's final `read` gave an empty value (`""` or none: a `response_json:` pointer that names nothing, a body that is not JSON, a `cookie:` that is absent), so nothing was verified, even when the `expect` would hold |

@@ -60,7 +60,7 @@
       "required": ["id", "reason"],
       "properties": {
         "id": { "type": "string", "pattern": "^c-[0-9a-f]{12}$" },
-        "reason": { "enum": ["criterion_not_testable", "side_effect_not_observable", "exploration_budget"] },
+        "reason": { "enum": ["criterion_not_testable", "side_effect_not_observable", "exploration_budget", "criterion_plan_invalid"] },
         "rewrite": { "description": "Required (non-empty) for criterion_not_testable.", "type": "string" },
         "detail": { "description": "Required (non-empty) for side_effect_not_observable: the pages looked at.", "type": "string" }
       },
@@ -187,9 +187,9 @@
       "required": ["type", "op", "value"],
       "properties": {
         "type": { "const": "expect" },
-        "op": { "enum": ["equals", "contains", "matches", "gt", "lt", "changed_from"] },
+        "op": { "enum": ["equals", "contains", "absent", "matches", "gt", "lt", "changed_from"] },
         "value": {
-          "description": "equals: string, number or boolean; contains/matches: string; gt/lt: number; changed_from: boolean (whether the last read must differ from the previous read of the same locator/property).",
+          "description": "equals: string, number or boolean; contains/absent/matches: string (absent: the value read does not contain it); gt/lt: number; changed_from: boolean (whether the last read must differ from the previous read of the same locator/property).",
           "type": ["string", "number", "boolean"]
         }
       },

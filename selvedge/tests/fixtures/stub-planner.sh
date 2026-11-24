@@ -5,6 +5,8 @@
 # Used as SELVEDGE_PLANNER="bash <this file>". The mode comes from STUB_PLANNER_MODE:
 #   valid    a valid plan (each criterion: goto <origin>/, read url, expect equals <origin>/)
 #   invalid  a plan whose steps end in a click (missing_final_read_expect)
+#   half     the first criterion as invalid, the others as valid
+#   badsha   a valid plan with a wrong criteria_sha256 (a problem of the plan as a whole)
 #   exit1    a valid plan, then exit 1 (the exit status alone must fail the planner)
 #   noplan   writes nothing, exits 0
 #   modal    calls "$SELVEDGE_BIN" snapshot <origin>/cart without and with a prefix (goto + click
@@ -58,10 +60,10 @@ const input = JSON.parse(fs.readFileSync(process.env.SELVEDGE_CRITERIA, "utf8"))
 const origin = input.origins[0];
 const mode = process.env.STUB_MODE;
 const entry = (steps) => ({ interpretation: "The page reached shows the value the criterion names.", polarity: "positive", unverified_assumptions: [], steps });
-const plan = { schema_version: 1, target: "web", criteria_sha256: input.criteria_sha256, origins: [origin], steps_by_criterion: {} };
+const plan = { schema_version: 1, target: "web", criteria_sha256: mode === "badsha" ? "0".repeat(64) : input.criteria_sha256, origins: [origin], steps_by_criterion: {} };
 input.criteria.forEach((c, i) => {
   let steps = [{ type: "goto", url: origin + "/" }, { type: "read", property: "url" }, { type: "expect", op: "equals", value: origin + "/" }];
-  if (mode === "invalid") steps = [{ type: "goto", url: origin + "/cart" }, { type: "click", locator: { role: "button", name: "Open cart" } }];
+  if (mode === "invalid" || (mode === "half" && i === 0)) steps = [{ type: "goto", url: origin + "/cart" }, { type: "click", locator: { role: "button", name: "Open cart" } }];
   if (mode === "modal" && i === 0) {
     steps = [
       { type: "goto", url: origin + "/cart" },
