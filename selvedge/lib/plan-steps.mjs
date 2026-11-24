@@ -9,7 +9,7 @@
 // neither re-implements it. It returns every problem it finds, never only the first.
 //
 // Node >= 18, standard library only.
-import { EnvError, REASONS, isOriginAllowed, parseOrigin } from './env-config.mjs';
+import { EnvError, REASONS, isLocalOrigin, isOriginAllowed, parseOrigin } from './env-config.mjs';
 
 export const STEP_TYPES = Object.freeze(['goto', 'click', 'fill', 'select', 'check', 'press', 'wait_for', 'request', 'read', 'expect']);
 
@@ -84,6 +84,13 @@ export const READ_ATTRIBUTE_PATTERN = '^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$';
 export const READ_RESPONSE_JSON_PATTERN = '^response_json:(/([^~/]|~[01])*)+$';
 // cookie:<name>: a fingerprint of the context's cookie of that name, never its value.
 export const READ_COOKIE_PATTERN = '^cookie:[A-Za-z0-9_.-]+$';
+// response_json_each:<array pointer>|<item pointer>: the value at <item pointer> in every element of
+// the array at <array pointer> (empty: the body itself), as JSON text (`["Soccer","Tennis"]`; null for an element without
+// it), so "some element is named Soccer" is `contains "\"Soccer\""` and "no element has an email"
+// `absent "@"`; no value when the pointer is not a non-empty array. response_json_length:<pointer>:
+// the length of that array (0 for an empty one; no value when it is not an array).
+export const READ_RESPONSE_JSON_EACH_PATTERN = '^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)+$';
+export const READ_RESPONSE_JSON_LENGTH_PATTERN = '^response_json_length:(/([^~/]|~[01])*)*$';
 // response_header:<name>: a header of the last reply (its value, or no value when it is absent;
 // Set-Cookie is never readable by page code: read cookie_attribute instead).
 export const READ_RESPONSE_HEADER_PATTERN = '^response_header:[A-Za-z0-9][A-Za-z0-9-]*$';
@@ -99,6 +106,7 @@ export function readTakesNoLocator(p) {
 }
 export function isResponseRead(p) {
   return typeof p === 'string' && (p === 'response_status' || p === 'response_text' || new RegExp(READ_RESPONSE_JSON_PATTERN).test(p)
+    || new RegExp(READ_RESPONSE_JSON_EACH_PATTERN).test(p) || new RegExp(READ_RESPONSE_JSON_LENGTH_PATTERN).test(p)
     || new RegExp(READ_RESPONSE_HEADER_PATTERN).test(p));
 }
 export function isCookieAttributeRead(p) {
@@ -112,7 +120,9 @@ export function isCookieRead(p) {
 export const EXPECT_OPS = Object.freeze(['equals', 'contains', 'absent', 'matches', 'gt', 'lt', 'changed_from']);
 
 // A snapshot prefix: the plan step types except read/expect, at most PREFIX_MAX_STEPS of them. A
-// `request` in a prefix must be a GET (prefix_mutation_refused): looking never changes the app.
+// `request` in a prefix that is not a GET goes only to a local origin (localhost, 127.0.0.1, [::1]):
+// a planner may try a POST against the app it runs, as it may click a form's submit button, and it
+// counts as a plan-time action; to a remote origin it is prefix_mutation_refused.
 export const PREFIX_STEP_TYPES = Object.freeze(STEP_TYPES.filter((t) => t !== 'read' && t !== 'expect'));
 export const PREFIX_MAX_STEPS = 15;
 
@@ -297,7 +307,7 @@ function checkFieldValues(step, at, add) {
       break;
     case 'read':
       if (!isReadProperty(step.property)) {
-        add('plan_schema_violation', `${at}.property must be one of ${READ_PROPERTIES.join(', ')}, attribute:<name>, response_json:<JSON Pointer>, response_header:<name>, cookie:<name> or cookie_attribute:<name>:<${COOKIE_ATTRIBUTES.join('|')}>`);
+        add('plan_schema_violation', `${at}.property must be one of ${READ_PROPERTIES.join(', ')}, attribute:<name>, response_json:<JSON Pointer>, response_json_each:<array pointer>|<item pointer>, response_json_length:<pointer>, response_header:<name>, cookie:<name> or cookie_attribute:<name>:<${COOKIE_ATTRIBUTES.join('|')}>`);
       } else if (readTakesNoLocator(step.property) && 'locator' in step) {
         add('plan_schema_violation', `${at}: read ${step.property} takes no locator`);
       } else if (!readTakesNoLocator(step.property) && !('locator' in step)) {
@@ -336,7 +346,7 @@ function checkFieldValues(step, at, add) {
 //    (isOriginAllowed). No config allows nothing: the check fails closed.
 //  - origins: when an array, every goto origin must also be one of these (the plan's `origins`).
 //  - prefix: a snapshot prefix — only PREFIX_STEP_TYPES, at most PREFIX_MAX_STEPS steps, and a
-//    request only as a GET (prefix_mutation_refused).
+//    request that is not a GET only to a local origin (prefix_mutation_refused).
 //  - pageOrigin: the origin of the page before the first step (a snapshot's <url>), or null.
 // A request's url must pass the same origin checks as a goto, and its origin must equal the origin
 // of the page at that point: the last goto before it (else pageOrigin). A cross-origin fetch would
@@ -368,8 +378,8 @@ export function validateSteps(steps, { config, origins, prefix = false, pageOrig
     if (prefix && !PREFIX_STEP_TYPES.includes(t)) {
       add('prefix_step_not_allowed', `${at}: ${t} is not allowed in a snapshot prefix (allowed: ${PREFIX_STEP_TYPES.join(', ')})`);
     }
-    if (prefix && t === 'request' && step.method !== 'GET') {
-      add('prefix_mutation_refused', `${at}: a snapshot prefix sends only GET requests (looking never changes the app); this one is ${JSON.stringify(step.method)}`);
+    if (prefix && t === 'request' && step.method !== 'GET' && !(typeof step.url === 'string' && isLocalOrigin(urlOrigin(step.url) || ''))) {
+      add('prefix_mutation_refused', `${at}: a snapshot prefix sends a ${JSON.stringify(step.method)} request only to a local origin (it would change a remote app while planning)`);
     }
     const { required, optional } = STEP_FIELDS[t];
     for (const k of Object.keys(step)) {

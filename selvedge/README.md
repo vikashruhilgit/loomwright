@@ -410,8 +410,10 @@ writes locators: content that appears only after a click is not in the tree unti
 
 - **The prefix** (`--steps`) is a JSON array of at most 15 `goto`, `click`, `fill`, `select`,
   `check`, `press`, `wait_for` and `request` steps (never `read` or `expect`), checked by the same
-  step validator as a plan. A `request` in a prefix must be a `GET` (`plan_invalid`
-  `prefix_mutation_refused` otherwise: looking never changes the app), to the origin of the page
+  step validator as a plan. A `request` in a prefix that is not a `GET` goes only to a local
+  origin (`localhost`, `127.0.0.1`, `[::1]`): a planner may try a request on the app it runs, as it
+  may click a form's submit button, and it counts as a plan-time action; to a remote origin it is
+  `plan_invalid` `prefix_mutation_refused`. Every request goes to the origin of the page
   it is sent from (`<url>`, or the last prefix `goto`). With one, the output also holds
   `"replies"`: one `{step, method, url, status, content_type, headers, body, truncated}` per request that
   replied, `body` the first 2 KiB of the reply text, redacted like `aria_snapshot`. A `fill`/`select` value may be `{{NAME}}`, read from the environment; an
@@ -557,7 +559,11 @@ Step types (no field beyond these is accepted):
   `cookie_attribute:<name>:<attribute>` (`http_only` or `secure`, a boolean; `same_site`, `path`
   or `domain`, a string; never the value; no value when there is no such cookie);
   `response_status` (a number), `response_text` (the body,
-  as text, trimmed like `text`) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
+  as text, trimmed like `text`), `response_json_each:<array pointer>|<item pointer>` (the value at
+  the item pointer in every element of the array, as JSON text such as `["Soccer","Tennis"]`, null
+  for an element without it; an empty array pointer is the body itself; no value when it is not a
+  non-empty array, so `absent` on it is never vacuous), `response_json_length:<pointer>` (the
+  array's length) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
   pointer into the parsed body, e.g. `response_json:/0/createdBy/name`: a string, number or
   boolean, or no value when the body is not JSON or the pointer names nothing, null, an object or
   an array) of the last `request` before it; or `cookie:<name>`, a fingerprint of that cookie
@@ -607,7 +613,7 @@ Plan-lint problems (the codes after `plan_invalid:`):
 - `criteria_sha_mismatch` — `criteria_sha256` is not the hash of the run folder's `criteria.json`.
 - `prefix_step_not_allowed` — a snapshot prefix holds a `read` or `expect` step.
 - `prefix_too_long` — a snapshot prefix has more than 15 steps.
-- `prefix_mutation_refused` — a snapshot prefix holds a `request` whose method is not `GET`.
+- `prefix_mutation_refused` — a snapshot prefix holds a `request` whose method is not `GET` to a remote (not local) origin.
 - `response_without_request` — a `read` of `response_status`, `response_text` or `response_json:…` with no `request` step before it in the criterion.
 - `at_load_misused` — a `read` with `at_load: true` after an action, in a negative criterion, or checked by an `expect` other than `equals`, `contains` or `matches`.
 - `invalid_not_planned` — a `not_planned` entry with an unknown id or key, an unknown reason, a duplicate, a criterion that is also planned, `criterion_not_testable` without a rewrite, or `side_effect_not_observable` or `criterion_plan_invalid` without a detail.

@@ -20,6 +20,9 @@
 //                              focused (the focused element's aria-snapshot line, e.g. `button
 //                              "Save"`, or null when focus is on no element);
 //                              response_header:<name> (string, or null) of state.reply;
+//                              response_json_each:<array>|<item> (JSON text of each element's
+//                              value, or null) and response_json_length:<array> (a number, or
+//                              null) of state.reply;
 //                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
 //                              same_site / path / domain strings; null when there is no cookie);
 //                              response_status (number), response_text (string, trimmed like
@@ -66,6 +69,8 @@ import { reasonOfResponse } from './route-guard.mjs';
 
 const ATTRIBUTE_PREFIX = 'attribute:';
 const RESPONSE_JSON_PREFIX = 'response_json:';
+const RESPONSE_JSON_EACH_PREFIX = 'response_json_each:';
+const RESPONSE_JSON_LENGTH_PREFIX = 'response_json_length:';
 const RESPONSE_HEADER_PREFIX = 'response_header:';
 const COOKIE_PREFIX = 'cookie:';
 const COOKIE_ATTRIBUTE_PREFIX = 'cookie_attribute:';
@@ -191,6 +196,37 @@ export function responseJsonValue(text, pointer) {
   return ['string', 'number', 'boolean'].includes(typeof v) ? v : null;
 }
 
+// The array a response_json_each / response_json_length read looks at: the parsed body's value at
+// `pointer` when it is an array, else null (not JSON, no such value, not an array).
+function responseArray(text, pointer) {
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const v = resolvePointer(doc, pointer);
+  return Array.isArray(v) ? v : null;
+}
+
+// response_json_each:<array>|<item> → JSON text of each element's value at <item> (null where it is
+// missing), or null when <array> is not a non-empty array.
+export function responseJsonEach(text, spec) {
+  const cut = spec.indexOf('|');
+  const list = responseArray(text, spec.slice(0, cut));
+  if (!list || list.length === 0) return null;
+  return JSON.stringify(list.map((el) => {
+    const v = resolvePointer(el, spec.slice(cut + 1));
+    return v === undefined ? null : v;
+  }));
+}
+
+// response_json_length:<pointer> → the array's length, or null when it is not an array.
+export function responseJsonLength(text, pointer) {
+  const list = responseArray(text, pointer);
+  return list ? list.length : null;
+}
+
 // The Playwright locator for a plan-step locator (role / label / text / testid; never CSS).
 export function locate(page, loc) {
   if ('role' in loc) {
@@ -274,7 +310,8 @@ export async function readValue(page, step, state = {}) {
     const found = (await page.context().cookies([page.url()])).find((c) => c.name === name);
     return found ? cookieFingerprint(found.value) : null;
   }
-  if (p === 'response_status' || p === 'response_text' || (typeof p === 'string' && (p.startsWith(RESPONSE_JSON_PREFIX) || p.startsWith(RESPONSE_HEADER_PREFIX)))) {
+  if (p === 'response_status' || p === 'response_text' || (typeof p === 'string' && (p.startsWith(RESPONSE_JSON_PREFIX) || p.startsWith(RESPONSE_JSON_EACH_PREFIX)
+    || p.startsWith(RESPONSE_JSON_LENGTH_PREFIX) || p.startsWith(RESPONSE_HEADER_PREFIX)))) {
     const reply = state && state.reply;
     if (!reply) throw new Error(`read ${p}: no request step has replied in this criterion`);
     if (p === 'response_status') return reply.status;
@@ -283,6 +320,8 @@ export async function readValue(page, step, state = {}) {
       return typeof v === 'string' ? v : null;
     }
     if (p === 'response_text') return String(reply.text).trim();
+    if (p.startsWith(RESPONSE_JSON_EACH_PREFIX)) return responseJsonEach(reply.text, p.slice(RESPONSE_JSON_EACH_PREFIX.length));
+    if (p.startsWith(RESPONSE_JSON_LENGTH_PREFIX)) return responseJsonLength(reply.text, p.slice(RESPONSE_JSON_LENGTH_PREFIX.length));
     return responseJsonValue(reply.text, p.slice(RESPONSE_JSON_PREFIX.length));
   }
   const loc = locate(page, step.locator);

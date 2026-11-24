@@ -33,9 +33,11 @@ EOF
 It prints `{"schema_version", "url", "steps_run", "failed_step", "error", "aria_snapshot"}`: the
 page's accessibility tree after opening `<url>` and running the optional prefix (a JSON array of
 at most 15 `goto`, `click`, `fill`, `select`, `check`, `press`, `wait_for`, `request` steps). A
-`request` in a prefix must be a `GET` (anything else is refused: looking never changes the app);
-the output then also holds `replies`, each request's `status` and the first 2 KiB of its `body`,
-so you can see a reply's shape before you plan a read of it. Content that
+`request` in a prefix may be a `POST`, `PUT`, `PATCH` or `DELETE` only to a local origin
+(`localhost`): try the request your plan will send, to see its reply, rather than guessing a body
+field or a reply pointer. The output then also holds `replies`, each request's `status`,
+`headers` and the first 2 KiB of its `body`, so you can see a reply's shape before you plan a
+read of it. Content that
 only appears after an action (a dialog, a menu, a validation message) is absent from the tree
 until a prefix performs that action, so snapshot the page in the state a criterion needs before
 you name its controls. Every call counts against `snapshot_budget`; `NOT_VERIFIABLE
@@ -109,8 +111,11 @@ Each step is an object with `type` and exactly these fields:
 - `read` — `property`: `text`, `value`, `checked`, `count` or `attribute:<name>` (each with a
   `locator`), or, with no locator: `url`; `focused` (the element holding keyboard focus, as
   `button "Save"`: press `Tab`, then read it); `response_status`, `response_text`,
-  `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`) or
-  `response_header:<name>` of the last `request` before it; `cookie:<name>` (a fingerprint of that
+  `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`),
+  `response_json_each:<array pointer>|<item pointer>` (that field of EVERY element, as JSON text
+  such as `["Basketball","Soccer"]`: "some sport is Soccer" is `contains "\"Soccer\""`, "no post
+  has an email" is `absent "@"`; never assume an element's index), `response_json_length:<pointer>`
+  or `response_header:<name>` of the last `request` before it; `cookie:<name>` (a fingerprint of that
   cookie, never its value); `cookie_attribute:<name>:<attribute>` (`http_only`, `secure`,
   `same_site`, `path` or `domain` of that cookie: "the cookie is HttpOnly" is
   `cookie_attribute:<name>:http_only` then `equals true`).

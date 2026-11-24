@@ -5,8 +5,9 @@
 // Opens <url> in a guarded Chromium (openGuardedContext, item 02's proxy + route layer), runs an
 // optional prefix of plan steps (a JSON array: goto, click, fill, select, check, press, wait_for,
 // request — never read or expect, at most 15, checked by validateSteps in prefix mode; a request
-// only as a GET to the origin of the page it is sent from, so looking never changes the app:
-// a POST, PUT, PATCH or DELETE is plan_invalid prefix_mutation_refused), and prints the
+// to the origin of the page it is sent from, and one that is not a GET only to a local origin
+// (counted as a plan-time action, as a click is; to a remote origin it is plan_invalid
+// prefix_mutation_refused), and prints the
 // accessibility tree of the page body. A planner uses it to see a page in the state a criterion
 // needs (a dialog open, a form filled) before it writes locators.
 //
@@ -38,7 +39,7 @@
 //   {schema_version: 1, url, steps_run, failed_step: null | <0-based prefix index>,
 //    error: null | <the error's first line>, aria_snapshot[, replies]}
 // `replies` is there only when the prefix holds a request: one {step, method, url, status,
-// content_type, body, truncated} per request that replied, body the first SNAPSHOT_REPLY_BYTES
+// content_type, headers, body, truncated} per request that replied, body the first SNAPSHOT_REPLY_BYTES
 // bytes of the reply text (redacted like aria_snapshot), so a planner can see a reply's shape.
 // failed_step is null with a non-null error when <url> itself did not load. A navigation (<url> or a
 // prefix goto) answered with an HTTP status >= 400 has failed: the guard's proxy answers an
@@ -71,7 +72,7 @@
 import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { authEnvValues } from './auth-state.mjs';
-import { EnvError, REASONS, UsageError, isMain, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
+import { EnvError, REASONS, UsageError, isLocalOrigin, isMain, isOriginAllowed, loadConfig, parseCliArgs, parseOrigin } from './env-config.mjs';
 import { isActionStep, placeholderNames, resolvePlaceholders, validateSteps } from './plan-steps.mjs';
 import { problemLine } from './plan-validate.mjs';
 import { openGuardedContext } from './runner/route-guard.mjs';
@@ -256,7 +257,14 @@ async function runPrefixStep(page, step, ctx) {
     throw new Error(`step type ${JSON.stringify(step.type)} cannot run in a snapshot prefix`);
   }
   if (step.type === 'request' && step.method !== 'GET') {
-    throw new Error(`a snapshot prefix sends only GET requests (${JSON.stringify(step.method)} refused)`);
+    let origin = '';
+    try {
+      origin = new URL(step.url, page.url()).origin;
+    } catch {
+      origin = '';
+    }
+    // the lint's rule, checked again where the request leaves (defence in depth)
+    if (!isLocalOrigin(origin)) throw new Error(`a snapshot prefix sends a ${JSON.stringify(step.method)} request only to a local origin (${origin || 'no origin'} refused)`);
   }
   return runStep(page, step, ctx);
 }

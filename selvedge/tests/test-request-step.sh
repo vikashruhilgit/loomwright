@@ -99,8 +99,8 @@ if node "$TESTS_DIR/fixtures/request-unit.mjs" "$LIB" >"$U" 2>"$TMP/unit.err" &&
   jcheck "$U" "response_status, response_text, response_json:<pointer> (~0 / ~1 escapes) and cookie:<name> take no locator; with one, or a pointer that is not RFC 6901, plan_schema_violation" \
     'same(R.reads_no_locator, []) && same(R.reads_with_locator, ["2:plan_schema_violation", "3:plan_schema_violation"]) && same(R.bad_pointer, ["2:plan_schema_violation", "3:plan_schema_violation", "4:plan_schema_violation"])'
   jcheck "$U" "isActionStep: a GET request is not an action; POST, PUT, PATCH and DELETE are (as click is; goto is not)" 'same(R.is_action, [false, true, true, true, true, true, false])'
-  jcheck "$U" "snapshot prefix: a GET request from the snapshot's page is allowed; a POST or DELETE is prefix_mutation_refused" \
-    'same(R.prefix_get, []) && same(R.prefix_post, ["prefix_mutation_refused"]) && same(R.prefix_delete, ["prefix_mutation_refused"])'
+  jcheck "$U" "snapshot prefix: a GET, POST or DELETE to a local origin is allowed (a planner may try a request on the app it runs); a POST to a remote origin is prefix_mutation_refused, a GET there is not" \
+    'same(R.prefix_get, []) && same(R.prefix_post, []) && same(R.prefix_delete, []) && R.prefix_post_remote.includes("prefix_mutation_refused") && !R.prefix_get_remote.includes("prefix_mutation_refused")'
   jcheck "$U" "Acceptance 1 lint: goto, request GET, read response_status, expect equals 401 is a clean plan" 'same(R.lint_acceptance, [])'
   jcheck "$U" "a read response_status or response_json with no request before it in the criterion (or before the first request) is response_without_request" \
     'same(R.lint_no_request, ["response_without_request"]) && same(R.lint_json_no_request, ["response_without_request"]) && same(R.lint_read_before_request, ["response_without_request"])'
@@ -264,6 +264,19 @@ check "cookie_attribute reads the HttpOnly flag (true) and the path (/) of the s
 check "focused reads the element holding focus after a key press (button \"Do nothing\"); absent on it checks a hidden button is never reached" \
   'vc(5).verdict === "PASS" && vc(5).read_value.startsWith("button") && vc(6).verdict === "PASS"'
 [ "$(hits)" = "$((before + 3))" ] && ok "the raw-body request and the two sign-ins reached the app once each" || ko "/api/login hits (vocab): before $before, after $(hits)"
+
+FC='{"type":"request","method":"GET","url":"$O/api/forecast"}'
+F4="$(folder arrays "$R" '{"criteria":[
+{"text":"Some forecast day is tue","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|/day"},{"type":"expect","op":"contains","value":"\"tue\""}]},
+{"text":"The forecast has two days","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_length:/days"},{"type":"expect","op":"equals","value":2}]},
+{"text":"No forecast day carries a rain field","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|/rain"},{"type":"expect","op":"matches","value":"^\\[null(,null)*\\]$"}]},
+{"text":"Some error is listed","steps":['"$REQ_GET"',{"type":"read","property":"response_json_each:/errors|/code"},{"type":"expect","op":"absent","value":"x"}]}]}')"
+[ -n "$F4" ] && ok "setup: the plan with response_json_each / response_json_length reads freezes" || ko "setup: folder arrays: $(cat "$TMP/o/freeze-arrays.err" 2>/dev/null)"
+run arrays "$F4" "$PW" "PASS=$PASS_VALUE"
+check "response_json_each reads one field of every element (contains \"tue\": PASS), response_json_length the array's length (2: PASS), a field no element has reads as nulls ([null,null]: PASS)" \
+  'vc(0).verdict === "PASS" && vc(0).read_value === "[\"mon\",\"tue\"]" && vc(1).verdict === "PASS" && vc(1).read_value === 2 && vc(2).verdict === "PASS" && vc(2).read_value === "[null,null]"'
+check "response_json_each on a pointer that is no array reads no value, so absent there is NOT_VERIFIABLE no_value_read, never a vacuous PASS" \
+  'vc(3).verdict === "NOT_VERIFIABLE" && vc(3).reason === "no_value_read"'
 node --input-type=module -e "
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -284,7 +297,7 @@ run unset "$F3" "$PW"
 check "Acceptance 5: an unset PASS is BLOCKED placeholder_unset (exit 2) naming PASS, before any request" 'rc === 2 && vc(0).verdict === "BLOCKED" && vc(0).reason === "placeholder_unset" && err.includes("PASS") && ev.filter((x) => x.type === "request").length === 0'
 [ "$(hits)" = "$before" ] && ok "Acceptance 5: with PASS unset no sign-in request reached the app" || ko "/api/login hits with PASS unset: before $before, after $(hits)"
 
-echo "-- snapshot: a GET request in a prefix shows the reply; a POST is refused before launch"
+echo "-- snapshot: a request in a prefix shows the reply; a POST to the local app runs and counts as a plan-time action"
 snap() {
   local label="$1"; shift
   printf '%s\n' "$1" > "$TMP/prefix-$label.json"
@@ -302,10 +315,17 @@ console.log(okA && okB && j.steps_run === 2 && rec.plan_time_actions === 0 ? "ye
 ' "$TMP/o/snap-get.out" "$TMP/snap-get/snapshots.jsonl" 2>&1)"
 { [ "$rc" = "0" ] && [ "$out" = "yes" ]; } && ok "a GET request in a prefix: exit 0; replies holds each status and the first 2 KiB of the body (truncated past it); no plan-time action" || ko "snapshot GET prefix: rc=$rc $out $(tail -n 3 "$TMP/o/snap-get.err")"
 before="$(hits)"
-rc="$(snap post "[{\"type\":\"request\",\"method\":\"POST\",\"url\":\"$AURL/api/login\",\"json\":{\"email\":\"a\",\"password\":\"b\"}}]")"
-{ [ "$rc" = "2" ] && grep -qF "prefix_mutation_refused" "$TMP/o/snap-post.err" && node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").trim()); process.exit(r.browser_launched === false && r.outcome === "invalid" ? 0 : 1)' "$TMP/snap-post/snapshots.jsonl" && [ "$(hits)" = "$before" ]; } \
-  && ok "a POST request in a prefix: exit 2 plan_invalid prefix_mutation_refused; no browser launched, nothing reached the app" \
-  || ko "snapshot POST prefix: rc=$rc $(tail -n 3 "$TMP/o/snap-post.err")"
+rc="$(snap post "[{\"type\":\"request\",\"method\":\"POST\",\"url\":\"$AURL/api/login\",\"body\":\"{bad\",\"headers\":{\"content-type\":\"application/json\"}}]")"
+out="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const rec = JSON.parse(fs.readFileSync(process.argv[2], "utf8").trim().split("\n").pop());
+const r = j.replies && j.replies[0];
+console.log(r && r.status === 400 && r.headers["content-type"].includes("application/json") && rec.plan_time_actions === 1 ? "yes" : JSON.stringify({ r, rec }));
+' "$TMP/o/snap-post.out" "$TMP/snap-post/snapshots.jsonl" 2>&1)"
+{ [ "$rc" = "0" ] && [ "$out" = "yes" ] && [ "$(hits)" = "$((before + 1))" ]; } \
+  && ok "a POST request in a prefix to the local app: exit 0, the reply (status 400, its headers) is shown, it reached the app once and counts as one plan-time action" \
+  || ko "snapshot POST prefix: rc=$rc $out $(tail -n 3 "$TMP/o/snap-post.err")"
 rc="$(snap cross "[{\"type\":\"request\",\"method\":\"GET\",\"url\":\"http://localhost:1/api\"}]")"
 { [ "$rc" = "2" ] && grep -qF "BLOCKED host_not_allowed" "$TMP/o/snap-cross.out"; } && ok "a prefix request to an unlisted origin: BLOCKED host_not_allowed before launch" || ko "snapshot unlisted prefix request: rc=$rc $(cat "$TMP/o/snap-cross.out")"
 

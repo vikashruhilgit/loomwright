@@ -62,6 +62,8 @@ out.is_action = [
 out.prefix_get = S.validateSteps([{ type: 'request', method: 'GET', url: `${O}/api/x` }], { config, prefix: true, pageOrigin: O }).map((p) => p.code);
 out.prefix_post = S.validateSteps([{ type: 'request', method: 'POST', url: `${O}/api/x`, json: { a: 1 } }], { config, prefix: true, pageOrigin: O }).map((p) => p.code);
 out.prefix_delete = S.validateSteps([{ type: 'request', method: 'DELETE', url: `${O}/api/x` }], { config, prefix: true, pageOrigin: O }).map((p) => p.code);
+out.prefix_post_remote = S.validateSteps([{ type: 'request', method: 'POST', url: 'https://shop.example/api/x', json: { a: 1 } }], { config, prefix: true, pageOrigin: 'https://shop.example' }).map((p) => p.code);
+out.prefix_get_remote = S.validateSteps([{ type: 'request', method: 'GET', url: 'https://shop.example/api/x' }], { config, prefix: true, pageOrigin: 'https://shop.example' }).map((p) => p.code);
 
 // -- the plan lint (validatePlan): reply reads, cookie reads, the negative baseline
 const crit = (texts) => {
