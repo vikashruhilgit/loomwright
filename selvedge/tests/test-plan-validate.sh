@@ -379,6 +379,8 @@ const checks = {
     && d.step_read.properties.property.anyOf[4].pattern === S.READ_RESPONSE_HEADER_PATTERN && d.step_read.properties.property.anyOf[5].pattern === S.READ_COOKIE_ATTRIBUTE_PATTERN
     && d.step_read.properties.property.anyOf[6].pattern === S.READ_RESPONSE_JSON_EACH_PATTERN && d.step_read.properties.property.anyOf[7].pattern === S.READ_RESPONSE_JSON_LENGTH_PATTERN
     && d.step_read.properties.property.anyOf.length === 8,
+  request_bounds: d.step_request.properties.headers.maxProperties === S.REQUEST_HEADERS_MAX && d.step_request.properties.body.maxLength === S.REQUEST_BODY_MAX_CHARS
+    && d.step_request.properties.headers.propertyNames.pattern === S.REQUEST_HEADER_NAME_PATTERN,
   request: eq(d.step_request.properties.method.enum, S.REQUEST_METHODS),
   criterion: eq(Object.keys(d.criterion_plan.properties), V.CRITERION_PLAN_KEYS) && d.criterion_plan.additionalProperties === false
     && eq(d.criterion_plan.properties.polarity.enum, V.POLARITIES)

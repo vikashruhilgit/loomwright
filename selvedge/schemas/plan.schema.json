@@ -159,7 +159,8 @@
         },
         "body": {
           "description": "A non-GET raw text body (at most 8192 characters; literals or {{NAME}}), sent as given: text/plain unless headers name a content-type. Never written to evidence.",
-          "type": "string"
+          "type": "string",
+          "maxLength": 8192
         },
         "headers": {
           "description": "Request headers: at most 16, name to string value (literals or {{NAME}}). A header fetch forbids page code to set (Cookie, Host, Origin, Referer, Sec-*, Proxy-*, ...) is refused.",
