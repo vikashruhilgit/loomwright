@@ -117,7 +117,8 @@ Each step is an object with `type` and exactly these fields:
   (its last `goto`). A request whose method is not `GET` is an action.
 - `read` — `property`: `text`, `value`, `checked`, `count` or `attribute:<name>` (each with a
   `locator`), or, with no locator: `url`; `focused` (the element holding keyboard focus, as
-  `button "Save"`: press `Tab`, then read it); `response_status`, `response_text`,
+  `button "Save"`: press `Tab`, then read it); `response_status`, `response_text` (a reply over
+  64 KiB, such as a large HTML page, has no body value: read the page with `text` instead),
   `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`),
   `response_json_each:<array pointer>|<item pointer>` (that field of EVERY element, as JSON text
   such as `["Basketball","Soccer"]`: "some sport is Soccer" is `contains "\"Soccer\""`; never

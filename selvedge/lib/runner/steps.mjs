@@ -27,7 +27,8 @@
 //                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
 //                              same_site / path / domain strings; null when there is no cookie);
 //                              response_status (number), response_text (string, trimmed like
-//                              text: a body's trailing newline is not part of its value),
+//                              text: a body's trailing newline is not part of its value; every
+//                              body read of a reply cut at RESPONSE_TEXT_CAP is null),
 //                              response_json:<pointer> (a scalar, or null) of state.reply;
 //                              cookie:<name> (cookieFingerprint, or null when there is no cookie)
 //   readEntry(step, value)     one read as expectMatches takes it: { key, value }, the key naming
@@ -321,6 +322,10 @@ export async function readValue(page, step, state = {}) {
       const v = (reply.headers || {})[p.slice(RESPONSE_HEADER_PREFIX.length).toLowerCase()];
       return typeof v === 'string' ? v : null;
     }
+    // A body cut at RESPONSE_TEXT_CAP is not the body: "contains x" could miss an x past the cut
+    // (a false FAIL) and "absent x" could miss it too (a false PASS). Every body read of a
+    // truncated reply reads no value; status and headers stay readable.
+    if (reply.truncated === true) return null;
     if (p === 'response_text') return String(reply.text).trim();
     if (p.startsWith(RESPONSE_JSON_EACH_PREFIX)) return responseJsonEach(reply.text, p.slice(RESPONSE_JSON_EACH_PREFIX.length));
     if (p.startsWith(RESPONSE_JSON_LENGTH_PREFIX)) return responseJsonLength(reply.text, p.slice(RESPONSE_JSON_LENGTH_PREFIX.length));

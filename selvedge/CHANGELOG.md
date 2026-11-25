@@ -17,6 +17,11 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
 - **An empty item pointer reads the whole elements** (`response_json_each:/posts|`), so "the reply
   never returns `contactEmail`" is `absent "\"contactEmail\""` on it. The planner is told not to
   judge "never returns X" by X's value being null.
+- **A reply cut at 64 KiB has no body value.** `response_text`, `response_json…` reads of a
+  truncated reply read no value (NOT_VERIFIABLE `no_value_read`); before, `contains` judged only the
+  kept part (a false FAIL in a 0.12.1 tuning pass: a Next.js page whose name came past the cut) and
+  `absent` could PASS on a text that sits past it. Status and headers stay readable; the planner is
+  told to read a large page with `text`.
 - 0.12.0 tuning report (129 cases, test accounts on): false-PASS 1/45, false-FAIL 0/84, abstention
   8/129 (6.2%). Kept out of `results.json`, like the 0.11.2 one.
 
