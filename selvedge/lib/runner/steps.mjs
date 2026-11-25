@@ -22,8 +22,8 @@
 //                              response_header:<name> (string, or null) of state.reply;
 //                              response_json_each:<array>|<item> (JSON text of each element's
 //                              value, or the whole element for an empty <item>; null when an
-//                              element has no such value) and response_json_length:<array> (a number, or
-//                              null) of state.reply;
+//                              element has no such value) and
+//                              response_json_length:<array> (a number, or null) of state.reply;
 //                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
 //                              same_site / path / domain strings; null when there is no cookie);
 //                              response_status (number), response_text (string, trimmed like
@@ -210,11 +210,11 @@ function responseArray(text, pointer) {
   return Array.isArray(v) ? v : null;
 }
 
-// response_json_each:<array>|<item> → JSON text of each element's value at <item> (an empty <item>
-// is the whole element), or null when <array> is not a non-empty array or ANY element has no value
-// at <item>. A missing field is never read as JSON null: "the key is returned, value null" and "the
-// key is left out" must not read the same text. To check that a key is left out, read the whole
-// elements and expect `absent "\"<key>\""`.
+// response_json_each:<array>|<item> → JSON text of each element's value at <item> (an empty
+// <item> is the whole element), or null when <array> is not a non-empty array or ANY element has
+// no value at <item>. A missing field is never read as JSON null: "the key is returned, value null"
+// and "the key is left out" must not read the same text. To check that a key is left out, read the
+// whole elements and expect `absent "\"<key>\""`.
 export function responseJsonEach(text, spec) {
   const cut = spec.indexOf('|');
   const list = responseArray(text, spec.slice(0, cut));
