@@ -8,6 +8,18 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.12.1 — 2026-11-25
+
+- **`response_json_each` never reads a missing field as `null`.** When any element lacks the item,
+  the read has no value (NOT_VERIFIABLE `no_value_read`). Before, "the key is returned as `null`"
+  and "the key is left out" read the same text, so a "never returns X" criterion PASSed on the
+  buggy commit of the 0.12.0 tuning run's one false-PASS (seeded data held no X).
+- **An empty item pointer reads the whole elements** (`response_json_each:/posts|`), so "the reply
+  never returns `contactEmail`" is `absent "\"contactEmail\""` on it. The planner is told not to
+  judge "never returns X" by X's value being null.
+- 0.12.0 tuning report (129 cases, test accounts on): false-PASS 1/45, false-FAIL 0/84, abstention
+  8/129 (6.2%). Kept out of `results.json`, like the 0.11.2 one.
+
 ## 0.12.0 — 2026-11-24
 
 Engine revision 2 (Phase 2's second and last counted revision): the causes the 0.11.2 tuning run

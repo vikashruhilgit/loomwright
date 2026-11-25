@@ -21,7 +21,8 @@
 //                              "Save"`, or null when focus is on no element);
 //                              response_header:<name> (string, or null) of state.reply;
 //                              response_json_each:<array>|<item> (JSON text of each element's
-//                              value, or null) and response_json_length:<array> (a number, or
+//                              value, or the whole element for an empty <item>; null when an
+//                              element has no such value) and response_json_length:<array> (a number, or
 //                              null) of state.reply;
 //                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
 //                              same_site / path / domain strings; null when there is no cookie);
@@ -209,16 +210,17 @@ function responseArray(text, pointer) {
   return Array.isArray(v) ? v : null;
 }
 
-// response_json_each:<array>|<item> → JSON text of each element's value at <item> (null where it is
-// missing), or null when <array> is not a non-empty array.
+// response_json_each:<array>|<item> → JSON text of each element's value at <item> (an empty <item>
+// is the whole element), or null when <array> is not a non-empty array or ANY element has no value
+// at <item>. A missing field is never read as JSON null: "the key is returned, value null" and "the
+// key is left out" must not read the same text. To check that a key is left out, read the whole
+// elements and expect `absent "\"<key>\""`.
 export function responseJsonEach(text, spec) {
   const cut = spec.indexOf('|');
   const list = responseArray(text, spec.slice(0, cut));
   if (!list || list.length === 0) return null;
-  return JSON.stringify(list.map((el) => {
-    const v = resolvePointer(el, spec.slice(cut + 1));
-    return v === undefined ? null : v;
-  }));
+  const values = list.map((el) => resolvePointer(el, spec.slice(cut + 1)));
+  return values.some((v) => v === undefined) ? null : JSON.stringify(values);
 }
 
 // response_json_length:<pointer> → the array's length, or null when it is not an array.

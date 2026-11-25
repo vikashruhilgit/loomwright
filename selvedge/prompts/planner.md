@@ -120,8 +120,13 @@ Each step is an object with `type` and exactly these fields:
   `button "Save"`: press `Tab`, then read it); `response_status`, `response_text`,
   `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`),
   `response_json_each:<array pointer>|<item pointer>` (that field of EVERY element, as JSON text
-  such as `["Basketball","Soccer"]`: "some sport is Soccer" is `contains "\"Soccer\""`, "no post
-  has an email" is `absent "@"`; never assume an element's index), `response_json_length:<pointer>`
+  such as `["Basketball","Soccer"]`: "some sport is Soccer" is `contains "\"Soccer\""`; never
+  assume an element's index; no value when ANY element lacks the field, never a null in its place).
+  An empty item pointer (`response_json_each:/posts|`) reads the whole elements: "no post has an
+  email" is `absent "@"` on it, and "the reply never returns `contactEmail`" is
+  `absent "\"contactEmail\""` on it, because a key returned as `null` is still returned. Do not
+  judge "never returns X" by X's value being null: the seeded data may simply hold no X, so the
+  bug cannot show in the value. `response_json_length:<pointer>`
   or `response_header:<name>` of the last `request` before it; `cookie:<name>` (a fingerprint of that
   cookie, never its value); `cookie_attribute:<name>:<attribute>` (`http_only`, `secure`,
   `same_site`, `path` or `domain` of that cookie: "the cookie is HttpOnly" is

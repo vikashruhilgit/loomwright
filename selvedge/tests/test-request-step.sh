@@ -273,11 +273,25 @@ F4="$(folder arrays "$R" '{"criteria":[
 {"text":"Some forecast day is tue","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|/day"},{"type":"expect","op":"contains","value":"\"tue\""}]},
 {"text":"The forecast has two days","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_length:/days"},{"type":"expect","op":"equals","value":2}]},
 {"text":"No forecast day carries a rain field","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|/rain"},{"type":"expect","op":"matches","value":"^\\[null(,null)*\\]$"}]},
-{"text":"Some error is listed","steps":['"$REQ_GET"',{"type":"read","property":"response_json_each:/errors|/code"},{"type":"expect","op":"absent","value":"x"}]}]}')"
+{"text":"Some error is listed","steps":['"$REQ_GET"',{"type":"read","property":"response_json_each:/errors|/code"},{"type":"expect","op":"absent","value":"x"}]},
+{"text":"The forecast never returns a rain key","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|"},{"type":"expect","op":"absent","value":"\"rain\""}]},
+{"text":"The forecast never returns a high key","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|"},{"type":"expect","op":"absent","value":"\"high\""}]}]}')"
 [ -n "$F4" ] && ok "setup: the plan with response_json_each / response_json_length reads freezes" || ko "setup: folder arrays: $(cat "$TMP/o/freeze-arrays.err" 2>/dev/null)"
 run arrays "$F4" "$PW" "PASS=$PASS_VALUE"
-check "response_json_each reads one field of every element (contains \"tue\": PASS), response_json_length the array's length (2: PASS), a field no element has reads as nulls ([null,null]: PASS)" \
-  'vc(0).verdict === "PASS" && vc(0).read_value === "[\"mon\",\"tue\"]" && vc(1).verdict === "PASS" && vc(1).read_value === 2 && vc(2).verdict === "PASS" && vc(2).read_value === "[null,null]"'
+check "response_json_each reads one field of every element (contains \"tue\": PASS), response_json_length the array's length (2: PASS); a field the elements lack reads no value, never [null,null] (NOT_VERIFIABLE no_value_read, so a null-matching expect cannot PASS)" \
+  'vc(0).verdict === "PASS" && vc(0).read_value === "[\"mon\",\"tue\"]" && vc(1).verdict === "PASS" && vc(1).read_value === 2 && vc(2).verdict === "NOT_VERIFIABLE" && vc(2).reason === "no_value_read"'
+check "an empty item pointer reads the whole elements: absent \"rain\" on them is PASS (no element has the key), absent \"high\" is FAIL (the key is returned)" \
+  'vc(4).verdict === "PASS" && vc(4).read_value === "[{\"day\":\"mon\",\"high\":21},{\"day\":\"tue\",\"high\":19}]" && vc(5).verdict === "FAIL"'
+node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const { responseJsonEach } = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/runner/steps.mjs').href);
+const t = JSON.stringify({ posts: [{ id: 1, email: null }, { id: 2 }], all: [{ email: null }, { email: null }] });
+const out = [responseJsonEach(t, '/posts|/email'), responseJsonEach(t, '/all|/email'), responseJsonEach(t, '/posts|')];
+process.stdout.write(JSON.stringify(out));
+" >"$TMP/each-unit.out" 2>"$TMP/each-unit.err"
+[ "$(cat "$TMP/each-unit.out")" = '[null,"[null,null]","[{\"id\":1,\"email\":null},{\"id\":2}]"]' ] \
+  && ok "a field one element lacks reads no value (not [null,null]); a field every element returns as null reads [null,null]; an empty item pointer reads the elements as returned" \
+  || ko "responseJsonEach missing vs null: $(cat "$TMP/each-unit.out" "$TMP/each-unit.err")"
 check "response_json_each on a pointer that is no array reads no value, so absent there is NOT_VERIFIABLE no_value_read, never a vacuous PASS" \
   'vc(3).verdict === "NOT_VERIFIABLE" && vc(3).reason === "no_value_read"'
 node --input-type=module -e "

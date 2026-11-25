@@ -562,9 +562,12 @@ Step types (no field beyond these is accepted):
   or `domain`, a string; never the value; no value when there is no such cookie);
   `response_status` (a number), `response_text` (the body,
   as text, trimmed like `text`), `response_json_each:<array pointer>|<item pointer>` (the value at
-  the item pointer in every element of the array, as JSON text such as `["Soccer","Tennis"]`, null
-  for an element without it; an empty array pointer is the body itself; no value when it is not a
-  non-empty array, so `absent` on it is never vacuous), `response_json_length:<pointer>` (the
+  the item pointer in every element of the array, as JSON text such as `["Soccer","Tennis"]`; an
+  empty array pointer is the body itself and an empty item pointer the whole element; no value when
+  it is not a non-empty array or when any element lacks the item, never a `null` in its place, so
+  "the key is returned as null" and "the key is left out" never read alike and `absent` on it is
+  never vacuous; "the reply never returns `contactEmail`" is `response_json_each:/posts|` then
+  `absent "\"contactEmail\""`), `response_json_length:<pointer>` (the
   array's length) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
   pointer into the parsed body, e.g. `response_json:/0/createdBy/name`: a string, number or
   boolean, or no value when the body is not JSON or the pointer names nothing, null, an object or

@@ -186,7 +186,7 @@
             { "type": "string", "pattern": "^cookie:[A-Za-z0-9_.-]+$" },
             { "type": "string", "pattern": "^response_header:[A-Za-z0-9][A-Za-z0-9-]*$" },
             { "type": "string", "pattern": "^cookie_attribute:[A-Za-z0-9_.-]+:(http_only|secure|same_site|path|domain)$" },
-            { "type": "string", "pattern": "^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)+$" },
+            { "type": "string", "pattern": "^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)*$" },
             { "type": "string", "pattern": "^response_json_length:(/([^~/]|~[01])*)*$" }
           ]
         },
