@@ -21,8 +21,9 @@
 //                              "Save"`, or null when focus is on no element);
 //                              response_header:<name> (string, or null) of state.reply;
 //                              response_json_each:<array>|<item> (JSON text of each element's
-//                              value, or the whole element for an empty <item>; null when an
-//                              element has no such value) and
+//                              value, or the whole element for an empty <item>; the whole read
+//                              is null when ANY element has no such value, never a null per
+//                              element) and
 //                              response_json_length:<array> (a number, or null) of state.reply;
 //                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
 //                              same_site / path / domain strings; null when there is no cookie);
