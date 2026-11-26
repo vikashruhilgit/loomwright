@@ -362,3 +362,29 @@ Two outside critiques of rev 2, checked against the item files, Playwright's doc
 | Test Agents not listed as an alternative | D5 rejected alternatives |
 | Healer maintenance of an exported spec | P9 + after-Phase-5 item 1: healer edits end the verdict; a skip is a FAIL signal |
 | Playwright could add a verdict mode | §9 watch list |
+
+## 15. Where things stand (2026-11-27)
+
+Checked against merged PRs on `origin/main` (9a6a850), not against the item files' status stamps. The
+stamps on 08b, 08d and the measurement backlog were stale and were corrected the same day.
+
+| Phase | State | Evidence |
+|---|---|---|
+| 0 Owner decisions | **done** | §12, 2026-11-12/13 |
+| 1 Plugin MVP (01–06c) | **done** | #912, #916, #924, #926 (+#934), #935, #938, #939 |
+| 2 Measurement (07, 08, 08b, 08d) | **done; gate met** | 07 #968, 08 #973, 08b #983, engine rev 2 #989/#990. Held-out report on 0.12.1 (#992): known-FAIL 85 (≥ 60), false-PASS 0/85 (CI 0–4.25%), abstention 25/235 = 10.6% (CI 7.0–15.3%), false-FAIL 3/150, runner and planner flips 0/235 |
+| 2b Native probe sprint | **not done** | No probe result is recorded anywhere. It was meant to run alongside Phase 2 and was skipped. It blocks nothing in Phase 3 but decides the after-Phase-5 target order |
+| 3 Loomwright seam | **started** | 09 written 2026-11-27 (`09-loomwright-verify-kind-and-unknown-prefix-root-fix.md`, open). 10 and 10b not written yet |
+| 4 Remove QA from Loomwright (11a–13) | **done** | 11a #944, 11b1 #946, 11b2 #950, 12 #954, 13 (migration fragment + `docs/rationale/qa-split.md`, 4f80c60). `pre-qa-removal` tag exists |
+| 5 Dogfood + keep/kill review | **not started** | The 60-day clock starts when 09 ships |
+
+**Phase 3 order:** 09 → 10 (Launch Pad writes `verify:` lines; needs 09's kind) → 10b (CI Action; needs
+only the Selvedge CLI, so it may run alongside 10). Phase 5 starts at 09's merge.
+
+**Open loose ends (not in any item):**
+- Phase 2b probes: run them, or record an owner line that drops or defers them.
+- The two Phase 2 engine revisions are used up. Further 0.12.x fixes (the remaining false-FAILs, the
+  planner inventing a `{{NAME}}` for a bearer token) ship as normal Selvedge releases; a later held-out
+  report is "per engine version" (item 08) and feeds §8's false-PASS row, not a new gate.
+- `reports/` and `research_notes/` (this plan's evidence, §1) are untracked in the repo root, so they
+  exist in this one checkout only.
