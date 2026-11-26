@@ -27,6 +27,11 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   plan only when that snapshot reached the signed-in page; otherwise it keeps `{{NAME}}` values.
   In a 0.12.1 tuning pass the 0.12.0 rule ("always `{{NAME}}`") left 5 criteria on an app that
   accepts any sign-in BLOCKED `placeholder_unset`; 0.12.0 had judged them with `demo`.
+- **A `text` read ignores CSS `text-transform`.** innerText applies it, so a correct admin page
+  whose heading "Platform Admin" is styled uppercase read "PLATFORM ADMIN" and FAILed
+  `contains "Platform Admin"` (the snapshot the planner names text from shows the DOM text): the
+  one false-FAIL of the second 0.12.1 tuning pass (false-PASS 0/45, false-FAIL 1/84, abstention
+  4/129). The read now switches `text-transform` off while it reads.
 - 0.12.0 tuning report (129 cases, test accounts on): false-PASS 1/45, false-FAIL 0/84, abstention
   8/129 (6.2%). Kept out of `results.json`, like the 0.11.2 one.
 

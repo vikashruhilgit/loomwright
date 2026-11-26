@@ -328,6 +328,27 @@ if [ "$pwrc" -eq 0 ]; then
   check "AC11 a value the server sends 1.5 s after the click: PASS after the stable wait and one re-read; the expect line records stable_wait: true" \
     'const reads = ev.filter((l) => l.type === "read"); const x = ev.find((l) => l.type === "expect"); rc === 0 && vc(0).verdict === "PASS" && x.stable_wait === true && x.outcome === "matched" && reads.length === 2 && reads[0].value === "pending" && reads[1].value === "42" && reads[1].stable_wait === true'
 
+  # text-transform: the snapshot (DOM text) shows "Platform Admin"; innerText alone would read the
+  # styled "PLATFORM ADMIN", a false FAIL on a correct page. Hidden text stays out; the style is gone after.
+  PW_MODULE="$PW_MODULE" LIB="$LIB" node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const { chromium } = await import(pathToFileURL(process.env.PW_MODULE).href);
+const { readValue } = await import(pathToFileURL(process.env.LIB + '/runner/steps.mjs').href);
+const b = await chromium.launch();
+try {
+  const page = await b.newPage();
+  await page.setContent('<style>h1{text-transform:uppercase} .c{text-transform:capitalize}</style><h1 data-testid=\"h\">Platform Admin<span hidden> secret</span></h1><p data-testid=\"c\" class=\"c\">two words</p>');
+  const out = [];
+  for (const id of ['h', 'c']) out.push(await readValue(page, { type: 'read', property: 'text', locator: { testid: id } }));
+  out.push(await page.evaluate(() => document.querySelectorAll('style').length));
+  out.push(await page.evaluate(() => document.querySelector('h1').innerText));
+  process.stdout.write(JSON.stringify(out));
+} finally { await b.close(); }
+" >"$TMP/tt.out" 2>"$TMP/tt.err"
+  [ "$(cat "$TMP/tt.out")" = '["Platform Admin","two words",1,"PLATFORM ADMIN"]' ] \
+    && ok "a text read ignores CSS text-transform (\"Platform Admin\" styled uppercase reads \"Platform Admin\", capitalize reads \"two words\"), keeps hidden text out, and removes its style after" \
+    || ko "text-transform read: $(cat "$TMP/tt.out" "$TMP/tt.err")"
+
   FNS="$(folder neg-slow "$R" '{"criteria":[{"text":"Loading the price leaves it \"pending\"","polarity":"negative","steps":[{"type":"goto","url":"$O/slow"},{"type":"read","property":"text","locator":{"testid":"price"}},{"type":"click","locator":{"role":"button","name":"Load price"}},{"type":"read","property":"text","locator":{"testid":"price"}},{"type":"expect","op":"changed_from","value":false}]}]}')"
   run neg-slow "$FNS" "$PW"
   check "a negative check whose first read still holds (\"pending\") while a 1.5 s request is in flight: the stable wait runs anyway, the re-read sees \"42\", changed_from false is mismatched, FAIL (never an early PASS)" \

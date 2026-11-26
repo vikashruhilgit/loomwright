@@ -14,7 +14,7 @@
 //   sendRequest(page, step, blocks)
 //                              one `request` step (below); → { status, text, content_type, truncated }
 //   readValue(page, step, state)
-//                              one `read` step's value: text (innerText, trimmed), value
+//                              one `read` step's value: text (innerText as written, trimmed), value
 //                              (inputValue), checked (boolean), count (number), url, or
 //                              attribute:<name> (string, or null when the attribute is absent);
 //                              focused (the focused element's aria-snapshot line, e.g. `button
@@ -289,6 +289,24 @@ export async function runStep(page, step, ctx = {}) {
   }
 }
 
+// The element's innerText with CSS `text-transform` switched off while it is read. innerText keeps
+// what is visible (no hidden text, laid-out line breaks) but also applies text-transform, so a
+// heading written "Platform Admin" and styled uppercase reads "PLATFORM ADMIN", while the snapshot
+// the planner names text from (the DOM text) shows "Platform Admin": a correct page would FAIL
+// `contains "Platform Admin"`. Styling that only changes case is not part of what the page says.
+// Runs in the page (Locator.evaluate); the style is removed before it returns. Text in a shadow
+// root is not reached by the style and keeps its transform.
+export function innerTextAsWritten(el) {
+  const style = el.ownerDocument.createElement('style');
+  style.textContent = '*, *::before, *::after { text-transform: none !important; }';
+  (el.ownerDocument.head || el.ownerDocument.documentElement).appendChild(style);
+  try {
+    return el.innerText;
+  } finally {
+    style.remove();
+  }
+}
+
 // readValue(page, step) → the value one `read` step reads (see the header).
 export async function readValue(page, step, state = {}) {
   const p = step.property;
@@ -332,7 +350,7 @@ export async function readValue(page, step, state = {}) {
     return responseJsonValue(reply.text, p.slice(RESPONSE_JSON_PREFIX.length));
   }
   const loc = locate(page, step.locator);
-  if (p === 'text') return String(await loc.innerText()).trim();
+  if (p === 'text') return String(await loc.evaluate(innerTextAsWritten)).trim();
   if (p === 'value') return await loc.inputValue();
   if (p === 'checked') return await loc.isChecked();
   if (p === 'count') return await loc.count();

@@ -53,6 +53,12 @@ function fakeLocator(key) {
     press: async () => {},
     waitFor: async () => {},
     innerText: async () => text(),
+    // Locator.evaluate(fn): runs fn on a fake element whose innerText is the stub text (the text
+    // read's innerTextAsWritten adds and removes a style through ownerDocument).
+    evaluate: async (fn) => {
+      const doc = { createElement: () => ({ remove() {} }), head: { appendChild() {} } };
+      return fn({ ownerDocument: doc, innerText: text() });
+    },
     inputValue: async () => text(),
     isChecked: async () => false,
     count: async () => countFor(key),
