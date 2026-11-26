@@ -558,8 +558,9 @@ Step types (no field beyond these is accepted):
   request whose method is not `GET` is an action (rule 1 and the negative baseline apply to it).
 - `read` — `property`: `text` (the element's visible text as written: CSS `text-transform` is
   switched off while it is read, so a heading styled uppercase reads as the snapshot shows it),
-  `value`, `checked`, `count`, `attribute:<name>` (each with a `locator`), or with no locator: `url`; `focused` (the element holding keyboard focus, as its
-  accessibility-tree line such as `button "Save"`, or no value when focus is on no element);
+  `value`, `checked`, `count`, `attribute:<name>` (each with a `locator`), or with no locator:
+  `url`; `focused` (the element holding keyboard focus, as its accessibility-tree line such as
+  `button "Save"`, or no value when focus is on no element);
   `response_header:<name>` (a header of the last reply, any case, or no value when it is absent;
   `Set-Cookie` is never visible to the page, so read `cookie_attribute` instead);
   `cookie_attribute:<name>:<attribute>` (`http_only` or `secure`, a boolean; `same_site`, `path`
