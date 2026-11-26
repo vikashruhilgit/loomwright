@@ -22,6 +22,11 @@ current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `v
   kept part (a false FAIL in a 0.12.1 tuning pass: a Next.js page whose name came past the cut) and
   `absent` could PASS on a text that sits past it. Status and headers stay readable; the planner is
   told to read a large page with `text`.
+- **With no test accounts listed, the planner signs in with values a snapshot proved.** It tries
+  made-up values (or a demo account the app shows) in a snapshot prefix and writes them into the
+  plan only when that snapshot reached the signed-in page; otherwise it keeps `{{NAME}}` values.
+  In a 0.12.1 tuning pass the 0.12.0 rule ("always `{{NAME}}`") left 5 criteria on an app that
+  accepts any sign-in BLOCKED `placeholder_unset`; 0.12.0 had judged them with `demo`.
 - 0.12.0 tuning report (129 cases, test accounts on): false-PASS 1/45, false-FAIL 0/84, abstention
   8/129 (6.2%). Kept out of `results.json`, like the 0.11.2 one.
 

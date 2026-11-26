@@ -471,7 +471,10 @@ stderr. `--base <ref>` reads the origin allowlist from `<ref>:selvedge.json`, as
 - `planner-input.json` — what the planner got: the testable criteria only, the allowed origins,
   `criteria_sha256`, the CLI path, the run folder, the snapshot and token budgets, and `env_names`
   (the names `auth.env` lists, never their values: the `{{NAME}}`s a run can resolve, such as a
-  sign-in's email and password).
+  sign-in's email and password). With no names listed, the planner may sign in with literal
+  made-up values (or a demo account the app shows) only when a snapshot proved they reach the
+  signed-in page; otherwise it writes `{{NAME}}` values, which a run reports as BLOCKED
+  `placeholder_unset`.
 - `snapshots.jsonl` — one line per `snapshot` call made for this folder.
 - `planner-usage.json` — the planner's `{"input_tokens", "output_tokens"}`, when it reported them.
 - `plan.json` — the plan, rewritten once at freeze with `plan_revision` stamped.

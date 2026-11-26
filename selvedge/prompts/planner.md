@@ -21,9 +21,14 @@ The input is the JSON block at the end of this prompt (`planner-input.json`):
   and password). Write a credential only as `{{NAME}}` with one of these names; never invent a
   name. A criterion behind a sign-in signs in first (a `request` to the app's login endpoint, or
   the login form filled with these names); you may sign in the same way in a snapshot prefix to
-  look at a walled page. With no name listed, a criterion that needs a sign-in still uses
-  `{{NAME}}` values (a run without them reports BLOCKED `placeholder_unset`, which tells the owner
-  what to set).
+  look at a walled page. With no name listed, first try a sign-in with literal values in a
+  snapshot prefix: values you make up (such as `demo`), or a demo account the app's own pages
+  show. Use those literals in the plan only when that snapshot proves the sign-in worked: no
+  `failed_step`, and the tree shows the signed-in page (the walled content, or a "signed in"
+  marker), not the sign-in form again or an error. Otherwise the criterion uses `{{NAME}}` values
+  (a run without them reports BLOCKED `placeholder_unset`, which tells the owner what to set).
+  Never use a literal you did not prove this way, and never a value that looks like a real
+  person's credential.
 
 ## Look before you write locators: `snapshot`
 
@@ -180,8 +185,9 @@ the sign-in `request`, read `cookie:session` again, `expect changed_from true`.
 Response headers, cookie flags (HttpOnly, Secure, SameSite), a body that is not JSON, request
 headers and keyboard focus are all observable with the steps above. A criterion that needs a
 signed-in session the plan cannot get (a 401 or 403 with no `{{NAME}}` credentials to sign in
-with) is not `side_effect_not_observable`: plan its sign-in with `{{NAME}}` values, which a run
-without them reports as BLOCKED `placeholder_unset`.
+with) is not `side_effect_not_observable`: plan its sign-in with literal values a snapshot proved
+(see `env_names` above), else with `{{NAME}}` values, which a run without them reports as BLOCKED
+`placeholder_unset`.
 
 `side_effect_not_observable` is the reason only when neither a page nor a reply shows the effect
 (an email sent, a job queued that no page or endpoint reports).
