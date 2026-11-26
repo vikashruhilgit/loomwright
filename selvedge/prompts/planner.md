@@ -21,9 +21,14 @@ The input is the JSON block at the end of this prompt (`planner-input.json`):
   and password). Write a credential only as `{{NAME}}` with one of these names; never invent a
   name. A criterion behind a sign-in signs in first (a `request` to the app's login endpoint, or
   the login form filled with these names); you may sign in the same way in a snapshot prefix to
-  look at a walled page. With no name listed, a criterion that needs a sign-in still uses
-  `{{NAME}}` values (a run without them reports BLOCKED `placeholder_unset`, which tells the owner
-  what to set).
+  look at a walled page. With no name listed, first try a sign-in with literal values in a
+  snapshot prefix: values you make up (such as `demo`), or a demo account the app's own pages
+  show. Use those literals in the plan only when that snapshot proves the sign-in worked: no
+  `failed_step`, and the tree shows the signed-in page (the walled content, or a "signed in"
+  marker), not the sign-in form again or an error. Otherwise the criterion uses `{{NAME}}` values
+  (a run without them reports BLOCKED `placeholder_unset`, which tells the owner what to set).
+  Never use a literal you did not prove this way, and never a value that looks like a real
+  person's credential.
 
 ## Look before you write locators: `snapshot`
 
@@ -115,13 +120,21 @@ Each step is an object with `type` and exactly these fields:
   string; never `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, which the browser drops). Sent from
   the page, so its `url`'s origin must be the origin of the page the criterion is on at that point
   (its last `goto`). A request whose method is not `GET` is an action.
-- `read` — `property`: `text`, `value`, `checked`, `count` or `attribute:<name>` (each with a
-  `locator`), or, with no locator: `url`; `focused` (the element holding keyboard focus, as
-  `button "Save"`: press `Tab`, then read it); `response_status`, `response_text`,
+- `read` — `property`: `text` (the visible text as the page writes it, as the snapshot shows
+  it: CSS that only changes case, such as an uppercase heading, is ignored), `value`, `checked`,
+  `count` or `attribute:<name>` (each with a `locator`), or, with no locator: `url`; `focused`
+  (the element holding keyboard focus, as `button "Save"`: press `Tab`, then read it);
+  `response_status`, `response_text` (a reply over 64 KiB, such as a large HTML page, has no
+  body value: read the page with `text` instead),
   `response_json:<JSON Pointer>` (e.g. `response_json:/user/email`, `response_json:/0/id`),
   `response_json_each:<array pointer>|<item pointer>` (that field of EVERY element, as JSON text
-  such as `["Basketball","Soccer"]`: "some sport is Soccer" is `contains "\"Soccer\""`, "no post
-  has an email" is `absent "@"`; never assume an element's index), `response_json_length:<pointer>`
+  such as `["Basketball","Soccer"]`: "some sport is Soccer" is `contains "\"Soccer\""`; never
+  assume an element's index; no value when ANY element lacks the field, never a null in its place).
+  An empty item pointer (`response_json_each:/posts|`) reads the whole elements: "no post has an
+  email" is `absent "@"` on it, and "the reply never returns `contactEmail`" is
+  `absent "\"contactEmail\""` on it, because a key returned as `null` is still returned. Do not
+  judge "never returns X" by X's value being null: the seeded data may simply hold no X, so the
+  bug cannot show in the value. `response_json_length:<pointer>`
   or `response_header:<name>` of the last `request` before it; `cookie:<name>` (a fingerprint of that
   cookie, never its value); `cookie_attribute:<name>:<attribute>` (`http_only`, `secure`,
   `same_site`, `path` or `domain` of that cookie: "the cookie is HttpOnly" is
@@ -174,8 +187,9 @@ the sign-in `request`, read `cookie:session` again, `expect changed_from true`.
 Response headers, cookie flags (HttpOnly, Secure, SameSite), a body that is not JSON, request
 headers and keyboard focus are all observable with the steps above. A criterion that needs a
 signed-in session the plan cannot get (a 401 or 403 with no `{{NAME}}` credentials to sign in
-with) is not `side_effect_not_observable`: plan its sign-in with `{{NAME}}` values, which a run
-without them reports as BLOCKED `placeholder_unset`.
+with) is not `side_effect_not_observable`: plan its sign-in with literal values a snapshot proved
+(see `env_names` above), else with `{{NAME}}` values, which a run without them reports as BLOCKED
+`placeholder_unset`.
 
 `side_effect_not_observable` is the reason only when neither a page nor a reply shows the effect
 (an email sent, a job queued that no page or endpoint reports).

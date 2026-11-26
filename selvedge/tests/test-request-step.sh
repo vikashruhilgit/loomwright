@@ -213,6 +213,8 @@ F1="$(folder anon "$R" '{"criteria":[
 {"text":"The anonymous forecast reply text contains \"unauthorized\"","steps":['"$REQ_GET"',{"type":"read","property":"response_text"},{"type":"expect","op":"contains","value":"unauthorized"}]},
 {"text":"The anonymous forecast reply has a field nope equal to \"x\"","steps":['"$REQ_GET"',{"type":"read","property":"response_json:/nope"},{"type":"expect","op":"equals","value":"x"}]},
 {"text":"The big reply holds exactly 64 KiB of text","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/big"},{"type":"read","property":"response_text"},{"type":"expect","op":"matches","value":"^x{65536}$"}]},
+{"text":"The big reply never says y","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/big"},{"type":"read","property":"response_text"},{"type":"expect","op":"absent","value":"y"}]},
+{"text":"The big reply answers 200","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/big"},{"type":"read","property":"response_status"},{"type":"expect","op":"equals","value":200}]},
 {"text":"GET /api/ok answers the text ok","steps":[{"type":"goto","url":"$O/"},{"type":"request","method":"GET","url":"$O/api/ok"},{"type":"read","property":"response_text"},{"type":"expect","op":"equals","value":"ok"}]}]}')"
 [ -n "$F1" ] && ok "setup: the anonymous-reply plan freezes (the lint accepts request steps and reply reads)" || ko "setup: folder anon: $(cat "$TMP/o/freeze-anon.err" "$TMP/o/init-anon.err" 2>/dev/null)"
 run anon "$F1" "$PW"
@@ -223,8 +225,10 @@ check "the request step's evidence line records method, url, status 401 and no j
   'const l = evOf(0).find((x) => x.type === "request"); l && l.outcome === "ok" && l.value === null && l.request.method === "GET" && l.request.url.endsWith("/api/forecast") && l.request.status === 401 && l.request.json_keys === null'
 check "response_json:/error reads \"unauthorized\" and response_text contains it: both PASS" 'vc(2).verdict === "PASS" && vc(2).read_value === "unauthorized" && vc(3).verdict === "PASS"'
 check "a pointer that names nothing reads no value: NOT_VERIFIABLE no_value_read, never PASS" 'vc(4).verdict === "NOT_VERIFIABLE" && vc(4).reason === "no_value_read"'
-check "a 70000-character reply is kept to the 64 KiB cap" 'vc(5).verdict === "PASS" && evOf(5).filter((x) => x.type === "read").every((x) => x.value.length === 65536)'
-check "response_text is trimmed like a text read: a body \"ok\\n\" equals \"ok\" (PASS, read_value \"ok\")" 'vc(6).verdict === "PASS" && vc(6).read_value === "ok"'
+check "a 70000-character reply is cut at the 64 KiB cap, so its body reads no value: a match on the kept part is NOT_VERIFIABLE no_value_read, not PASS" 'vc(5).verdict === "NOT_VERIFIABLE" && vc(5).reason === "no_value_read"'
+check "absent on a cut reply is NOT_VERIFIABLE no_value_read, never PASS (the text may be past the cut); its status still reads 200 (PASS)" \
+  'vc(6).verdict === "NOT_VERIFIABLE" && vc(6).reason === "no_value_read" && vc(7).verdict === "PASS" && vc(7).read_value === 200'
+check "response_text is trimmed like a text read: a body \"ok\\n\" equals \"ok\" (PASS, read_value \"ok\")" 'vc(8).verdict === "PASS" && vc(8).read_value === "ok"'
 
 LOGIN='{"type":"request","method":"POST","url":"$O/api/login","json":{"email":"ada@example.com","password":"{{PASS}}"}}'
 F2="$(folder signin "$R" '{"criteria":[
@@ -273,11 +277,25 @@ F4="$(folder arrays "$R" '{"criteria":[
 {"text":"Some forecast day is tue","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|/day"},{"type":"expect","op":"contains","value":"\"tue\""}]},
 {"text":"The forecast has two days","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_length:/days"},{"type":"expect","op":"equals","value":2}]},
 {"text":"No forecast day carries a rain field","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|/rain"},{"type":"expect","op":"matches","value":"^\\[null(,null)*\\]$"}]},
-{"text":"Some error is listed","steps":['"$REQ_GET"',{"type":"read","property":"response_json_each:/errors|/code"},{"type":"expect","op":"absent","value":"x"}]}]}')"
+{"text":"Some error is listed","steps":['"$REQ_GET"',{"type":"read","property":"response_json_each:/errors|/code"},{"type":"expect","op":"absent","value":"x"}]},
+{"text":"The forecast never returns a rain key","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|"},{"type":"expect","op":"absent","value":"\"rain\""}]},
+{"text":"The forecast never returns a high key","steps":[{"type":"goto","url":"$O/"},'"$LOGIN"','"$FC"',{"type":"read","property":"response_json_each:/days|"},{"type":"expect","op":"absent","value":"\"high\""}]}]}')"
 [ -n "$F4" ] && ok "setup: the plan with response_json_each / response_json_length reads freezes" || ko "setup: folder arrays: $(cat "$TMP/o/freeze-arrays.err" 2>/dev/null)"
 run arrays "$F4" "$PW" "PASS=$PASS_VALUE"
-check "response_json_each reads one field of every element (contains \"tue\": PASS), response_json_length the array's length (2: PASS), a field no element has reads as nulls ([null,null]: PASS)" \
-  'vc(0).verdict === "PASS" && vc(0).read_value === "[\"mon\",\"tue\"]" && vc(1).verdict === "PASS" && vc(1).read_value === 2 && vc(2).verdict === "PASS" && vc(2).read_value === "[null,null]"'
+check "response_json_each reads one field of every element (contains \"tue\": PASS), response_json_length the array's length (2: PASS); a field the elements lack reads no value, never [null,null] (NOT_VERIFIABLE no_value_read, so a null-matching expect cannot PASS)" \
+  'vc(0).verdict === "PASS" && vc(0).read_value === "[\"mon\",\"tue\"]" && vc(1).verdict === "PASS" && vc(1).read_value === 2 && vc(2).verdict === "NOT_VERIFIABLE" && vc(2).reason === "no_value_read"'
+check "an empty item pointer reads the whole elements: absent \"rain\" on them is PASS (no element has the key), absent \"high\" is FAIL (the key is returned)" \
+  'vc(4).verdict === "PASS" && vc(4).read_value === "[{\"day\":\"mon\",\"high\":21},{\"day\":\"tue\",\"high\":19}]" && vc(5).verdict === "FAIL"'
+node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const { responseJsonEach } = await import(pathToFileURL(process.env.SELVEDGE_LIB + '/runner/steps.mjs').href);
+const t = JSON.stringify({ posts: [{ id: 1, email: null }, { id: 2 }], all: [{ email: null }, { email: null }] });
+const out = [responseJsonEach(t, '/posts|/email'), responseJsonEach(t, '/all|/email'), responseJsonEach(t, '/posts|')];
+process.stdout.write(JSON.stringify(out));
+" >"$TMP/each-unit.out" 2>"$TMP/each-unit.err"
+[ "$(cat "$TMP/each-unit.out")" = '[null,"[null,null]","[{\"id\":1,\"email\":null},{\"id\":2}]"]' ] \
+  && ok "a field one element lacks reads no value (not [null,null]); a field every element returns as null reads [null,null]; an empty item pointer reads the elements as returned" \
+  || ko "responseJsonEach missing vs null: $(cat "$TMP/each-unit.out" "$TMP/each-unit.err")"
 check "response_json_each on a pointer that is no array reads no value, so absent there is NOT_VERIFIABLE no_value_read, never a vacuous PASS" \
   'vc(3).verdict === "NOT_VERIFIABLE" && vc(3).reason === "no_value_read"'
 node --input-type=module -e "

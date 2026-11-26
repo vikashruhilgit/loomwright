@@ -8,6 +8,33 @@ Loomwright's version only).
 Format: each release is a heading `## <X.Y.Z> — <YYYY-MM-DD>`; the first such heading is the
 current release, and `selvedge/tests/run.sh` checks it equals `plugin.json`'s `version`.
 
+## 0.12.1 — 2026-11-25
+
+- **`response_json_each` never reads a missing field as `null`.** When any element lacks the item,
+  the read has no value (NOT_VERIFIABLE `no_value_read`). Before, "the key is returned as `null`"
+  and "the key is left out" read the same text, so a "never returns X" criterion PASSed on the
+  buggy commit of the 0.12.0 tuning run's one false-PASS (seeded data held no X).
+- **An empty item pointer reads the whole elements** (`response_json_each:/posts|`), so "the reply
+  never returns `contactEmail`" is `absent "\"contactEmail\""` on it. The planner is told not to
+  judge "never returns X" by X's value being null.
+- **A reply cut at 64 KiB has no body value.** `response_text`, `response_json…` reads of a
+  truncated reply read no value (NOT_VERIFIABLE `no_value_read`); before, `contains` judged only the
+  kept part (a false FAIL in a 0.12.1 tuning pass: a Next.js page whose name came past the cut) and
+  `absent` could PASS on a text that sits past it. Status and headers stay readable; the planner is
+  told to read a large page with `text`.
+- **With no test accounts listed, the planner signs in with values a snapshot proved.** It tries
+  made-up values (or a demo account the app shows) in a snapshot prefix and writes them into the
+  plan only when that snapshot reached the signed-in page; otherwise it keeps `{{NAME}}` values.
+  In a 0.12.1 tuning pass the 0.12.0 rule ("always `{{NAME}}`") left 5 criteria on an app that
+  accepts any sign-in BLOCKED `placeholder_unset`; 0.12.0 had judged them with `demo`.
+- **A `text` read ignores CSS `text-transform`.** innerText applies it, so a correct admin page
+  whose heading "Platform Admin" is styled uppercase read "PLATFORM ADMIN" and FAILed
+  `contains "Platform Admin"` (the snapshot the planner names text from shows the DOM text): the
+  one false-FAIL of the second 0.12.1 tuning pass (false-PASS 0/45, false-FAIL 1/84, abstention
+  4/129). The read now switches `text-transform` off while it reads.
+- 0.12.0 tuning report (129 cases, test accounts on): false-PASS 1/45, false-FAIL 0/84, abstention
+  8/129 (6.2%). Kept out of `results.json`, like the 0.11.2 one.
+
 ## 0.12.0 — 2026-11-24
 
 Engine revision 2 (Phase 2's second and last counted revision): the causes the 0.11.2 tuning run

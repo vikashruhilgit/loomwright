@@ -471,7 +471,10 @@ stderr. `--base <ref>` reads the origin allowlist from `<ref>:selvedge.json`, as
 - `planner-input.json` — what the planner got: the testable criteria only, the allowed origins,
   `criteria_sha256`, the CLI path, the run folder, the snapshot and token budgets, and `env_names`
   (the names `auth.env` lists, never their values: the `{{NAME}}`s a run can resolve, such as a
-  sign-in's email and password).
+  sign-in's email and password). With no names listed, the planner may sign in with literal
+  made-up values (or a demo account the app shows) only when a snapshot proved they reach the
+  signed-in page; otherwise it writes `{{NAME}}` values, which a run reports as BLOCKED
+  `placeholder_unset`.
 - `snapshots.jsonl` — one line per `snapshot` call made for this folder.
 - `planner-usage.json` — the planner's `{"input_tokens", "output_tokens"}`, when it reported them.
 - `plan.json` — the plan, rewritten once at freeze with `plan_revision` stamped.
@@ -553,19 +556,26 @@ Step types (no field beyond these is accepted):
   allowed by `selvedge.json`, and the origin of the page the criterion is on at that point (the last
   `goto` before it): a cross-origin fetch would depend on the app's CORS policy, not on Selvedge. A
   request whose method is not `GET` is an action (rule 1 and the negative baseline apply to it).
-- `read` — `property`: `text`, `value`, `checked`, `count`, `attribute:<name>` (each with a
-  `locator`), or with no locator: `url`; `focused` (the element holding keyboard focus, as its
-  accessibility-tree line such as `button "Save"`, or no value when focus is on no element);
+- `read` — `property`: `text` (the element's visible text as written: CSS `text-transform` is
+  switched off while it is read, so a heading styled uppercase reads as the snapshot shows it),
+  `value`, `checked`, `count`, `attribute:<name>` (each with a `locator`), or with no locator:
+  `url`; `focused` (the element holding keyboard focus, as its accessibility-tree line such as
+  `button "Save"`, or no value when focus is on no element);
   `response_header:<name>` (a header of the last reply, any case, or no value when it is absent;
   `Set-Cookie` is never visible to the page, so read `cookie_attribute` instead);
   `cookie_attribute:<name>:<attribute>` (`http_only` or `secure`, a boolean; `same_site`, `path`
   or `domain`, a string; never the value; no value when there is no such cookie);
-  `response_status` (a number), `response_text` (the body,
-  as text, trimmed like `text`), `response_json_each:<array pointer>|<item pointer>` (the value at
-  the item pointer in every element of the array, as JSON text such as `["Soccer","Tennis"]`, null
-  for an element without it; an empty array pointer is the body itself; no value when it is not a
-  non-empty array, so `absent` on it is never vacuous), `response_json_length:<pointer>` (the
-  array's length) or `response_json:<JSON Pointer>` (an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
+  `response_status` (a number), `response_text` (the body, as text, trimmed like `text`; a body
+  cut at 64 KiB reads no value, as every body read of that reply does, since a text past the cut
+  can be neither found nor ruled out), `response_json_each:<array pointer>|<item pointer>` (the
+  value at the item pointer in every element of the array, as JSON text such as
+  `["Soccer","Tennis"]`; an empty array pointer is the body itself and an empty item pointer the
+  whole element; no value when it is not a non-empty array or when any element lacks the item,
+  never a `null` in its place, so "the key is returned as null" and "the key is left out" never
+  read alike and `absent` on it is never vacuous; "the reply never returns `contactEmail`" is
+  `response_json_each:/posts|` then `absent "\"contactEmail\""`), `response_json_length:<pointer>`
+  (the array's length) or `response_json:<JSON Pointer>` (an
+  [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)
   pointer into the parsed body, e.g. `response_json:/0/createdBy/name`: a string, number or
   boolean, or no value when the body is not JSON or the pointer names nothing, null, an object or
   an array) of the last `request` before it; or `cookie:<name>`, a fingerprint of that cookie

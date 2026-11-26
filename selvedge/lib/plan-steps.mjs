@@ -84,12 +84,14 @@ export const READ_ATTRIBUTE_PATTERN = '^attribute:[A-Za-z_][-A-Za-z0-9_:.]*$';
 export const READ_RESPONSE_JSON_PATTERN = '^response_json:(/([^~/]|~[01])*)+$';
 // cookie:<name>: a fingerprint of the context's cookie of that name, never its value.
 export const READ_COOKIE_PATTERN = '^cookie:[A-Za-z0-9_.-]+$';
-// response_json_each:<array pointer>|<item pointer>: the value at <item pointer> in every element of
-// the array at <array pointer> (empty: the body itself), as JSON text (`["Soccer","Tennis"]`; null for an element without
-// it), so "some element is named Soccer" is `contains "\"Soccer\""` and "no element has an email"
-// `absent "@"`; no value when the pointer is not a non-empty array. response_json_length:<pointer>:
-// the length of that array (0 for an empty one; no value when it is not an array).
-export const READ_RESPONSE_JSON_EACH_PATTERN = '^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)+$';
+// response_json_each:<array pointer>|<item pointer>: the value at <item pointer> in every element
+// of the array at <array pointer> (empty: the body itself), as JSON text (`["Soccer","Tennis"]`;
+// an empty item pointer is the whole element), so "some element is named Soccer" is
+// `contains "\"Soccer\""` and "no element has an email key" `response_json_each:/posts|` then
+// `absent "\"email\""`; no value when the pointer is not a non-empty array or any element lacks
+// the item (never a null). response_json_length:<pointer>: the length of that array (0 for an
+// empty one; no value when it is not an array).
+export const READ_RESPONSE_JSON_EACH_PATTERN = '^response_json_each:(/([^~/|]|~[01])*)*\\|(/([^~/|]|~[01])*)*$';
 export const READ_RESPONSE_JSON_LENGTH_PATTERN = '^response_json_length:(/([^~/]|~[01])*)*$';
 // response_header:<name>: a header of the last reply (its value, or no value when it is absent;
 // Set-Cookie is never readable by page code: read cookie_attribute instead).

@@ -14,19 +14,22 @@
 //   sendRequest(page, step, blocks)
 //                              one `request` step (below); → { status, text, content_type, truncated }
 //   readValue(page, step, state)
-//                              one `read` step's value: text (innerText, trimmed), value
+//                              one `read` step's value: text (innerText as written, trimmed), value
 //                              (inputValue), checked (boolean), count (number), url, or
 //                              attribute:<name> (string, or null when the attribute is absent);
 //                              focused (the focused element's aria-snapshot line, e.g. `button
 //                              "Save"`, or null when focus is on no element);
 //                              response_header:<name> (string, or null) of state.reply;
 //                              response_json_each:<array>|<item> (JSON text of each element's
-//                              value, or null) and response_json_length:<array> (a number, or
-//                              null) of state.reply;
+//                              value, or the whole element for an empty <item>; the whole read
+//                              is null when ANY element has no such value, never a null per
+//                              element) and
+//                              response_json_length:<array> (a number, or null) of state.reply;
 //                              cookie_attribute:<name>:<attr> (http_only / secure booleans,
 //                              same_site / path / domain strings; null when there is no cookie);
 //                              response_status (number), response_text (string, trimmed like
-//                              text: a body's trailing newline is not part of its value),
+//                              text: a body's trailing newline is not part of its value; every
+//                              body read of a reply cut at RESPONSE_TEXT_CAP is null),
 //                              response_json:<pointer> (a scalar, or null) of state.reply;
 //                              cookie:<name> (cookieFingerprint, or null when there is no cookie)
 //   readEntry(step, value)     one read as expectMatches takes it: { key, value }, the key naming
@@ -209,16 +212,17 @@ function responseArray(text, pointer) {
   return Array.isArray(v) ? v : null;
 }
 
-// response_json_each:<array>|<item> → JSON text of each element's value at <item> (null where it is
-// missing), or null when <array> is not a non-empty array.
+// response_json_each:<array>|<item> → JSON text of each element's value at <item> (an empty
+// <item> is the whole element), or null when <array> is not a non-empty array or ANY element has
+// no value at <item>. A missing field is never read as JSON null: "the key is returned, value null"
+// and "the key is left out" must not read the same text. To check that a key is left out, read the
+// whole elements and expect `absent "\"<key>\""`.
 export function responseJsonEach(text, spec) {
   const cut = spec.indexOf('|');
   const list = responseArray(text, spec.slice(0, cut));
   if (!list || list.length === 0) return null;
-  return JSON.stringify(list.map((el) => {
-    const v = resolvePointer(el, spec.slice(cut + 1));
-    return v === undefined ? null : v;
-  }));
+  const values = list.map((el) => resolvePointer(el, spec.slice(cut + 1)));
+  return values.some((v) => v === undefined) ? null : JSON.stringify(values);
 }
 
 // response_json_length:<pointer> → the array's length, or null when it is not an array.
@@ -286,6 +290,24 @@ export async function runStep(page, step, ctx = {}) {
   }
 }
 
+// The element's innerText with CSS `text-transform` switched off while it is read. innerText keeps
+// what is visible (no hidden text, laid-out line breaks) but also applies text-transform, so a
+// heading written "Platform Admin" and styled uppercase reads "PLATFORM ADMIN", while the snapshot
+// the planner names text from (the DOM text) shows "Platform Admin": a correct page would FAIL
+// `contains "Platform Admin"`. Styling that only changes case is not part of what the page says.
+// Runs in the page (Locator.evaluate); the style is removed before it returns. Text in a shadow
+// root is not reached by the style and keeps its transform.
+export function innerTextAsWritten(el) {
+  const style = el.ownerDocument.createElement('style');
+  style.textContent = '*, *::before, *::after { text-transform: none !important; }';
+  (el.ownerDocument.head || el.ownerDocument.documentElement).appendChild(style);
+  try {
+    return el.innerText;
+  } finally {
+    style.remove();
+  }
+}
+
 // readValue(page, step) → the value one `read` step reads (see the header).
 export async function readValue(page, step, state = {}) {
   const p = step.property;
@@ -319,13 +341,17 @@ export async function readValue(page, step, state = {}) {
       const v = (reply.headers || {})[p.slice(RESPONSE_HEADER_PREFIX.length).toLowerCase()];
       return typeof v === 'string' ? v : null;
     }
+    // A body cut at RESPONSE_TEXT_CAP is not the body: "contains x" could miss an x past the cut
+    // (a false FAIL) and "absent x" could miss it too (a false PASS). Every body read of a
+    // truncated reply reads no value; status and headers stay readable.
+    if (reply.truncated === true) return null;
     if (p === 'response_text') return String(reply.text).trim();
     if (p.startsWith(RESPONSE_JSON_EACH_PREFIX)) return responseJsonEach(reply.text, p.slice(RESPONSE_JSON_EACH_PREFIX.length));
     if (p.startsWith(RESPONSE_JSON_LENGTH_PREFIX)) return responseJsonLength(reply.text, p.slice(RESPONSE_JSON_LENGTH_PREFIX.length));
     return responseJsonValue(reply.text, p.slice(RESPONSE_JSON_PREFIX.length));
   }
   const loc = locate(page, step.locator);
-  if (p === 'text') return String(await loc.innerText()).trim();
+  if (p === 'text') return String(await loc.evaluate(innerTextAsWritten)).trim();
   if (p === 'value') return await loc.inputValue();
   if (p === 'checked') return await loc.isChecked();
   if (p === 'count') return await loc.count();
