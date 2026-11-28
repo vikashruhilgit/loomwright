@@ -125,13 +125,14 @@
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7);
 # 3 progress-append's `current_not_set` guard (the line WAS appended; ## Current was never set).
-# (learning-emit, brief-repair, reconcile-status, escalation-cause, meta-entry and meta-push-failed are the fail-SAFE
-# exceptions: they ALWAYS exit 0 — never die/abort; meta-entry's verdict line carries the outcome.)
+# (learning-emit, brief-repair, reconcile-status, escalation-cause, meta-entry, meta-push-failed and meta-publish are
+# the fail-SAFE exceptions: they ALWAYS exit 0 — never die/abort; meta-entry's and meta-publish's verdict lines carry
+# the outcome.)
 #
 # TEST SEAM (tests only — never set it in a real run): LOOMWRIGHT_META_SYNC_BIN names the meta-sync
-# script `meta-entry` invokes (default: the sibling meta-sync.sh). (automate-lanes.sh forwards its own
+# script `meta-entry` and `meta-publish` invoke (default: the sibling meta-sync.sh). (automate-lanes.sh forwards its own
 # meta-sync path to `trail-pr` through it — the same sibling in a real run; see _lanes_meta_trail.)
-# It selects WHICH pull runs, never the mode — the mode is always read from `setup-memory.sh mode`.
+# It selects WHICH meta-sync runs, never the mode — the mode is always read from `setup-memory.sh mode`.
 # test-automate-helpers.sh uses it for mutation control (i): a pull stand-in that exits 0 on a fetch
 # failure must turn its "abort, nothing created" assertion red.
 
@@ -1240,6 +1241,7 @@ main() {
     reconcile-status) reconcile_status "$@" ;;
     meta-entry)      meta_entry "$@" ;;
     meta-push-failed) meta_push_failed "$@" ;;
+    meta-publish)    meta_publish "$@" ;;
     plan-waves)      plan_waves "$@" ;;
     right-size)      right_size "$@" ;;
     merge-items)     merge_items "$@" ;;
