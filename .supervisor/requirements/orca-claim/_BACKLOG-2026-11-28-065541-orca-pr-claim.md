@@ -11,9 +11,9 @@ none recorded
 ## Order
 | Item | Delivers | Depends on | Can run in parallel with |
 |---|---|---|---|
-| 01 | `pr-claim.sh` (take / renew / release / assert / holder / write-prefix) | none | none |
+| 01 | `pr-claim.sh` (take / renew / release / assert / holder / write-prefix, plus `handoff-parked`: the direct `pr-merge` handoff) | none | none |
 | 02 | `/review-pr` drains hold the claim, holder on every write | 01 | none |
-| 03 | `/automate` per-run holder, item claim, `loomwright:parked` on a gate PARK | 02 | none |
+| 03 | `/automate` per-run holder, item claim, `loomwright:parked` plus a direct `pr-merge` handoff on a gate PARK | 02 | none |
 
 ## Run
 /automate --backlog .supervisor/requirements/orca-claim/_BACKLOG-2026-11-28-065541-orca-pr-claim.md
@@ -24,9 +24,10 @@ Safe mode, sequential (each item needs the previous one). Not before the repo-wi
 - One holder per machine: rejected, because lanes and concurrent drains would be indistinguishable (design note §"Holder id").
 - Background renew heartbeat: rejected, because it risks leaking a child process; renewal happens on driver calls instead.
 - Claiming inside Supervisor Phase 4.5 / FINALIZE: deferred, because no drain works the PR yet.
+- Label-only wake-up for `pr-merge`: dropped on 2026-11-28, because Orca's `github.labeled` trigger ignores labels the owner's own account adds. The label stays, and a gate PARK also sends a direct `orca orchestration send --to bot:pr-merge --type handoff` (01 Part B, wired in 03).
 
 ## Revisit when
-CLAIM.md changes past v1, or the merge bot's wake contract changes.
+CLAIM.md or HANDOFF.md changes past v1, or the merge bot's wake contract changes (for example, Orca's `github.labeled` starts firing for the owner's own labels, which would make the direct handoff redundant).
 
 ## Checklist
 - [ ] .supervisor/requirements/orca-claim/2026-11-28-065541-pr-claim-01-helper.md
