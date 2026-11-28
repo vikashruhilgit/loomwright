@@ -1,6 +1,7 @@
 # The automate-helpers test parts refuse to run on their own
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/1007
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/994. Part A2 of 3. Part A:
 > `2026-11-28-092429-test-parts-refuse-to-run-standalone-and-never-touch-the-real-checkout.md`; Part B:
@@ -81,3 +82,9 @@ their first 15 lines. These parts build run-file, gate and resume fixtures, so t
 loomwright/scripts/test-automate-helpers.d/
 loomwright/scripts/test-automate-helpers.sh
 changelog.d
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T13:13:44Z
+- **Brief:** .supervisor/jobs/done/2026-11-28-automate-helpers-parts-refuse-standalone.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/1007
