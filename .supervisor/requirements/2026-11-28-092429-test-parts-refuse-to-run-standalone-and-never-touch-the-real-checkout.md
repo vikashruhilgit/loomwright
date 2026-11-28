@@ -1,6 +1,6 @@
 # Split test parts that touch run state refuse to run on their own and never touch the real checkout
 
-## Status: open
+## Status: pending
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/994. Part A of 3. Part A2:
 > `2026-11-28-092431-automate-helpers-test-parts-refuse-to-run-standalone.md`; Part B:

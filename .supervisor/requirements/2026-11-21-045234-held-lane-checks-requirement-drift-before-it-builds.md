@@ -1,5 +1,7 @@
 # A held lane checks for requirement drift before it builds
 
+## Status: pending
+
 Source: GitHub issue vikashruhilgit/loomwright#964. Seen on loomwright 18.1.2, branch mode on, `/automate --parallel 3`.
 
 **As an** owner running `/automate --parallel N` in branch mode,

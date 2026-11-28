@@ -1,6 +1,6 @@
 # Every split test part is guarded against running on its own, and CI keeps it that way
 
-## Status: open
+## Status: pending
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/994. Part B of 3. Parts A and A2:
 > `2026-11-28-092429-test-parts-refuse-to-run-standalone-and-never-touch-the-real-checkout.md`,

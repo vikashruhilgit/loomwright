@@ -1,6 +1,6 @@
 # Every other first-worktree caller uses the run root
 
-## Status: open
+## Status: pending
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/996. Part A2 of 2. Part A1:
 > `2026-11-28-105407-one-run-root-state-logs-and-ledger-follow-the-run-not-the-first-worktree.md`.

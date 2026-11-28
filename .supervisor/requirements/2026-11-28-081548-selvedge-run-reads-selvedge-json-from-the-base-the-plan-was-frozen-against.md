@@ -1,6 +1,6 @@
 # Selvedge `run` reads selvedge.json from the base the plan was frozen against
 
-## Status: open
+## Status: pending
 
 > Closes the gap qa-split/09 ships with
 > (`.supervisor/requirements/qa-split/09-loomwright-verify-kind-and-unknown-prefix-root-fix.md`, decision

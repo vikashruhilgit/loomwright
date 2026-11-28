@@ -1,5 +1,7 @@
 # A lane whose PR the owner merged by hand closes out
 
+## Status: pending
+
 Source: GitHub issue vikashruhilgit/loomwright#964, "Related gaps seen in the same run", first bullet. Seen on loomwright 18.1.2, branch mode on, `/automate --parallel 3`.
 
 **As an** owner running `/automate --parallel N`,

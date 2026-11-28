@@ -1,6 +1,6 @@
 # Supervisor ACQUIRE works in a linked worktree: branch from origin/<base>, never check the base out
 
-## Status: open
+## Status: pending
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/997.
 

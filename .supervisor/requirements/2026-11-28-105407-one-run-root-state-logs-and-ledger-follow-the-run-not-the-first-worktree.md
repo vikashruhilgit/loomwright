@@ -1,6 +1,6 @@
 # One run root: state, logs and ledger follow the run's checkout, not the first listed worktree
 
-## Status: open
+## Status: pending
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/996. Part A1 of 2. Part A2:
 > `2026-11-28-105408-every-first-worktree-caller-uses-the-run-root.md`.

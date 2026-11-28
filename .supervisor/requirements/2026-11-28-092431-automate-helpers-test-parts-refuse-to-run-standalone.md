@@ -1,6 +1,6 @@
 # The automate-helpers test parts refuse to run on their own
 
-## Status: open
+## Status: pending
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/994. Part A2 of 3. Part A:
 > `2026-11-28-092429-test-parts-refuse-to-run-standalone-and-never-touch-the-real-checkout.md`; Part B:
