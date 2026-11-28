@@ -1,6 +1,7 @@
 # Split test parts that touch run state refuse to run on their own and never touch the real checkout
 
-## Status: pending
+## Status: done
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/1004
 
 > GitHub issue: https://github.com/vikashruhilgit/loomwright/issues/994. Part A of 3. Part A2:
 > `2026-11-28-092431-automate-helpers-test-parts-refuse-to-run-standalone.md`; Part B:
@@ -118,3 +119,9 @@ loomwright/scripts/test-meta-sync.d/
 loomwright/scripts/test-automate-trail.sh
 loomwright/scripts/test-meta-sync.sh
 changelog.d
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T12:02:52Z
+- **Brief:** .supervisor/jobs/done/2026-11-28-test-parts-refuse-standalone-trail-meta.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/1004
