@@ -272,7 +272,18 @@ o="$(bash "$H" meta-publish --paths-from "$BM_T/pub/list9" --root --x 2>/dev/nul
 o="$(bash "$H" meta-publish --root "$PW" 2>/dev/null)"; rc=$?
 [ "$o" = "meta-publish: FAILED — --paths-from <file> is required" ] && [ "$rc" -eq 0 ] && ok "BP10 no --paths-from ⇒ '$o', exit 0" || no "BP10 no --paths-from ⇒ '$o' rc=$rc"
 o="$(bash "$H" meta-publish --paths-from "$BM_T/pub/no-such-list" --root "$PW" 2>/dev/null)"; rc=$?
-[ "$o" = "meta-publish: FAILED — --paths-from '$BM_T/pub/no-such-list' is not a file" ] && [ "$rc" -eq 0 ] && ok "BP10 a missing list file ⇒ FAILED, exit 0" || no "BP10 missing list ⇒ '$o' rc=$rc"
+[ "$o" = "meta-publish: FAILED — --paths-from '$BM_T/pub/no-such-list' is not a readable file" ] && [ "$rc" -eq 0 ] && ok "BP10 a missing list file ⇒ FAILED, exit 0" || no "BP10 missing list ⇒ '$o' rc=$rc"
+# An existing but UNREADABLE list: without the -r check the scope loop's `done < <list>` redirect
+# aborts the dispatcher's set -e shell (raw bash error, exit 1, no verdict). Root ignores mode 000,
+# so the leg asserts the file really became unreadable first and skips by name otherwise.
+printf '%s\n' "$RQ/bp9.md" > "$BM_T/pub/list10u"; chmod 000 "$BM_T/pub/list10u"
+if [ -r "$BM_T/pub/list10u" ]; then
+  echo "  SKIP: BP10 unreadable list — chmod 000 left the file readable (running as root?)"
+else
+  o="$(bash "$H" meta-publish --paths-from "$BM_T/pub/list10u" --root "$PW" 2>&1)"; rc=$?
+  [ "$o" = "meta-publish: FAILED — --paths-from '$BM_T/pub/list10u' is not a readable file" ] && [ "$rc" -eq 0 ] && ok "BP10 an unreadable list file ⇒ ONE FAILED line (stderr included), exit 0" || no "BP10 unreadable list ⇒ '$o' rc=$rc"
+fi
+chmod 600 "$BM_T/pub/list10u"
 
 # (bp11) meta-sync's own failures on the other arms, through the LOOMWRIGHT_META_SYNC_BIN seam (a stub
 # that fails ONE subcommand and runs the real meta-sync for the rest): each is ONE named line,

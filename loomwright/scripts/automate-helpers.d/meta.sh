@@ -101,7 +101,7 @@ meta_push_failed() {
 #   - meta-publish: pushed <branch> <sha> (<n> path(s))
 #   - meta-publish: no_changes <branch>
 #   - meta-publish: FAILED — <reason>; retry: bash <meta-sync.sh> push --branch <b> --paths-from <file> --root <checkout>   (each value shell-quoted, printf %q)
-#   - meta-publish: FAILED — <misinvocation>   (a missing/option-shaped --root or --paths-from value)
+#   - meta-publish: FAILED — <misinvocation>   (a missing/option-shaped --root or --paths-from value, or a --paths-from file that is missing or unreadable)
 # Order: mode (setup-memory.sh mode — the one reader), lane check (automate-lanes.sh lane-info exit
 # 0 ⇒ skip: a lane publishes at wave end), scope check — every listed path must be a planning
 # file, `.supervisor/requirements/*.md` (any depth), AND in `meta-sync.sh list-managed --run-history`
@@ -123,7 +123,9 @@ meta_publish() {
     esac
   done
   [ -n "$pf" ] || { echo "meta-publish: FAILED — --paths-from <file> is required"; return 0; }
-  [ -f "$pf" ] || { echo "meta-publish: FAILED — --paths-from '$pf' is not a file"; return 0; }
+  # Readable too: the scope loop's `done < "$pf"` redirect would otherwise abort the dispatcher's
+  # set -e shell with a raw bash error and exit 1 — no verdict line, the always-exit-0 contract broken.
+  { [ -f "$pf" ] && [ -r "$pf" ]; } || { echo "meta-publish: FAILED — --paths-from '$pf' is not a readable file"; return 0; }
   here="$(cd "$(dirname "$0")" && pwd)"
   root="$(_meta_root "$root")"
   mode="$(bash "$here/setup-memory.sh" --root "$root" mode 2>/dev/null | head -n1 || true)"
