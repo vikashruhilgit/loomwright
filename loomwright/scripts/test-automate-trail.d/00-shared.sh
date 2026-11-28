@@ -2,6 +2,7 @@
 # the part that first defined them (named above each block), so every pool group (part-groups-lib.sh)
 # runs on the same definitions whichever parts it holds. Sourced by test-automate-trail.sh after its
 # own setup and before any part, in every group. Definitions only: no leg, no ok/no call.
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 
 # ---- from 01-sidecar-trail-pr.sh ----
 # fixture builder: bare origin + primary clone on a feature branch with trail state
@@ -13,7 +14,7 @@ new_fixture() {
   git -C "$FX/origin.git" symbolic-ref HEAD refs/heads/main
   git clone -q "$FX/origin.git" "$FX/primary" 2>/dev/null
   P="$FX/primary"
-  ( cd "$P"
+  ( cd "$P" || exit 1
     git checkout -q -b main 2>/dev/null || true
     cat > .gitignore <<'GI'
 .supervisor/*
@@ -105,7 +106,7 @@ spy_count() { grep -c "$1" "$2" 2>/dev/null || true; }
 # worktree, plus an unrelated branch+worktree, and the feature PR in the stub.
 closeout_fixture() {
   new_fixture "$1"
-  ( cd "$P"
+  ( cd "$P" || exit 1
     git checkout -q -- README; rm -f stray.txt
     git push -q origin feature/x 2>/dev/null
     git checkout -q main
@@ -143,7 +144,7 @@ BM_MEM="$HERE/setup-memory.sh"; BM_MS="$HERE/meta-sync.sh"; BMB="loomwright-meta
 # bm_switch: run history IGNORED (the post-migration shape, so a kept check-ignore drop would push
 # nothing), the branch-mode block, an allowlisted ledger, and an initialised metadata branch.
 bm_switch() {
-  ( cd "$P"
+  ( cd "$P" || exit 1
     printf '.supervisor/\n' > .gitignore
     bash "$BM_MEM" --root "$P" apply --branch-mode "$BMB" >/dev/null 2>&1; rm -f .gitignore.backup.*
     printf '{"repo":"acme/widgets","automate_key":"%s\\u001fx","source":"automate_drain"}\n' "$RUN_ID" > .supervisor/postmortem/results.jsonl

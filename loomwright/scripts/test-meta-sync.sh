@@ -345,11 +345,72 @@ SUTB="$TROOT/meta-sync.bundle.sh"
 ( eval "$(awk '/^_ms_bundle\(\) \{$/,/^}$/' "$SUT")"; _ms_bundle "$SUT" ) > "$SUTB" && [ -s "$SUTB" ] \
   || { echo "  FAIL: could not build the single-file meta-sync.sh bundle (_ms_bundle) into $SUTB"; exit 1; }
 TMS_D="$HERE/test-meta-sync.d"
-tms_part() { [ -f "$TMS_D/$1.sh" ] && [ -r "$TMS_D/$1.sh" ] || { echo "  FAIL: missing test part: test-meta-sync.d/$1.sh"; exit 1; }; }
+# tms_part also records the part, so the SG legs below read the names this file sourced.
+TMS_DONE=""
+tms_part() { [ -f "$TMS_D/$1.sh" ] && [ -r "$TMS_D/$1.sh" ] || { echo "  FAIL: missing test part: test-meta-sync.d/$1.sh"; exit 1; }; TMS_DONE="$TMS_DONE $1"; }
 tms_part 01-sync-core;                . "$TMS_D/01-sync-core.sh"
 tms_part 02-guards-mode-base;         . "$TMS_D/02-guards-mode-base.sh"
 tms_part 03-mutants-scrub-allowlist;  . "$TMS_D/03-mutants-scrub-allowlist.sh"
 tms_part 04-learning-stores;          . "$TMS_D/04-learning-stores.sh"
+
+# ---- SG. a part refuses to run standalone; a fixture cd group stops on a failed cd ----------
+# A part run alone (`bash <part>`) has no $TROOT / $W, so a `(cd "$W/M" && a; rm …)` group runs its
+# rm in the caller's directory. Each part's first command is the guard naming this runner; each cd
+# group opens `cd "$X" || exit 1`. The scan is test-automate-trail.sh's SG1 scan (same shapes).
+echo "== SG. parts refuse to run standalone; fixture cd groups stop on a failed cd =="
+# SG1 static — a ( / $( subshell opening with cd "…" then end of line, `;`, or `&&` with a `;` before
+# the group's own `)` on that line. Reads the parts tms_part sourced above, by name.
+SG_SCAN='/^[ \t]*#/ { next }
+{ line = $0; n = length(line); i = 1
+  while (i <= n && match(substr(line, i), /\([ \t]*cd "[^"]*"/)) {
+    e = i + RSTART - 1 + RLENGTH; tl = substr(line, e); bad = 0
+    if (tl ~ /^[ \t]*$/ || tl ~ /^[ \t]*;/) bad = 1
+    else if (tl ~ /^[ \t]*&&/) {
+      d = 1; q = 0
+      for (j = e; j <= n; j++) { c = substr(line, j, 1)
+        if (q) { if (c == "\047") q = 0; continue }
+        if (c == "\047") q = 1
+        else if (c == "#" && j > 1 && substr(line, j - 1, 1) ~ /[ \t]/) break
+        else if (c == "(") d++
+        else if (c == ")") { d--; if (d == 0) break }
+        else if (c == ";" && d == 1) { bad = 1; break } } }
+    if (bad) print F ":" FNR
+    i = e } }'
+SGC="$TROOT/sg-scan-control.sh"
+printf '%s\n' '(cd "$W/M" && bash x >/dev/null 2>&1; rm -f y)' '  ( cd "$W"' 'x="$(cd "$W" && a >/dev/null; b)"' \
+  '(cd "$W"; rm -f x)' '(cd "$W" && git status)   # a; b' '(cd "$W" || exit 1; rm -f x)' "(cd \"\$W\" && printf ';')" > "$SGC"
+sg_ctl="$(awk -v F=control "$SG_SCAN" "$SGC" 2>&1)"
+if [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4')" ]; then
+  ok "SG1 control: the cd-group scan flags the four unsafe shapes and none of the three safe ones"
+else
+  no "SG1 control: the cd-group scan read the planted lines as: $(printf '%s' "$sg_ctl" | tr '\n' ' ')"
+fi
+sg_hits=""
+for sg_p in $TMS_DONE; do
+  sg_hits="$sg_hits$(awk -v F="test-meta-sync.d/$sg_p.sh" "$SG_SCAN" "$TMS_D/$sg_p.sh" 2>&1)
+"
+done
+sg_hits="$(printf '%s' "$sg_hits" | grep -v '^$')"
+if [ -n "$TMS_DONE" ] && [ -z "$sg_hits" ]; then
+  ok "SG1 no part opens a cd group that runs on after a failed cd (cd \"\$X\" || exit 1)"
+else
+  no "SG1 cd group(s) that run on after a failed cd (parts read: ${TMS_DONE:-none}): $(printf '%s' "$sg_hits" | tr '\n' ' ')"
+fi
+# SG2 the incident replayed — each part run on its own from a scratch checkout holding sentinels.
+SGX="$TROOT/sg-checkout"; mkdir -p "$SGX/.supervisor/automate"; git init -q "$SGX"
+printf 'sentinel run\n' > "$SGX/.supervisor/automate/sentinel-run.md"
+printf '{"sentinel":true}\n' > "$SGX/.supervisor/automate/sentinel.next-step.json"
+for sg_p in $TMS_DONE; do
+  sg_err="$(cd "$SGX" || exit 1; env -u TROOT -u W bash "$TMS_D/$sg_p.sh" </dev/null 2>&1 >/dev/null)"; sg_rc=$?
+  sg_want="$sg_p.sh: run via test-meta-sync.sh, never standalone (its fixtures need the suite's \$TROOT)"
+  if [ "$sg_rc" -eq 2 ] && [ "$sg_err" = "$sg_want" ] \
+     && [ "$(cat "$SGX/.supervisor/automate/sentinel-run.md" 2>/dev/null)" = "sentinel run" ] \
+     && [ -f "$SGX/.supervisor/automate/sentinel.next-step.json" ]; then
+    ok "SG2 $sg_p.sh run standalone exits 2 naming test-meta-sync.sh; the scratch sentinels are kept"
+  else
+    no "SG2 $sg_p.sh run standalone: rc=$sg_rc stderr=$(printf '%s' "$sg_err" | head -n 3 | tr '\n' '|') sentinels: $(ls "$SGX/.supervisor/automate" 2>/dev/null | tr '\n' ' ')"
+  fi
+done
 echo
 echo "test-meta-sync: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

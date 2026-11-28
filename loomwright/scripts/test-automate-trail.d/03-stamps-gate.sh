@@ -1,3 +1,4 @@
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 echo "== E. evidence-gated stamps: a done claim rides only when its PR merged (decision 2) =="
 # A done stamp on the requirement (and the done/ brief's Outcome) that can exist BEFORE
 # any merge — Phase 4.5 wrote one until automate-followups/37; older runs, older

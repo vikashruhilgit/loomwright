@@ -359,6 +359,62 @@ pg_want 04-watcher-branch-mode      && tat_part 04-watcher-branch-mode      && .
 pg_want 05-finalize-closeout-others && tat_part 05-finalize-closeout-others && . "$TAT_D/05-finalize-closeout-others.sh"
 pg_want 06-sweep                    && tat_part 06-sweep                    && . "$TAT_D/06-sweep.sh"
 
+# ---- SG. a part refuses to run standalone; a fixture cd group stops on a failed cd ----------
+# A part run alone (`bash <part>`) has no $TOP / $P, so a `( cd "$P" && a; rm … )` group once ran its
+# rm in the caller's checkout and deleted a live /automate run file. Each part's first command is
+# the guard naming this runner; each cd group opens `cd "$X" || exit 1`. Group 1 / --all only.
+if pg_want 01-sidecar-trail-pr; then
+  echo "== SG. parts refuse to run standalone; fixture cd groups stop on a failed cd =="
+  # SG1 static — a ( / $( subshell opening with cd "…" then end of line, `;`, or `&&` with a `;` before
+  # the group's own `)` on that line. Reads 00-shared plus every $TAT_PARTS entry, by name.
+  SG_SCAN='/^[ \t]*#/ { next }
+{ line = $0; n = length(line); i = 1
+  while (i <= n && match(substr(line, i), /\([ \t]*cd "[^"]*"/)) {
+    e = i + RSTART - 1 + RLENGTH; tl = substr(line, e); bad = 0
+    if (tl ~ /^[ \t]*$/ || tl ~ /^[ \t]*;/) bad = 1
+    else if (tl ~ /^[ \t]*&&/) {
+      d = 1; q = 0
+      for (j = e; j <= n; j++) { c = substr(line, j, 1)
+        if (q) { if (c == "\047") q = 0; continue }
+        if (c == "\047") q = 1
+        else if (c == "#" && j > 1 && substr(line, j - 1, 1) ~ /[ \t]/) break
+        else if (c == "(") d++
+        else if (c == ")") { d--; if (d == 0) break }
+        else if (c == ";" && d == 1) { bad = 1; break } } }
+    if (bad) print F ":" FNR
+    i = e } }'
+  SGC="$TOP/sg-scan-control.sh"
+  printf '%s\n' '( cd "$P" && git checkout -q -- README; rm -f stray.txt )' '  ( cd "$P"' 'x="$(cd "$P" && a >/dev/null; b)"' \
+    '(cd "$P"; rm -f x)' '(cd "$P" && bash "$H" trail-pr x)   # a; b' '( cd "$P" || exit 1; rm -f x )' "(cd \"\$P\" && printf ';')" > "$SGC"
+  sg_ctl="$(awk -v F=control "$SG_SCAN" "$SGC" 2>&1)"
+  [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4')" ] \
+    && ok "SG1 control: the cd-group scan flags the four unsafe shapes and none of the three safe ones" \
+    || no "SG1 control: the cd-group scan read the planted lines as: $(printf '%s' "$sg_ctl" | tr '\n' ' ')"
+  sg_hits=""
+  for sg_p in 00-shared $TAT_PARTS; do
+    sg_hits="$sg_hits$(awk -v F="test-automate-trail.d/$sg_p.sh" "$SG_SCAN" "$TAT_D/$sg_p.sh" 2>&1)
+"
+  done
+  sg_hits="$(printf '%s' "$sg_hits" | grep -v '^$')"
+  [ -z "$sg_hits" ] && ok "SG1 no part opens a cd group that runs on after a failed cd (cd \"\$X\" || exit 1)" \
+    || no "SG1 cd group(s) that run on after a failed cd: $(printf '%s' "$sg_hits" | tr '\n' ' ')"
+  # SG2 the incident replayed — each part run on its own from a scratch checkout holding sentinels.
+  SGX="$TOP/sg-checkout"; mkdir -p "$SGX/.supervisor/automate"; git init -q "$SGX"
+  printf 'sentinel run\n' > "$SGX/.supervisor/automate/sentinel-run.md"
+  printf '{"sentinel":true}\n' > "$SGX/.supervisor/automate/sentinel.next-step.json"
+  for sg_p in 00-shared $TAT_PARTS; do
+    sg_err="$(cd "$SGX" || exit 1; env -u TOP -u P -u FX bash "$TAT_D/$sg_p.sh" </dev/null 2>&1 >/dev/null)"; sg_rc=$?
+    sg_want="$sg_p.sh: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)"
+    if [ "$sg_rc" -eq 2 ] && [ "$sg_err" = "$sg_want" ] \
+       && [ "$(cat "$SGX/.supervisor/automate/sentinel-run.md" 2>/dev/null)" = "sentinel run" ] \
+       && [ -f "$SGX/.supervisor/automate/sentinel.next-step.json" ]; then
+      ok "SG2 $sg_p.sh run standalone exits 2 naming test-automate-trail.sh; the scratch sentinels are kept"
+    else
+      no "SG2 $sg_p.sh run standalone: rc=$sg_rc stderr=$(printf '%s' "$sg_err" | head -n 3 | tr '\n' '|') sentinels: $(ls "$SGX/.supervisor/automate" 2>/dev/null | tr '\n' ' ')"
+    fi
+  done
+fi
+
 [ "$TAT_DONE" = "$PG_SEL" ] || no "parts sourced ($TAT_DONE) differ from the parts selected ($PG_SEL): a TAT_PARTS entry has no source line"
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
   echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"

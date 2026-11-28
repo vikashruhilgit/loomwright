@@ -1,4 +1,5 @@
 # ---------------------------------------------------------------------------------------------
+declare -F tms_part >/dev/null && [ -n "${TROOT:-}" ] && [ -d "$TROOT" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-meta-sync.sh, never standalone (its fixtures need the suite's \$TROOT)" >&2; exit 2; }
 echo "== 1. missing branch / init =="
 mkworld; clone A
 ms A pull

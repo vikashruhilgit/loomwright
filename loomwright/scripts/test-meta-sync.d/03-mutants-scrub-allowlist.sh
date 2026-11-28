@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.
 # build_mutant <dir> <sed-expr> <must-appear> — 0 = mutant built and differs; 1 = inconclusive.
+declare -F tms_part >/dev/null && [ -n "${TROOT:-}" ] && [ -d "$TROOT" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-meta-sync.sh, never standalone (its fixtures need the suite's \$TROOT)" >&2; exit 2; }
 build_mutant() {
   mkdir -p "$1"; cp "$HERE/setup-memory.sh" "$1/"
   [ -d "$HERE/setup-memory.d" ] && cp -R "$HERE/setup-memory.d" "$1/"
@@ -315,7 +316,7 @@ for args in "pull --tracked" "push --tracked" "status --tracked" "push --paths" 
 done
 echo "-- an unknown mode: list-managed and scrub still run (no branch resolution); status still refuses --"
 mkworld; clone M
-(cd "$W/M" && bash "$HERE/setup-memory.sh" --root "$W/M" apply --branch-mode team-meta >/dev/null 2>&1; rm -f .gitignore.backup.*)
+(cd "$W/M" || exit 1; bash "$HERE/setup-memory.sh" --root "$W/M" apply --branch-mode team-meta >/dev/null 2>&1; rm -f .gitignore.backup.*)
 sed "s/^# loomwright-meta-branch: .*/# loomwright-meta-branch: off/" "$W/M/.gitignore" > "$W/M/.gitignore.new" && mv "$W/M/.gitignore.new" "$W/M/.gitignore"
 mm="$(bash "$HERE/setup-memory.sh" --root "$W/M" mode)"
 case "$mm" in "unknown "*) true ;; *) false ;; esac; check $? "fixture: M's mode reads unknown (got '$mm')"
