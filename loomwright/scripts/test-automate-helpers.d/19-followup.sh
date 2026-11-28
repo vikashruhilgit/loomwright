@@ -24,7 +24,7 @@ FU_L1='{finding: "a low nit about naming", reason: below_severity_floor, source:
 fu_is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 — got '$(printf '%s' "$2" | tr '\n' '|')', want '$(printf '%s' "$3" | tr '\n' '|')'"; fi; }
 # fu_sum <root> — every entry under .supervisor (names) plus every file's cksum: a write, a removal or a
 # created directory all change it
-fu_sum() { (cd "$1" && find .supervisor -print | env LC_ALL=C sort && find .supervisor -type f -exec cksum {} \; | env LC_ALL=C sort); }
+fu_sum() { (cd "$1" || exit 1; find .supervisor -print | env LC_ALL=C sort && find .supervisor -type f -exec cksum {} \; | env LC_ALL=C sort); }
 # fu_repo <name> <heal_dismissed flow list> — a fresh checkout with one run file and its Phase 4.5
 # sidecar; runs dismissed-drafts and decides EVERY draft follow-up. Sets R, AD, RF, PROP.
 fu_repo() {

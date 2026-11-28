@@ -1,3 +1,5 @@
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 05-gate-eval; fi
 # --- ctx-owned-key REFUSAL (AC2, the single most important new behavior) ---
 # A ctx that tries to hand the gate a pre-computed verdict for ANY now-gate-owned
 # key is refused BEFORE anything else runs, regardless of the value it carries.

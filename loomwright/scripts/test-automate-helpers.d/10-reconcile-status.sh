@@ -111,10 +111,10 @@ rs_mutant() {
 
 # H1. AC-1: dry run over the 5-file fixture prints exactly ONE plan line (b), writes nothing.
 IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
-BEFORE="$(cd "$R" && find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
+BEFORE="$(cd "$R" || exit 1; find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
 rs_run "$R" "$R/.supervisor/requirements/qh"
 nplan="$(printf '%s\n' "$RUN_OUT" | grep -c '^plan	')"
-AFTER="$(cd "$R" && find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
+AFTER="$(cd "$R" || exit 1; find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
 if [ "$nplan" = "1" ] && grep -qF "plan	$RELB	done (PR #42, merge abcdef1)" < <(printf '%s\n' "$RUN_OUT") && [ "$BEFORE" = "$AFTER" ]; then
   ok "H1 AC-1: dry run prints exactly one plan line for (b), root untouched (diff -r equivalent)"
 else

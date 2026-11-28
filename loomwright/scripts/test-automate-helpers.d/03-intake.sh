@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 03-intake; fi
 echo "== C. folder / backlog-doc resolvers (skip ## Status: done) =="
 
 WD="$(mktemp -d)"; DIR="$WD/reqs"; mkdir -p "$DIR"

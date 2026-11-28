@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 13-plan-waves; fi
 echo "== W. plan-waves (parallel-automate/04: read-only wave planner; fixtures under mktemp -d, --root = fixture root) =="
 W_T="$(mktemp -d)"
 W_REPO="$(cd "$HERE/../.." && pwd)"
