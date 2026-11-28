@@ -10,7 +10,8 @@ exits 2 before running anything, the guard the lanes parts already carry. Every 
 now opens with `cd "$X" || exit 1`, and each runner defines a `cd` that refuses an empty operand before it sources
 any part, because macOS `/bin/bash` 3.2 treats `cd ""` as a successful no-op and would run the group on in the
 caller's directory. Each runner gains a static scan of its own parts for a `cd` group that would run
-on after a failed `cd`, with a control that plants the unsafe shapes, and a replay leg. The replay first checks that each part's first
+on after a failed `cd`, with a control that plants the unsafe shapes, and a replay leg. The scan joins
+backslash-continued lines before it reads them, so a group split across lines is caught too. The replay first checks that each part's first
 command is the exact guard, and reports a part without it as a failure without ever running it. It then runs each
 part on its own from a scratch checkout holding sentinel `.supervisor/automate/` files and checks the exit code, the
 runner line and that the sentinels are still there. A further leg checks that a group stops for an empty and for a

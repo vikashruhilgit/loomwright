@@ -377,9 +377,12 @@ pg_want 06-sweep                    && tat_part 06-sweep                    && .
 if pg_want 01-sidecar-trail-pr; then
   echo "== SG. parts refuse to run standalone; fixture cd groups stop on a failed cd =="
   # SG1 static — a ( / $( subshell opening with cd "…" then end of line, `;`, or `&&` with a `;` before
-  # the group's own `)` on that line. Reads 00-shared plus every $TAT_PARTS entry, by name.
-  SG_SCAN='/^[ \t]*#/ { next }
-{ line = $0; n = length(line); i = 1
+  # the group's own `)` on that logical line
+  # (backslash-continued lines are joined first). Reads 00-shared plus every $TAT_PARTS entry, by name.
+  SG_SCAN='!cont && /^[ \t]*#/ { next }
+{ if (cont) buf = buf $0; else { buf = $0; st = FNR }
+  if (buf ~ /\\$/) { sub(/\\$/, "", buf); cont = 1; next }
+  cont = 0; line = buf; n = length(line); i = 1
   while (i <= n && match(substr(line, i), /\([ \t]*cd "[^"]*"/)) {
     e = i + RSTART - 1 + RLENGTH; tl = substr(line, e); bad = 0
     if (tl ~ /^[ \t]*$/ || tl ~ /^[ \t]*;/) bad = 1
@@ -392,14 +395,15 @@ if pg_want 01-sidecar-trail-pr; then
         else if (c == "(") d++
         else if (c == ")") { d--; if (d == 0) break }
         else if (c == ";" && d == 1) { bad = 1; break } } }
-    if (bad) print F ":" FNR
+    if (bad) print F ":" st
     i = e } }'
   SGC="$TOP/sg-scan-control.sh"
   printf '%s\n' '( cd "$P" && git checkout -q -- README; rm -f stray.txt )' '  ( cd "$P"' 'x="$(cd "$P" && a >/dev/null; b)"' \
-    '(cd "$P"; rm -f x)' '(cd "$P" && bash "$H" trail-pr x)   # a; b' '( cd "$P" || exit 1; rm -f x )' "(cd \"\$P\" && printf ';')" > "$SGC"
+    '(cd "$P"; rm -f x)' '(cd "$P" && bash "$H" trail-pr x)   # a; b' '( cd "$P" || exit 1; rm -f x )' "(cd \"\$P\" && printf ';')" \
+      '( cd "$P" \' '  ; rm -f x )' '( cd "$P" && git status \' '  && rm -f x )' '( cd "$P" && a \' '  ; rm -f x )' '(cd "$P"; rm -f y)' > "$SGC"
   sg_ctl="$(awk -v F=control "$SG_SCAN" "$SGC" 2>&1)"
-  [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4')" ] \
-    && ok "SG1 control: the cd-group scan flags the four unsafe shapes and none of the three safe ones" \
+  [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4\ncontrol:8\ncontrol:12\ncontrol:14')" ] \
+    && ok "SG1 control: the cd-group scan flags the seven unsafe shapes (two backslash-continued, reported at their first line) and none of the four safe ones" \
     || no "SG1 control: the cd-group scan read the planted lines as: $(printf '%s' "$sg_ctl" | tr '\n' ' ')"
   sg_hits=""
   for sg_p in 00-shared $TAT_PARTS; do

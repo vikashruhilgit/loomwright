@@ -370,9 +370,12 @@ tms_part 04-learning-stores;          . "$TMS_D/04-learning-stores.sh"
 # group opens `cd "$X" || exit 1`. The scan is test-automate-trail.sh's SG1 scan (same shapes).
 echo "== SG. parts refuse to run standalone; fixture cd groups stop on a failed cd =="
 # SG1 static — a ( / $( subshell opening with cd "…" then end of line, `;`, or `&&` with a `;` before
-# the group's own `)` on that line. Reads the parts tms_part sourced above, by name.
-SG_SCAN='/^[ \t]*#/ { next }
-{ line = $0; n = length(line); i = 1
+# the group's own `)` on that logical line
+# (backslash-continued lines are joined first). Reads the parts tms_part sourced above, by name.
+SG_SCAN='!cont && /^[ \t]*#/ { next }
+{ if (cont) buf = buf $0; else { buf = $0; st = FNR }
+  if (buf ~ /\\$/) { sub(/\\$/, "", buf); cont = 1; next }
+  cont = 0; line = buf; n = length(line); i = 1
   while (i <= n && match(substr(line, i), /\([ \t]*cd "[^"]*"/)) {
     e = i + RSTART - 1 + RLENGTH; tl = substr(line, e); bad = 0
     if (tl ~ /^[ \t]*$/ || tl ~ /^[ \t]*;/) bad = 1
@@ -385,14 +388,15 @@ SG_SCAN='/^[ \t]*#/ { next }
         else if (c == "(") d++
         else if (c == ")") { d--; if (d == 0) break }
         else if (c == ";" && d == 1) { bad = 1; break } } }
-    if (bad) print F ":" FNR
+    if (bad) print F ":" st
     i = e } }'
 SGC="$TROOT/sg-scan-control.sh"
 printf '%s\n' '(cd "$W/M" && bash x >/dev/null 2>&1; rm -f y)' '  ( cd "$W"' 'x="$(cd "$W" && a >/dev/null; b)"' \
-  '(cd "$W"; rm -f x)' '(cd "$W" && git status)   # a; b' '(cd "$W" || exit 1; rm -f x)' "(cd \"\$W\" && printf ';')" > "$SGC"
+  '(cd "$W"; rm -f x)' '(cd "$W" && git status)   # a; b' '(cd "$W" || exit 1; rm -f x)' "(cd \"\$W\" && printf ';')" \
+    '( cd "$W" \' '  ; rm -f x )' '( cd "$W" && git status \' '  && rm -f x )' '( cd "$W" && a \' '  ; rm -f x )' '(cd "$W"; rm -f y)' > "$SGC"
 sg_ctl="$(awk -v F=control "$SG_SCAN" "$SGC" 2>&1)"
-if [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4')" ]; then
-  ok "SG1 control: the cd-group scan flags the four unsafe shapes and none of the three safe ones"
+if [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4\ncontrol:8\ncontrol:12\ncontrol:14')" ]; then
+  ok "SG1 control: the cd-group scan flags the seven unsafe shapes (two backslash-continued, reported at their first line) and none of the four safe ones"
 else
   no "SG1 control: the cd-group scan read the planted lines as: $(printf '%s' "$sg_ctl" | tr '\n' ' ')"
 fi
