@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # exec-acceptance-hash.sh — prints the content-keyed stamp for a Supervisor-Ready Brief's
 # `## Executable Acceptance` section: `sha256:<hex>` of the whitespace-normalized, newline-joined
-# list of `cmd:`/bare bullets ONLY (`corpus-task:`/`qa-executor:` bullets excluded), or the literal
-# `none` when that filtered list is empty (including when the section itself is absent).
+# list of `cmd:`/bare and `verify:` (alias `qa-executor:`) bullets, in brief order (`corpus-task:`,
+# `rule:` and `unknown_kind` bullets excluded), or the literal `none` when that filtered list is
+# empty (including when the section itself is absent). Kinds (exec-acceptance-lib.sh's
+# classify_kind): `cmd` | `corpus-task` | `rule` | `verify` | `unknown_kind`. A brief with no
+# `qa-executor:` bullet and no unknown `<word>:` bullet (a prefix other than `cmd:`/`corpus-task:`/
+# `rule:`/`verify:`) hashes exactly as before (a `verify:` bullet was already hashed whole as a bare
+# line); a brief with either must be re-stamped (its `cmd:` bullets read `cmd_unapproved` until then).
+# The stamp still gates only `cmd:`/bare bullets at run time; `verify:` bullets run unstamped.
 #
 # This is the HUMAN-FACING / brief-authoring half of the content-keyed stamp gate (red-team-
 # hardening item 05 — "cmd: valve by provenance"): a human (or Launch Pad's Phase 6

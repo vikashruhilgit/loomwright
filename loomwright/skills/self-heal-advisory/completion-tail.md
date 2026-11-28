@@ -149,7 +149,8 @@ ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_pass
 # run has NON_INTERACTIVE == false (/autonomous forwards --non-interactive ONLY when its OUTER call had
 # --non-interactive-fallback), so a `cmd:`/bare bullet runs exactly as under a plain interactive
 # `/supervisor`. --no-cmd skips cmd:/bare checks entirely (recorded unverified/"cmd_disabled");
-# corpus-task:/qa-executor: checks are unaffected either way.
+# corpus-task: and verify: (alias qa-executor:) checks are unaffected either way (a verify: line is a
+# Selvedge step plan, which has no shell).
 #
 # The REAL guard on every OTHER path is the content-keyed stamp gate `run-ground-truth.sh` enforces via
 # `scripts/exec-acceptance-hash.sh` / `scripts/exec-acceptance-lib.sh`: a --brief-sourced `cmd:`/bare
@@ -159,27 +160,33 @@ ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_pass
 NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
 # Run from the pinned repo-root CWD: the runner derives the PROJECT ROOT (handed to each corpus-task
 # check.sh as EVAL_PROJECT_ROOT) from the caller's git toplevel. `--project <dir>` exists for callers
-# that cannot pin CWD.
-gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
+# that cannot pin CWD. GROUND_TRUTH_VERIFY_BASE is the ref Selvedge's `plan --base` reads
+# `selvedge.json` from for the verify: lines: the run's resolved base, never the PR head, so a PR's own
+# `selvedge.json` edit has no effect at plan time.
+gt = GROUND_TRUTH_VERIFY_BASE="origin/$BASE_BRANCH" bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
 # The runner prints TWO machine lines (issue #616 — two hand-mapped objects wrote `ran`/`pass_rate` and
 # were refused at the trail push):
 #   GROUND_TRUTH_NESTED: {...}  — the SUPERVISOR_RESULT ground_truth object ALREADY in schema shape:
 #                                 checked (<- ran), status, checks_total, checks_passed, and findings[]
 #                                 (the failing per_check entries, severity "advisory") when any failed.
 #   GROUND_TRUTH_JSON: {...}    — the runner's own record; the FLAT session_end fields read it.
+# With >=1 verify: line it also prints a `Verify: verify 1 PASS · 1 NOT_VERIFIABLE`-style counts line
+# (each non-zero per-verdict count; the same counts as GROUND_TRUTH_JSON's additive verify_counts).
+VERIFY_LINE = <the text after `Verify: ` on that line, or "" when the runner printed none>
 ground_truth = <the GROUND_TRUTH_NESTED value, copied VERBATIM>   # never add, rename or drop a key
 # No GROUND_TRUTH_NESTED line (runner failed / not run) → ground_truth = {checked: false, status: unverified}.
 # /automate refuses a RUN report whose ground_truth has any other key set (exit 2, nothing written to the run file).
 # Flat fields (Hard-signal dual emission below): ground_truth_status/_checks_total/_checks_passed from
 # either line; ground_truth_pass_rate = GROUND_TRUTH_JSON's pass_rate — FLAT ONLY.
 
-record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_passed}/{checks_total})", rationale: "advisory only — heal_decision unchanged")
+record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_passed}/{checks_total})" + (VERIFY_LINE != "" ? " · {VERIFY_LINE}" : ""), rationale: "advisory only — heal_decision unchanged")
+# e.g. "ground_truth: pass (3/4) · verify 1 PASS · 1 NOT_VERIFIABLE" — a verify: result never reads as a bare pass.
 ```
 
 **Ground-truth execution rules:**
 - The runner resolves checks from the brief's optional `## Executable Acceptance` section (priority) or `.supervisor/twin/ground-truth.json` (fallback). No source → `checked: false`, `status: skipped`, `0/0`, empty `findings[]`. Graceful no-op — never an error, never a fix.
-- `status: pass` requires zero failing checks (and ≥1 check executed); `status: advisory_failures` requires ≥1 failing check and a non-empty `findings[]` (each `severity: advisory`); `status: unverified` is the fail-safe tooling path (no `jq`, or checks resolved but none could be verified — e.g. only deferred `qa-executor` checks).
-- `qa-executor:` checks are DEFERRED to M2b slice 1b (recorded `unverified`, reason `qa_executor_dispatch_deferred_m2b_1b`; they never block a `pass`). **Trust boundary (not a sandbox):** a `cmd:` check runs arbitrary `bash -c` with full shell privileges — review `## Executable Acceptance` `cmd:` bullets at Plan Review (especially `/autonomous`-generated briefs); `corpus-task` ids are a single path segment, so they cannot escape `eval-corpus`.
+- `status: pass` requires zero failing checks (and ≥1 check executed); `status: advisory_failures` requires ≥1 failing check and a non-empty `findings[]` (each `severity: advisory`); `status: unverified` is the fail-safe tooling path (no `jq`, or checks resolved but none could be verified — e.g. only `unknown_kind` lines, or only `verify:` checks Selvedge could not verify).
+- `verify:` checks (alias `qa-executor:`) are checked by Selvedge: every `verify:` line of the run goes into ONE Selvedge run, and each line's result comes from that run's `verdict.json` (PASS → `pass`, FAIL → `fail`, BLOCKED / NOT_VERIFIABLE → `unverified` with Selvedge's reason, e.g. `NOT_VERIFIABLE material_assumption`; no Selvedge CLI → `unverified`, reason `verify_plugin_absent`). They are advisory like every check here: a `verify:` FAIL is an advisory finding, never a fix iteration, never a gate. They need no stamp and still run under `--no-cmd`. A line whose `<word>:` prefix is no known kind is never run (`unverified`, reason `unknown_kind`). **Trust boundary (not a sandbox):** a `cmd:` check runs arbitrary `bash -c` with full shell privileges — review `## Executable Acceptance` `cmd:` bullets at Plan Review (especially `/autonomous`-generated briefs); `corpus-task` ids are a single path segment, so they cannot escape `eval-corpus`.
 
 ### Rules-store audit (automate-followups/09 — advisory, NEVER gates)
 

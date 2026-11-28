@@ -3,8 +3,10 @@
 Emitted by `scripts/run-ground-truth.sh` — the System Twin **ground-truth instrument** (M2b slice
 1a). It resolves a set of project-declared **executable acceptance checks**, runs each one (exit 0 =
 pass, non-zero = fail), and emits a single hard PASS/FAIL signal. The script prints a human/grep
-per-check block plus a `Checks passed: M/N` line, AND exactly TWO machine-readable lines, in this order
-on every exit: `GROUND_TRUTH_JSON: {...}` (below) and `GROUND_TRUTH_NESTED: {checked, status,
+per-check block plus a `Checks passed: M/N` line (then, ONLY when ≥1 `verify:` line resolved, a
+`Verify: verify 1 PASS · 1 NOT_VERIFIABLE`-style counts line: each non-zero per-verdict count, in the
+order PASS, FAIL, BLOCKED, NOT_VERIFIABLE, UNVERIFIED, so a `verify:` result never reads as a bare
+pass), AND exactly TWO machine-readable lines, in this order on every exit: `GROUND_TRUTH_JSON: {...}` (below) and `GROUND_TRUTH_NESTED: {checked, status,
 checks_total, checks_passed[, findings]}` — the `SUPERVISOR_RESULT.ground_truth` object already in schema
 shape (`checked` ⇐ `ran`; `findings` = the failing `per_check` entries as `{check: "<kind>:<target>",
 detail: <reason or "exit non-zero">, severity: advisory}`, present only when a check failed; no
@@ -19,7 +21,8 @@ unattended (incl. under `/autonomous`, where the `## Executable Acceptance` sect
 by Launch Pad), `cmd:` bullets are a trust-sensitive surface to review at Plan Review; `corpus-task`
 ids are constrained to a single path segment so they cannot escape `eval-corpus`. **Safety valve:**
 `--no-cmd` (or `GROUND_TRUTH_NO_CMD=1`) skips `cmd:`/bare checks entirely (recorded `unverified`,
-reason `cmd_disabled` — never executed); `corpus-task:`/`qa-executor:` are unaffected. Supervisor
+reason `cmd_disabled` — never executed); `corpus-task:` and `verify:` (alias `qa-executor:`) are
+unaffected (a `verify:` line is a Selvedge step plan, which has no shell). Supervisor
 Phase 4.5 passes `--no-cmd` only when `NON_INTERACTIVE == true` (set by `--non-interactive-fallback`,
 NOT by `/autonomous` alone — a default interactive `/autonomous "goal"` run leaves it unset). On every
 OTHER path, a `cmd:`/bare bullet sourced from a brief is gated by the **content-keyed stamp gate**
@@ -50,30 +53,32 @@ GROUND_TRUTH_JSON: {
 **Field contract (schema_version: 1):**
 - `schema_version` — integer, required, always `1`.
 - `ran` — boolean; `true` when ≥1 resolved check actually executed (a verifiable pass/fail), `false`
-  on the no-source / no-`jq` / all-deferred fail-safe paths.
+  on the no-source / no-`jq` / nothing-verifiable fail-safe paths.
 - `status` — one of:
-  - `pass` — ≥1 check executed and passed, and ZERO checks failed (deferred `qa-executor` checks may
-    coexist; they never block a pass).
+  - `pass` — ≥1 check executed and passed, and ZERO checks failed (`unverified` checks — an
+    `unknown_kind` line, an unapproved `cmd:`, a BLOCKED or NOT_VERIFIABLE `verify:` — may coexist;
+    they never block a pass).
   - `advisory_failures` — ≥1 resolved check exited non-zero (a `per_check` `fail` is present).
   - `unverified` — fail-safe tooling path: `jq` unavailable, OR checks resolved but NONE could be
-    verified (zero passes AND zero fails AND ≥1 deferred — honest: nothing was actually verified).
+    verified (zero passes AND zero fails AND ≥1 `unverified` check — honest: nothing was actually verified).
   - `skipped` — no check source resolved (no `--check`, no `--brief` `## Executable Acceptance`
     section, no `--checks-file`/stdin, no `.supervisor/twin/ground-truth.json`). `ran:false`, `0/0`,
     empty `per_check`.
 - `checks_total` — integer; count of resolved checks. `0` on the `skipped` (no source) and no-`jq`
-  paths; **≥1 on the all-deferred `unverified` path** (a deferred `qa-executor` check is resolved and
-  counts toward the total even though it executes nothing).
+  paths; **≥1 on the nothing-verifiable `unverified` path** (an `unverified` check, e.g. an
+  `unknown_kind` line, is resolved and counts toward the total even though it executes nothing).
 - `checks_passed` — integer; count whose check exited `0`.
 - `pass_rate` — string `"M/N"` (e.g. `"2/2"`). `"0/0"` on the `skipped`/no-`jq` paths; the
-  all-deferred `unverified` path reports the real `"0/N"` (N = the deferred checks counted in
+  nothing-verifiable `unverified` path reports the real `"0/N"` (N = the unverified checks counted in
   `checks_total`).
 - `per_check` — array of `{kind, target, status, reason?}` objects, one per resolved check. **Order is
   source-dependent:** explicit `--check` / `--brief` / `--checks-file` preserve declaration order, but
   the `.supervisor/twin/ground-truth.json` fallback is `LC_ALL=C`-sorted for determinism — downstream
   readers should not assume declaration order in the fallback case.
-  - `kind` — one of `cmd | corpus-task | qa-executor`.
-  - `target` — the shell command (`cmd`), corpus task-id (`corpus-task`), or QA target
-    (`qa-executor`).
+  - `kind` — one of `cmd | corpus-task | rule | verify | unknown_kind` (a `qa-executor:` line is
+    recorded as `verify`, its alias).
+  - `target` — the shell command (`cmd`), corpus task-id (`corpus-task`), rule id (`rule`), criterion
+    text (`verify`), or the whole line (`unknown_kind`).
   - `status` — one of `pass | fail | unverified` (a non-zero exit is a normal `fail` tally, never a
     crash).
   - `reason` — optional short string. Known values: `corpus_task_not_found` (missing task dir /
@@ -81,13 +86,21 @@ GROUND_TRUTH_JSON: {
     (a bare `cmd:` with no command), `cmd_disabled` (a `cmd:`/bare check skipped under `--no-cmd` /
     `GROUND_TRUTH_NO_CMD=1`), `cmd_unapproved` (red-team-hardening item 05, v15.90.0 — a `--brief`-sourced
     `cmd:`/bare bullet whose `## Configuration` stamp is absent or stale against the CURRENT bullet
-    list; see §"`## Executable Acceptance`" below), `qa_executor_dispatch_deferred_m2b_1b` (the
-    deferred `qa-executor` kind), and the five `rule:`-kind reasons `rule_not_found`,
+    list; see §"`## Executable Acceptance`" below), `unknown_kind` (a `<word>:` prefix that is no known
+    kind — never executed, never hashed), the `verify:`-kind reasons `FAIL` (a Selvedge FAIL, status
+    `fail`), `<VERDICT> <selvedge reason>` for a Selvedge BLOCKED or NOT_VERIFIABLE criterion (e.g.
+    `NOT_VERIFIABLE material_assumption`, `BLOCKED env_hooks_unapproved`; status `unverified`),
+    `verify_plugin_absent`, `verify_refused` and `verify_verdict_unreadable` (all `unverified`,
+    defined once in §"`## Executable Acceptance`" below), and the five `rule:`-kind reasons `rule_not_found`,
     `rule_cmd_disabled`, `rule_unapproved`, `rule_check_failed`, `rule_unresolved` (defined once in
     §"`## Executable Acceptance`" below).
 - `commit` — short commit SHA at run time, or `"unknown"`. **Contextual — NOT part of any determinism
   invariant.**
 - `date` — ISO 8601 UTC timestamp at run time, or `"unknown"`. **Contextual.**
+- `verify_counts` — additive, present ONLY when ≥1 `verify:` line resolved: `{total, pass, fail,
+  blocked, not_verifiable, unverified}` integers, the same counts the `Verify:` stdout line shows
+  (`unverified` = a Loomwright-side reason such as `verify_plugin_absent`). `GROUND_TRUTH_NESTED` never
+  gains it (its key set is fixed).
 
 **Distinct from EVAL_RESULT and BENCHMARK_JSON:** "ground-truth" ≠ "eval" ≠ "benchmark". `EVAL_RESULT`
 (`scripts/run-eval.sh`) is the **eval instrument** — a fitness function scoring plugin output quality
@@ -99,8 +112,8 @@ dir, and intent.
 **Scope honesty (M2b slice 1a vs deferred):** slice 1a (shipped v14.19.0) wires the **generic
 executable-acceptance path** — `cmd:`/bare shell checks and `corpus-task:` checks resolved from a
 brief's `## Executable Acceptance` section (or `.supervisor/twin/ground-truth.json`) and run after the
-Code Reviewer pass in Phase 4.5. The `qa-executor:` kind is RECOGNIZED but **DEFERRED to slice 1b**
-(per-check `unverified`, reason `qa_executor_dispatch_deferred_m2b_1b`; it spawns nothing). Auto-running
+Code Reviewer pass in Phase 4.5. `verify:` lines (alias `qa-executor:`) are checked by the Selvedge
+CLI, all of a run's lines in ONE Selvedge run (`scripts/ground-truth-verify.sh`). Auto-running
 the full Launch Pad→Supervisor agent loop in CI against the corpus, and wiring ground-truth into a
 ground-truth-execution gate, are **part-2 follow-ups** (deferred). See `scripts/run-ground-truth.sh`
 and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
@@ -108,8 +121,9 @@ and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
 ### `## Executable Acceptance` (brief convention)
 
 The optional `## Executable Acceptance` section in a brief is a list of `- ` bullets, each either a
-raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, qa-executor, rule}`:
-- `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run from
+raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, rule, verify}`
+(`qa-executor:` is the `verify:` alias); any other `<word>:` prefix is the kind `unknown_kind`:
+- `cmd: <shell>` (or a **bare** bullet with no `<word>:` prefix) — a shell command run from
   the **project root** (`--project <dir>` if the runner was given one, else the git toplevel of the
   caller's CWD, else the caller's CWD; Supervisor Phase 4.5 pins repo-root CWD, so there the project
   root IS the repo root); exit `0` = pass. An empty command (a bare
@@ -123,7 +137,30 @@ raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task
   invoked through `bash`); exit `0` = pass. A missing task dir / `check.sh` is a `fail`
   (reason `corpus_task_not_found`), not a silent drop. The `<id>` is a single path segment (a `/` or
   `..` is rejected as `corpus_task_invalid_id`).
-- `qa-executor: <target>` — RECOGNIZED but DEFERRED to slice 1b (per-check `unverified`).
+- `verify: <criterion>` (alias `qa-executor: <criterion>`) — a criterion about what a user sees,
+  checked by the Selvedge CLI through `scripts/ground-truth-verify.sh` (its header holds the command
+  chain `criteria from-text` → `plan <criteria.json> --base <ref>` → `run` → `verdict.json`). ALL
+  `verify:` lines of one run go into ONE Selvedge run; each line's per-check result comes from that
+  run's `verdict.json` (lines map to `criteria.json` ids in order). `plan --base <ref>` reads
+  `selvedge.json` from the base ref (`GROUND_TRUTH_VERIFY_BASE`, else `origin/<branch>` from
+  `scripts/resolve-base-branch.sh`; no hardcoded fallback — when that resolver fails, every
+  `verify:` line is `verify_refused` and Selvedge is not called), never from the PR head; `run`
+  takes no `--base`, so that holds at plan time only.
+  `run`'s exit code is never read as a verdict. Hashed into the brief stamp but never gated by it, and
+  NOT disabled by `--no-cmd`. Per-check results (the authoritative list — other surfaces point here):
+  - PASS → `pass`; FAIL → `fail`, reason `FAIL`.
+  - BLOCKED / NOT_VERIFIABLE → `unverified`, reason `<VERDICT> <selvedge reason>` (e.g.
+    `NOT_VERIFIABLE material_assumption`; an unapproved env hook gives `BLOCKED env_hooks_unapproved`
+    — Loomwright never approves a hook).
+  - `verify_plugin_absent` (`unverified`) — no `SELVEDGE_BIN` and no `selvedge` on `PATH`.
+  - `verify_refused` (`unverified`) — `criteria from-text` or `plan` exited non-zero or printed no
+    usable run folder (`run` is then never called), or the line has no criterion text.
+  - `verify_verdict_unreadable` (`unverified`) — no readable `schema_version` 1 `verdict.json`, or a
+    criterion it does not hold. An unread criterion is never a `pass`.
+- Any other `<word>:` prefix (`<word>:` then a blank or the line end, `<word>` = a letter, then
+  letters, digits, `-` or `_`; e.g. `frobnicate: x`, the typo `verfy: x`) — kind `unknown_kind`:
+  NEVER executed and never hashed; per-check `unverified`, reason `unknown_kind`, target = the whole
+  line. A line with no such prefix (`npm test -- --grep "a: b"`) stays a bare `cmd`.
 - `rule: <id>` — a house rule (`.agent/rules/`), resolved by DELEGATION to `scripts/rules-check.sh`;
   `run-ground-truth.sh` never reads the rules store and never runs a `check` itself (`rules-check.sh`
   stays the one executor — `skills/rules/SKILL.md` §9). Each call runs at most ONCE per run, cwd = the
@@ -171,8 +208,13 @@ run, where `NON_INTERACTIVE == false`; see `skills/autonomous-loop/SKILL.md`), a
 `cmd:`/bare bullet executes ONLY when the brief's `## Configuration` section carries a line
 `- **Executable Acceptance Approved:** sha256:<hash>` whose `<hash>` equals
 `scripts/exec-acceptance-hash.sh <brief>`'s CURRENT output — a `sha256:<hex>` of the
-whitespace-normalized, newline-joined list of `cmd:`/bare bullets ONLY (`corpus-task:`/`qa-executor:`
-excluded), or the literal `none` when that filtered list is empty. Both `exec-acceptance-hash.sh` (the
+whitespace-normalized, newline-joined list of `cmd:`/bare and `verify:` (incl. `qa-executor:`) bullets
+(`corpus-task:`/`rule:`/`unknown_kind` excluded), or the literal `none` when that filtered list is
+empty. A brief with no `qa-executor:` bullet and no unknown `<word>:` bullet (a prefix other than
+`cmd:`/`corpus-task:`/`rule:`/`verify:`) hashes exactly as before (a `verify:` bullet was already hashed
+whole as a bare line); a brief with either must be re-stamped (its `cmd:` bullets read `cmd_unapproved`
+until then);
+a `verify:` bullet is hashed but never gated (it runs with or without a stamp). Both `exec-acceptance-hash.sh` (the
 human-facing/authoring side) and `scripts/run-ground-truth.sh` (the enforcement side) source ONE
 shared definition — `scripts/exec-acceptance-lib.sh` — so the classification/hash rule cannot silently
 diverge between the two.

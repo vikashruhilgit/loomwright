@@ -11,7 +11,11 @@
 #           RULES block's conditional emission; the count-free criteria line in the command mirror.
 #   PART 2  Plan Reviewer Criterion 17: skip clause, 17a / 17b FAIL conditions, the
 #           `rule_conformance` category (criterion body AND output-format enum), the count, and
-#           Criterion 14's classifier naming `rule:` as a non-cmd prefix.
+#           Criterion 14's classifier naming `rule:` as a non-cmd prefix, and the Executable
+#           Acceptance kind-list copies: the runner header, exec-acceptance-lib.sh's header,
+#           Criterion 14, Launch Pad's strip-cmd-bullets keep list and ground-truth-json.md's `kind`
+#           field each name cmd, corpus-task, rule, verify and unknown_kind on the copy's own line(s),
+#           so a copy that drifts from classify_kind fails naming its file.
 #   PART 2b Plan Reviewer Criterion 18 (touched-file invariants, iq01): gate, 18a/18b/18c, the
 #           `touched_file_invariants` category, and the template ↔ Launch Pad agent ↔ command
 #           mirror that produces the section it checks.
@@ -148,7 +152,29 @@ has "$LP" '4c. **Touched-file invariants' && ok "launch-pad Phase 5 emits the se
 has "$LPC" '8. Touched-file invariants' && has "$LPC" 'Criterion 18 runs only when the brief modifies an existing script' \
   && ok "command mirror: step 8 + Criterion 18 gate" || no "command mirror touched-file invariants"
 has "$PLUGIN/docs/result-schemas/plan-review-result.md" '`touched_file_invariants` for Criterion 18' && ok "schema doc: category" || no "schema doc category"
-has "$PR" '`corpus-task:` / `qa-executor:` / `rule:` prefix' && ok "Criterion 14 classifier names rule:" || no "Criterion 14 rule: prefix"
+has "$PR" '`corpus-task:` / `rule:` / `verify:` / `qa-executor:` prefix' && ok "Criterion 14 classifier names rule: and verify:" || no "Criterion 14 rule:/verify: prefix"
+# Kind-list copies. Each copy is the text between a fixed anchor and a fixed terminator (in the
+# anchor line plus the next line), never the whole file: every one of these files says `verify`
+# elsewhere too, so a whole-file grep could not see one copy dropping a kind.
+kind_copy() {  # kind_copy <file> <label> <anchor> <terminator> <kind>... — fails naming <label>
+  local f="$1" label="$2" a="$3" t="$4" w span missing="" k
+  shift 4
+  w="$( { [ -r "$f" ] && grep -F -m1 -A1 -- "$a" "$f"; } 2>/dev/null | tr '\n' ' ')"
+  case "$w" in *"$a"*) ;; *) no "kind-list copy anchor not found in $label: $a"; return ;; esac
+  span="${w#*"$a"}"; span="${span%%"$t"*}"
+  for k in "$@"; do bhas "$span" "$k" || missing="$missing $k"; done
+  [ -z "$missing" ] && ok "kind-list copy names every kind: $label" || no "kind-list copy in $label lacks:$missing"
+}
+ALL_KINDS="cmd corpus-task rule verify unknown_kind"
+# shellcheck disable=SC2086  # ALL_KINDS is a deliberate word list
+{
+kind_copy "$PLUGIN/scripts/run-ground-truth.sh" "scripts/run-ground-truth.sh (kind set)" 'where kind in {' '}' cmd corpus-task rule verify
+kind_copy "$PLUGIN/scripts/run-ground-truth.sh" "scripts/run-ground-truth.sh (other prefixes)" 'other `<word>:` prefix is the kind' '(' unknown_kind
+kind_copy "$PLUGIN/scripts/exec-acceptance-lib.sh" "scripts/exec-acceptance-lib.sh" 'classify_kind <line>                 -> ' '#' $ALL_KINDS
+kind_copy "$PR" "agents/plan-reviewer.md" '`classify_kind`, kinds' ')' $ALL_KINDS
+kind_copy "$LP" "agents/launch-pad.md" 'remove every flagged' '), **re-run' $ALL_KINDS
+kind_copy "$PLUGIN/docs/result-schemas/ground-truth-json.md" "docs/result-schemas/ground-truth-json.md" '- `kind` — one of' '(' $ALL_KINDS
+}
 
 echo "PART 3 — fixtures"
 for f in rules/must.json brief-conforming.md brief-contradicting.md brief-omitting.md; do

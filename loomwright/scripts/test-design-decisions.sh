@@ -17,7 +17,7 @@
 #        sources (WebSearch only under --discovery), status values, the LP-APPROACH ask, the
 #        Can't-ask branch, the worker `plan:` deviation sentence
 #   AC3  Launch Pad Phase 2.7: position, trigger-gated Read(, no-trigger literal, header, the
-#        Can't-ask clause, ≤ 25 lines, Phase-numbering line, the launch-pad agent budget kept at 47557
+#        Can't-ask clause, ≤ 25 lines, Phase-numbering line, the launch-pad agent row within its declared budget
 #   AC4  the command mirror: workflow sentence, Phase 2.7 block, byte-identical Can't-ask bullet,
 #        Phase 5 step 2, Phase 5.5 step 2's conditional list and Criterion 23 clause
 #   AC5  the gate catalog row (lane-policy.sh catalog), LANE_GATES.md and the Question-gate inventory
@@ -185,12 +185,13 @@ bhas "$NUM" '**FEASIBILITY (2.5)**, **APPROACH (2.7)** and **PLAN REVIEW (5.5)**
   || no "Phase-numbering convention line"
 has "$LP" '5a. When Phase 2.7 wrote ≥ 1 entry, emit `## Design decisions` right after `## Task`' && ok "Phase 5 action 5a emits the section" \
   || no "Phase 5 action 5a"
-[ "$(jq -r '.agents["launch-pad"].budget' "$BUDGETS" 2>/dev/null)" = 47557 ] && ok "launch-pad agent budget unchanged at 47557" \
-  || no "launch-pad agent budget is not 47557"
+# The budget is read from prompt-token-budgets.json (its one home), never restated here as a literal.
+LP_BUDGET="$(jq -r '.agents["launch-pad"].budget' "$BUDGETS" 2>/dev/null)"
+case "$LP_BUDGET" in ''|*[!0-9]*) no "launch-pad agent budget unreadable: ${LP_BUDGET:-empty}"; LP_BUDGET=x ;; *) ok "launch-pad agent budget declared ($LP_BUDGET)" ;; esac
 if [ -f "$REPO/scripts/check-token-budget.sh" ]; then
   bash "$REPO/scripts/check-token-budget.sh" > "$WORK/budget.out" 2>&1
-  grep -qE '^launch-pad +[0-9]+ +47557 +OK ' "$WORK/budget.out" && ok "check-token-budget.sh: launch-pad agent row OK at 47557" \
-    || no "check-token-budget.sh: launch-pad agent row is not OK at 47557"
+  grep -qE "^launch-pad +[0-9]+ +$LP_BUDGET +OK " "$WORK/budget.out" && ok "check-token-budget.sh: launch-pad agent row OK at its declared budget" \
+    || no "check-token-budget.sh: launch-pad agent row is not OK at its declared budget ($LP_BUDGET)"
 else
   skip "scripts/check-token-budget.sh absent (plugin-only copy); the budget row is checked by CI"
 fi
