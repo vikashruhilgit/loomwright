@@ -8,11 +8,16 @@
 # executes the actual acceptance checks a brief / project declares and reports whether they pass.
 # "ground-truth" != "eval" != "benchmark" — kept distinct by name and intent.
 #
-# Output shape on stdout: a human/grep per-check block (one `  [PASS]/[FAIL]/[DEFERRED] <kind>:<target>`
-# line per resolved check) + a `Checks passed: M/N` line, AND exactly TWO machine-readable lines,
-# always in this order, on every exit:
-#   GROUND_TRUTH_JSON: {schema_version,ran,status,checks_total,checks_passed,pass_rate,per_check,commit,date}
+# Output shape on stdout: a human/grep per-check block (one `  [PASS]/[FAIL]/[SKIP] <kind>:<target>`
+# line per resolved check) + a `Checks passed: M/N` line, then — ONLY when >=1 `verify:` line was
+# resolved — a `Verify: verify <n> PASS · <n> NOT_VERIFIABLE …` counts line (each non-zero count, in
+# the order PASS, FAIL, BLOCKED, NOT_VERIFIABLE, UNVERIFIED; UNVERIFIED = a Loomwright-side reason),
+# so a verify result is never shown as a bare pass, AND exactly TWO machine-readable lines, always in
+# this order, on every exit:
+#   GROUND_TRUTH_JSON: {schema_version,ran,status,checks_total,checks_passed,pass_rate,per_check,commit,date[,verify_counts]}
 #   GROUND_TRUTH_NESTED: {checked,status,checks_total,checks_passed[,findings]}
+# `verify_counts` (additive; present only with >=1 `verify:` line) is
+#   {total,pass,fail,blocked,not_verifiable,unverified} — the same counts the `Verify:` line shows.
 # The JSON line is the runner's own record (flat session_end fields read it, incl. pass_rate). The
 # NESTED line is the SUPERVISOR_RESULT `ground_truth` object already in schema shape
 # (docs/result-schemas/supervisor-result.md "Nested-object key sets"): checked <- ran, findings <- the
@@ -28,11 +33,12 @@
 #   - status "unverified"         — fail-safe tooling path: jq unavailable (ran:false, 0/0, []), an
 #                                   explicit `--project <dir>` that is not a directory (ran:false, 0/0,
 #                                   []), OR the edge where checks resolved but NONE could actually be
-#                                   verified (zero passes AND zero fails AND >=1 deferred — honest:
-#                                   nothing was actually verified).
+#                                   verified (zero passes AND zero fails AND >=1 unverified check —
+#                                   honest: nothing was actually verified).
 #   - status "advisory_failures"  — >=1 resolved check exited non-zero (a per_check fail present).
-#   - status "pass"               — >=1 check executed and passed, and ZERO checks failed (deferred
-#                                   qa-executor checks may coexist; they never block a pass).
+#   - status "pass"               — >=1 check executed and passed, and ZERO checks failed (unverified
+#                                   checks — unknown_kind, an unapproved cmd:, a BLOCKED or
+#                                   NOT_VERIFIABLE verify: — may coexist; they never block a pass).
 #
 # Check resolution (explicit sources are COMBINED; the JSON file is fallback-only):
 #   1. Explicit (all three are appended together, in this order — NOT ranked against each other):
@@ -45,7 +51,9 @@
 #   3. None -> status "skipped".
 #
 # A check line is a `- `-stripped bullet that is EITHER a raw shell command OR `<kind>: <target>`
-# where kind in {cmd, corpus-task, qa-executor, rule}. Per-kind execution:
+# where kind in {cmd, corpus-task, rule, verify} (`qa-executor:` is an alias of `verify:`), and any
+# other `<word>:` prefix is the kind `unknown_kind` (exec-acceptance-lib.sh's classify_kind holds the
+# one prefix grammar). Per-kind execution:
 #   - cmd: <shell>   (or a bare line with no recognized kind:) -> run in the PROJECT ROOT (see
 #                    "Project root" below) via `bash -c '<shell>' >/dev/null 2>&1`; exit 0 = pass.
 #                    (Supervisor Phase 4.5 pins the repo-root CWD, so in that path the project root
@@ -69,9 +77,24 @@
 #                    drop). The task dir is the CWD (task-local relative paths keep working); the
 #                    project the check must VERIFY arrives in $EVAL_PROJECT_ROOT — a check.sh must never
 #                    derive it from its own location (see "Project root" below).
-#   - qa-executor: <target> -> RECOGNIZED but DEFERRED to slice 1b. Does NOT spawn anything; records
-#                    per_check status "unverified", reason "qa_executor_dispatch_deferred_m2b_1b".
-#                    Counts toward checks_total but neither checks_passed nor a fail.
+#   - verify: <criterion text>  (alias `qa-executor: <criterion text>`; per_check kind "verify",
+#                    target = the criterion text) -> checked by the Selvedge CLI through the sourced
+#                    driver ground-truth-verify.sh (its header holds the command chain, CLI
+#                    discovery, base-branch rule and verdict mapping). ALL verify: lines of one run
+#                    go into ONE Selvedge run, made at most ONCE per run (pre-resolution block
+#                    below). PASS -> pass; FAIL -> fail (reason "FAIL"); BLOCKED / NOT_VERIFIABLE ->
+#                    unverified, reason "<VERDICT> <selvedge reason>" (e.g. "NOT_VERIFIABLE
+#                    material_assumption", "BLOCKED env_hooks_unapproved"). Loomwright-side reasons,
+#                    each unverified and never a pass: "verify_plugin_absent" (no SELVEDGE_BIN, no
+#                    selvedge on PATH), "verify_refused" (Selvedge refused the criteria or the plan;
+#                    `run` is then never called), "verify_verdict_unreadable" (no readable
+#                    schema_version 1 verdict.json, or a criterion it does not hold). A verify: line
+#                    is hashed into the brief stamp but NOT gated by it (it needs no stamp to run),
+#                    and --no-cmd does not reach it: a Selvedge step plan has no shell and reaches only
+#                    the origins `selvedge.json` (read from the base branch) allows.
+#   - unknown_kind   (a `<word>:` prefix that is no known kind, e.g. `frobnicate: x` or the typo
+#                    `verfy: x`) -> NEVER executed and never hashed; per_check kind "unknown_kind",
+#                    target = the whole line, status "unverified", reason "unknown_kind".
 #   - rule: <id>     -> a house rule, resolved by DELEGATION to rules-check.sh (plan-time-rule-routing).
 #                    This runner NEVER reads the rules store and NEVER extracts or runs a rule's check
 #                    itself — rules-check.sh stays the ONE script that parses and executes a check
@@ -123,7 +146,9 @@
 #                    stamp hashes `id\tcheck`), which bounds this to checks a human already approved.
 #
 # TRUST BOUNDARY (not a sandbox): the runner ITSELF performs no repo writes and makes no network
-# calls — but it is NOT a security boundary. A `cmd:` (or bare) check runs an arbitrary
+# calls — but it is NOT a security boundary. (A `verify:` line hands its criterion to Selvedge, which
+# writes its run folder under `<project>/.selvedge/runs/`, calls its planner model, and drives a
+# guarded browser against allowlisted origins — Selvedge's writes, bounded by Selvedge's rules.) A `cmd:` (or bare) check runs an arbitrary
 # `bash -c '<shell>'` with full, unrestricted shell privileges (it CAN write files / hit the
 # network); that is the whole point — it executes the project's *declared* acceptance checks. The
 # "no writes / no network" property is therefore a property of well-behaved, TRUSTED checks, not an
@@ -155,8 +180,9 @@
 # TEST-ONLY hook and has no effect on normal operation.
 #
 # Safety valve: --no-cmd (or GROUND_TRUTH_NO_CMD=1) skips cmd:/bare shell checks entirely (recorded
-# per_check "unverified", reason "cmd_disabled" — never executed); corpus-task:/qa-executor: are
-# unaffected. --no-cmd ALWAYS wins, regardless of source or stamp (see below) — it is checked first.
+# per_check "unverified", reason "cmd_disabled" — never executed); corpus-task: and verify: (alias
+# qa-executor:) are unaffected. --no-cmd ALWAYS wins, regardless of source or stamp (see below) — it
+# is checked first.
 # It ALSO reaches rule: bullets (a rule check is arbitrary shell): listed ids become "unverified",
 # reason "rule_cmd_disabled", and rules-check.sh --if-stamped is never invoked.
 #
@@ -185,6 +211,8 @@ CORPUS="$SCRIPT_DIR/eval-corpus"
 
 # shellcheck source=exec-acceptance-lib.sh
 . "$SCRIPT_DIR/exec-acceptance-lib.sh"
+# shellcheck source=ground-truth-verify.sh
+. "$SCRIPT_DIR/ground-truth-verify.sh"
 
 # ---- argv parse -----------------------------------------------------------
 EXPLICIT_CHECKS=()   # collected from --check / --brief / --checks-file (in resolution order)
@@ -193,7 +221,7 @@ CHECKS_FILE=""
 PROJECT_ARG=""       # --project <dir>: explicit project root (else derived from the caller's CWD)
 # --no-cmd (or GROUND_TRUTH_NO_CMD=1): safety valve for unattended use. When set, cmd:/bare shell
 # checks are NOT executed (recorded per_check "unverified", reason "cmd_disabled"); corpus-task: and
-# qa-executor: are unaffected. --no-cmd ALWAYS wins over the content-keyed stamp gate below — it is
+# verify: (alias qa-executor:) are unaffected. --no-cmd ALWAYS wins over the content-keyed stamp gate below — it is
 # checked first in the execution loop, regardless of a bullet's source or stamp validity.
 NO_CMD=0
 [ "${GROUND_TRUTH_NO_CMD:-0}" = "1" ] && NO_CMD=1
@@ -250,10 +278,13 @@ emit_no_jq_unverified() {
   printf '%s\n' 'GROUND_TRUTH_NESTED: {"checked":false,"status":"unverified","checks_total":0,"checks_passed":0}'
 }
 
-# emit_jq <ran-bool> <status> <total> <passed> <pass_rate> <per_check_json>
+# emit_jq <ran-bool> <status> <total> <passed> <pass_rate> <per_check_json> [<verify_counts_json>]
+# The 7th argument (present only when >=1 verify: line resolved) prints the `Verify:` counts line
+# from VERIFY_LINE and adds the `verify_counts` key to GROUND_TRUTH_JSON; NESTED never gains a key.
 emit_jq() {
-  local ran="$1" status="$2" total="$3" passed="$4" pr="$5" per_check="$6"
+  local ran="$1" status="$2" total="$3" passed="$4" pr="$5" per_check="$6" vcounts="${7:-}"
   echo "Checks passed: $pr"
+  [ -n "$vcounts" ] && [ -n "${VERIFY_LINE:-}" ] && echo "Verify: $VERIFY_LINE"
   jq -cn \
     --argjson ran "$ran" \
     --arg status "$status" \
@@ -263,7 +294,9 @@ emit_jq() {
     --argjson per_check "$per_check" \
     --arg commit "$COMMIT" \
     --arg date "$DATE" \
-    '{schema_version:1,ran:$ran,status:$status,checks_total:$total,checks_passed:$passed,pass_rate:$pr,per_check:$per_check,commit:$commit,date:$date}' \
+    --argjson vcounts "${vcounts:-null}" \
+    '{schema_version:1,ran:$ran,status:$status,checks_total:$total,checks_passed:$passed,pass_rate:$pr,per_check:$per_check,commit:$commit,date:$date}
+     + (if $vcounts == null then {} else {verify_counts:$vcounts} end)' \
     | sed 's/^/GROUND_TRUTH_JSON: /'
   # The SUPERVISOR_RESULT `ground_truth` object, in schema shape. findings appears only when a
   # check failed (status advisory_failures requires a non-empty findings[]).
@@ -503,6 +536,31 @@ if [ "$_rule_any_listed" -eq 1 ]; then
   fi
 fi
 
+# ---- verify: pre-resolution (DELEGATION to the Selvedge CLI — see the header's `verify:` entry) ---
+# Every verify: line of this run is sent to gt_verify_check (ground-truth-verify.sh) in ONE call,
+# so the whole set is checked in ONE Selvedge run folder. Deliberately NOT behind NO_CMD and NOT
+# behind the brief stamp gate. Results land in sparse arrays indexed like CHECK_LINES; an index the
+# driver did not fill reads as unverified / verify_verdict_unreadable in the loop (never a pass).
+VERIFY_STATUS=(); VERIFY_REASON=(); VERIFY_VERDICT=()
+VERIFY_LINE=""
+_verify_idx=(); _verify_targets=()
+for idx in "${!CHECK_LINES[@]}"; do
+  [ "$(classify_kind "${CHECK_LINES[$idx]}")" = "verify" ] || continue
+  _verify_idx+=("$idx")
+  _verify_targets+=("$(gt_verify_target "${CHECK_LINES[$idx]}")")
+done
+if [ "${#_verify_idx[@]}" -gt 0 ]; then
+  gt_verify_check "$PROJECT_ROOT" "${_verify_targets[@]}"
+  for _vi in "${!_verify_idx[@]}"; do
+    VERIFY_STATUS[${_verify_idx[$_vi]}]="${GT_VERIFY_STATUS[$_vi]:-}"
+    VERIFY_REASON[${_verify_idx[$_vi]}]="${GT_VERIFY_REASON[$_vi]:-}"
+    VERIFY_VERDICT[${_verify_idx[$_vi]}]="${GT_VERIFY_VERDICT[$_vi]:-}"
+  done
+  [ -n "$GT_VERIFY_RUN_DIR" ] && echo "  verify: one Selvedge run, folder $GT_VERIFY_RUN_DIR"
+fi
+# Per-verdict counts for the `Verify:` line and GROUND_TRUTH_JSON.verify_counts (filled in the loop).
+vc_total=0; vc_pass=0; vc_fail=0; vc_blocked=0; vc_nv=0; vc_unv=0
+
 # ---- execute each resolved check ------------------------------------------
 total=0
 passed=0
@@ -538,8 +596,9 @@ for idx in "${!CHECK_LINES[@]}"; do
   case "$kind" in
     cmd)          target="$(trim "${line#cmd:}")" ;;
     corpus-task)  target="$(trim "${line#corpus-task:}")" ;;
-    qa-executor)  target="$(trim "${line#qa-executor:}")" ;;
+    verify)       target="$(gt_verify_target "$line")" ;;   # strips verify: or its alias qa-executor:
     rule)         target="$(trim "${line#rule:}")" ;;
+    unknown_kind) target="$line" ;;                         # the whole line, so the bad prefix shows
   esac
 
   case "$kind" in
@@ -660,11 +719,43 @@ for idx in "${!CHECK_LINES[@]}"; do
         esac
       fi
       ;;
-    qa-executor)
-      # DEFERRED to slice 1b — recognized, recorded, never spawned. Neither pass nor fail.
+    verify)
+      # Resolved by the ONE Selvedge run in the pre-resolution block; nothing is executed here.
+      v_status="${VERIFY_STATUS[$idx]:-unverified}"
+      v_reason="${VERIFY_REASON[$idx]:-verify_verdict_unreadable}"
+      [ -n "${VERIFY_STATUS[$idx]:-}" ] || v_reason="verify_verdict_unreadable"
+      vc_total=$((vc_total+1))
+      case "${VERIFY_VERDICT[$idx]:-}" in
+        PASS) vc_pass=$((vc_pass+1)) ;;
+        FAIL) vc_fail=$((vc_fail+1)) ;;
+        BLOCKED) vc_blocked=$((vc_blocked+1)) ;;
+        NOT_VERIFIABLE) vc_nv=$((vc_nv+1)) ;;
+        *) vc_unv=$((vc_unv+1)) ;;
+      esac
+      case "$v_status" in
+        pass)
+          passed=$((passed+1))
+          echo "  [PASS] verify:$target"
+          append_check "verify" "$target" "pass"
+          ;;
+        fail)
+          failures=$((failures+1))
+          echo "  [FAIL] verify:$target"
+          append_check "verify" "$target" "fail" "${v_reason:-FAIL}"
+          ;;
+        *)
+          deferred=$((deferred+1))
+          echo "  [SKIP] verify:$target (unverified: $v_reason)"
+          append_check "verify" "$target" "unverified" "$v_reason"
+          ;;
+      esac
+      ;;
+    unknown_kind)
+      # An unknown `<word>:` prefix (a typo, or a kind this runner does not know): NEVER executed,
+      # never hashed. Recorded so the bad line is visible, never a pass and never a fail.
       deferred=$((deferred+1))
-      echo "  [DEFERRED] qa-executor:$target (dispatch deferred to M2b slice 1b)"
-      append_check "qa-executor" "$target" "unverified" "qa_executor_dispatch_deferred_m2b_1b"
+      echo "  [SKIP] $target (unknown kind — not run)"
+      append_check "unknown_kind" "$target" "unverified" "unknown_kind"
       ;;
   esac
 done
@@ -684,10 +775,27 @@ else
   status="unverified"
 fi
 
-# `ran` means ">=1 check actually executed a verifiable pass/fail". A deferred qa-executor check
-# executes nothing, so the all-deferred path reports ran:false (status:unverified) — matching the
-# header / RESULT_SCHEMAS contract and the supervisor.md `ground_truth.checked = gt.ran` mapping.
+# `ran` means ">=1 check actually executed a verifiable pass/fail". An unverified check (unknown_kind,
+# a disabled/unapproved cmd:, a BLOCKED/NOT_VERIFIABLE verify:) decides nothing, so the all-unverified
+# path reports ran:false (status:unverified) — matching the header / RESULT_SCHEMAS contract and the
+# supervisor.md `ground_truth.checked = gt.ran` mapping.
 if [ $((passed + failures)) -gt 0 ]; then ran=true; else ran=false; fi
 
-emit_jq "$ran" "$status" "$total" "$passed" "$pass_rate" "$per_check_json"
+# The verify counts — shown whenever >=1 verify: line resolved, so a verify result never reads as
+# a bare pass: `verify 1 PASS · 1 NOT_VERIFIABLE` (non-zero counts only, fixed order).
+verify_counts_json=""
+if [ "$vc_total" -gt 0 ]; then
+  VERIFY_LINE="verify"
+  _vsep=" "
+  for _vpair in "$vc_pass:PASS" "$vc_fail:FAIL" "$vc_blocked:BLOCKED" "$vc_nv:NOT_VERIFIABLE" "$vc_unv:UNVERIFIED"; do
+    [ "${_vpair%%:*}" -gt 0 ] || continue
+    VERIFY_LINE="$VERIFY_LINE$_vsep${_vpair%%:*} ${_vpair#*:}"
+    _vsep=" · "
+  done
+  verify_counts_json="$(jq -cn --argjson t "$vc_total" --argjson p "$vc_pass" --argjson f "$vc_fail" \
+    --argjson b "$vc_blocked" --argjson n "$vc_nv" --argjson u "$vc_unv" \
+    '{total:$t,pass:$p,fail:$f,blocked:$b,not_verifiable:$n,unverified:$u}')"
+fi
+
+emit_jq "$ran" "$status" "$total" "$passed" "$pass_rate" "$per_check_json" "$verify_counts_json"
 exit 0

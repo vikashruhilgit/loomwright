@@ -1,8 +1,9 @@
 # exec-acceptance-lib.sh — shared classification/hash logic for a Supervisor-Ready Brief's
 # `## Executable Acceptance` section. SOURCED (never executed directly) by BOTH
 # `run-ground-truth.sh` (the enforcement side, Phase 4.5) and `exec-acceptance-hash.sh` (the
-# human-facing / brief-authoring side). This is the ONE place the `cmd:`/`corpus-task:`/
-# `qa-executor:`/`rule:` classification rule and the content-keyed stamp hash are defined — factored out
+# human-facing / brief-authoring side). This is the ONE place the `cmd:`/`corpus-task:`/`rule:`/
+# `verify:` (alias `qa-executor:`) classification rule, the `unknown_kind` refusal of any other
+# `<word>:` prefix, and the content-keyed stamp hash are defined — factored out
 # specifically so the two consumers can never silently diverge (red-team-hardening item 05, AC1
 # risk mitigation: "the worker should factor the shared classification logic into one definition
 # both scripts read, or add a cross-check test that fails if they ever diverge"). Sourcing the
@@ -11,8 +12,10 @@
 # Functions (all pure — no I/O beyond reading the given `<brief>` path; no execution, no writes):
 #   trim <line>                          -> leading/trailing-whitespace-trimmed line
 #   strip_bullet <line>                  -> `trim` PLUS a leading `- `/`-` bullet marker removed
-#   classify_kind <line>                 -> `cmd` | `corpus-task` | `qa-executor` | `rule`
-#                                           (bare line -> `cmd`)
+#   classify_kind <line>                 -> `cmd` | `corpus-task` | `rule` | `verify` | `unknown_kind`
+#                                           (`qa-executor:` -> `verify`, its alias; any other
+#                                           `<word>:` prefix -> `unknown_kind`; a bare line with no
+#                                           such prefix -> `cmd`)
 #   extract_brief_section_bullets <brief> -> one stripped bullet per line from the brief's
 #                                           `## Executable Acceptance` section (exact heading
 #                                           match only — a sibling heading like "## Executable
@@ -27,10 +30,14 @@
 #                                           available. Fallback chain mirrors send-webhook.sh's
 #                                           sha256_hex: shasum -a 256 -> sha256sum -> openssl dgst.
 #   exec_acceptance_hash <brief>         -> prints `sha256:<hex>` of the whitespace-normalized,
-#                                           newline-joined list of `cmd:`/bare bullets ONLY
-#                                           (classify_kind == "cmd"), or the literal `none` when
-#                                           that filtered list is empty (incl. brief/section absent,
-#                                           or only corpus-task:/qa-executor:/rule: bullets present).
+#                                           newline-joined list of `cmd:`/bare and `verify:`
+#                                           (incl. `qa-executor:`) bullets, in brief order
+#                                           (classify_kind == "cmd" or "verify"), or the literal
+#                                           `none` when that filtered list is empty (incl.
+#                                           brief/section absent, or only corpus-task:/rule:/
+#                                           unknown_kind bullets present). A brief with no verify
+#                                           bullet hashes byte-identically to the cmd-only rule, so
+#                                           a stamp written before `verify:` existed stays valid.
 #                                           Returns 1 (with a stderr diagnostic, no stdout) only
 #                                           when the filtered list is non-empty and no sha256 tool
 #                                           is available — a hash claiming to represent content it
@@ -73,22 +80,37 @@ strip_bullet() {
   printf '%s' "$line"
 }
 
-# classify_kind <line> — `cmd` | `corpus-task` | `qa-executor` | `rule`. A bare line (no recognized
-# `<kind>:` prefix) classifies as `cmd` — IDENTICAL rule to run-ground-truth.sh's execution-time
-# case statement (kept in exact lockstep on purpose; do not edit one without the other, though
-# both now read from this single definition so that can no longer happen silently).
+# classify_kind <line> — `cmd` | `corpus-task` | `rule` | `verify` | `unknown_kind`. IDENTICAL rule
+# to run-ground-truth.sh's execution-time case statement (both read this single definition).
 # `rule:` (plan-time-rule-routing) is a PRECONDITION, not a nicety: without its own arm a
-# `rule: <id>` bullet would fall through to bare `cmd` — hashed into the brief stamp, flagged by
-# Plan Review Criterion 14, and EXECUTED as the literal shell text "rule: …". With it, a `rule:` bullet is never
-# hashed (exec_acceptance_hash keeps only `cmd`) and run-ground-truth.sh resolves it by delegating
-# to rules-check.sh; its authorization is the user-scope rules stamp, never the brief `sha256:` stamp.
+# `rule: <id>` bullet would be hashed into the brief stamp, flagged by Plan Review Criterion 14,
+# and EXECUTED as shell. With it, a `rule:` bullet is never hashed and run-ground-truth.sh resolves
+# it by delegating to rules-check.sh; its authorization is the user-scope rules stamp, never the
+# brief `sha256:` stamp.
+# `verify:` (and `qa-executor:`, kept as its alias so no existing bullet changes meaning) is a
+# criterion checked by the Selvedge CLI (ground-truth-verify.sh). It IS hashed (a step plan reaches
+# only allowlisted origins, so the stamp records what the brief asks to check, not a shell grant).
+# The prefix grammar: a line whose first token is `<word>:` followed by a blank or the end of the
+# line, `<word>` = a letter then letters, digits, `-` or `_`, is a PREFIXED line. A prefixed line
+# whose word is not a known kind is `unknown_kind` — never hashed, never run — so a typo (`verfy:`)
+# or a kind this classifier does not know yet can never turn into a shell command. A line with no
+# such prefix (`bash scripts/x.sh`, `npm test -- --grep "a: b"`, `abc:def`, `9x: y`) stays a bare
+# shell `cmd`, exactly as before. Known kinds match on `<kind>:` alone (`rule:id`, `cmd:true`).
 classify_kind() {
+  local _ck_prefix_re='^[A-Za-z][A-Za-z0-9_-]*:([[:blank:]]|$)'
   case "$1" in
     cmd:*)          printf 'cmd\n' ;;
     corpus-task:*)  printf 'corpus-task\n' ;;
-    qa-executor:*)  printf 'qa-executor\n' ;;
+    verify:*)       printf 'verify\n' ;;
+    qa-executor:*)  printf 'verify\n' ;;   # alias of verify:
     rule:*)         printf 'rule\n' ;;
-    *)              printf 'cmd\n' ;;   # bare line -> treat as shell cmd
+    *)
+      if [[ $1 =~ $_ck_prefix_re ]]; then
+        printf 'unknown_kind\n'           # an unknown `<word>:` prefix — never hashed, never run
+      else
+        printf 'cmd\n'                    # bare line -> treat as shell cmd
+      fi
+      ;;
   esac
 }
 
@@ -174,7 +196,7 @@ exec_acceptance_hash() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     kind="$(classify_kind "$line")"
-    if [ "$kind" = "cmd" ]; then
+    if [ "$kind" = "cmd" ] || [ "$kind" = "verify" ]; then
       if [ "$first" -eq 1 ]; then
         hash_input="$line"
         first=0

@@ -4,13 +4,14 @@
 # never pollute the real .supervisor/ (the runner's ground-truth.json fallback resolves against the
 # git root of the CWD). Exit 0 = all pass, 1 = any failure. Prints "RESULT: N passed, M failed".
 #
-# Covers the five core AC cases plus the corpus dogfood and edge cases — 19 assertions (a–m, incl. e2, l-env, m1–m5):
+# Covers the five core AC cases plus the corpus dogfood and edge cases (a–m, incl. e2, l-env, m1–m5):
 #   (a) passing check (--check 'cmd: true')          => status "pass", 1/1, exit 0.
 #   (b) failing check (--check 'cmd: false')         => status "advisory_failures", per_check fail, exit 0.
 #   (c) no source (temp CWD, no ground-truth.json)   => status "skipped", 0/0, exit 0.
 #   (d) missing-jq simulation (GROUND_TRUTH_FORCE_NO_JQ=1) => status "unverified", exit 0.
-#   (e) qa-executor check                            => per_check unverified + deferred reason, ran false, exit 0.
-#   (e2) qa-executor coexisting with a passing cmd   => status "pass" (deferred never blocks).
+#   (e) qa-executor: (alias of verify:), stub SELVEDGE_BIN writing a PASS verdict.json
+#                                                    => per_check kind "verify", status pass, exit 0.
+#   (e2) qa-executor: + a passing cmd, same stub     => status "pass", total 2, passed 2.
 #   (f) corpus-task: version-consistent              => executes the real check, hard pass/fail, 1/1 total
 #                                                       (run from the repo root — the project it verifies).
 #   (g) missing corpus-task                          => per_check fail, reason corpus_task_not_found, exit 0.
@@ -39,6 +40,15 @@
 #       hash-comparison block in run-ground-truth.sh, replace it with an unconditional
 #       BRIEF_HASH_VALID=1, confirm the (n3) stale-stamp case then WRONGLY executes against the
 #       mutant, proving the real gate is load-bearing (AC7).
+#   (v) the `verify:` kind and the unknown-prefix refusal — every verify: leg runs a STUB
+#       SELVEDGE_BIN (a bash script under $TMP that writes criteria.json, one .selvedge/runs/<id>/
+#       folder and a fixed verdict.json, and logs every call), never a real browser or model; the
+#       plugin-absent leg scrubs PATH (a stale `selvedge` may sit on the caller's PATH): unknown
+#       prefix never run (A1), qa-executor: alias (B1), one run folder for two lines (B2), the
+#       verdict mapping (B3, B8), plugin absent (B4), refusals and unreadable verdicts (B5),
+#       --no-cmd still runs verify: (B6), `plan --base` and `run` on the printed folder only (B7),
+#       no stamp needed (C2), the `Verify:` counts line + verify_counts (C4), and a verify: FAIL
+#       stays an advisory finding with gate-eval still at seven conditions (C5).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -62,6 +72,60 @@ gt_json() { printf '%s\n' "$1" | sed -n 's/^GROUND_TRUTH_JSON: //p' | head -n1; 
 TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
+# Never resolve a real Selvedge from the caller's environment: every verify: leg sets its own
+# SELVEDGE_BIN (the stub below) or scrubs PATH; the base ref is derived unless a leg sets it.
+unset SELVEDGE_BIN GROUND_TRUTH_VERIFY_BASE
+
+# STUB SELVEDGE_BIN — stands in for the Selvedge CLI's public commands. Every call appends its argv
+# (one line) to $STUB_LOG. Knobs: STUB_CRITERIA_RC / STUB_PLAN_RC (non-zero => that command refuses),
+# STUB_PLAN_PRINT (print this instead of the run folder), STUB_VERDICTS (comma list of
+# VERDICT[:reason], one per criterion in order; default PASS), STUB_SCHEMA (verdict.json
+# schema_version, default 1), STUB_NO_VERDICT=1 (run writes no verdict.json), STUB_RUN_RC,
+# STUB_DEDUPE=1 (fold identical criteria into one id, as Selvedge's from-text does).
+STUB="$TMP/stub-bin/selvedge"
+mkdir -p "$TMP/stub-bin"
+cat > "$STUB" <<'STUB_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_LOG:-/dev/null}"
+case "${1:-}" in
+  --version) echo "selvedge 0.0.0-stub" ;;
+  criteria)
+    [ "${STUB_CRITERIA_RC:-0}" = 0 ] || { echo "selvedge criteria: criteria_not_found: stub" >&2; exit "$STUB_CRITERIA_RC"; }
+    n=0; items=""; seen=""
+    while IFS= read -r l || [ -n "$l" ]; do
+      l="${l#- }"; l="$(printf '%s' "$l" | tr -s ' ')"; [ -n "$l" ] || continue
+      if [ "${STUB_DEDUPE:-0}" = 1 ]; then
+        case "$seen" in *"|$l|"*) continue ;; esac
+        seen="${seen:-|}$l|"
+      fi
+      n=$((n+1))
+      items="$items${items:+,}$(jq -cn --arg id "$(printf 'c-%012x' "$n")" --arg t "$l" '{id:$id,text:$t}')"
+    done
+    printf '{"schema_version":1,"source":null,"criteria":[%s]}\n' "$items"
+    ;;
+  plan)
+    if [ "${STUB_PLAN_RC:-0}" != 0 ]; then echo "BLOCKED base_config_unreadable"; echo "selvedge plan: stub refusal" >&2; exit "$STUB_PLAN_RC"; fi
+    d="$PWD/.selvedge/runs/20261128T000000Z-$(printf '%06x' "$$")"
+    mkdir -p "$d" && cp "$2" "$d/criteria.json"
+    echo "selvedge plan: run folder $d (stub)" >&2
+    if [ -n "${STUB_PLAN_PRINT:-}" ]; then echo "$STUB_PLAN_PRINT"; else echo "$d"; fi
+    ;;
+  run)
+    for d in "$@"; do :; done
+    [ "${STUB_NO_VERDICT:-0}" = 1 ] && exit 2
+    jq -n --slurpfile c "$d/criteria.json" --arg vs "${STUB_VERDICTS:-PASS}" --argjson sv "${STUB_SCHEMA:-1}" '
+      ($vs | split(",")) as $v | $c[0].criteria as $cs
+      | {schema_version: $sv, target: "web",
+         criteria: ([range(0; $cs | length) as $i
+           | {key: $cs[$i].id,
+              value: (($v[$i] // "PASS") | split(":") | {verdict: .[0], reason: (.[1] // null)})}]
+           | from_entries)}' > "$d/verdict.json"
+    exit "${STUB_RUN_RC:-0}"
+    ;;
+esac
+exit 0
+STUB_EOF
+chmod +x "$STUB"
 # A non-git temp dir (git rev-parse falls back to pwd; no .supervisor/twin/ground-truth.json here).
 CWD="$TMP/work"
 mkdir -p "$CWD"
@@ -118,30 +182,31 @@ else
   no "(d) wrong (rc=$rcD): $jD"
 fi
 
-echo "== (e) qa-executor check => per_check unverified + deferred reason, exit 0 =="
-oE="$( cd "$CWD" && bash "$RUN" --check 'qa-executor: login-smoke' 2>/dev/null )"; rcE=$?
+echo "== (e) qa-executor: (alias of verify:) + stub SELVEDGE_BIN PASS => per_check kind verify, pass =="
+mkdir -p "$TMP/e-proj"
+oE="$( cd "$TMP/e-proj" && SELVEDGE_BIN="$STUB" STUB_LOG="$TMP/e.log" STUB_VERDICTS=PASS \
+        bash "$RUN" --check 'qa-executor: login-smoke' 2>/dev/null )"; rcE=$?
 jE="$(gt_json "$oE")"
-# only deferred check => zero pass, zero fail => status unverified (nothing actually verified),
-# and ran==false (no check executed a verifiable pass/fail) — pins the ground_truth.checked mapping.
 if [ "$rcE" -eq 0 ] && printf '%s' "$jE" | jq -e '
-    .checks_total==1 and .checks_passed==0 and .ran==false
-    and .per_check[0].kind=="qa-executor" and .per_check[0].status=="unverified"
-    and .per_check[0].reason=="qa_executor_dispatch_deferred_m2b_1b"
-    and .status=="unverified"
+    .checks_total==1 and .checks_passed==1 and .ran==true and .status=="pass"
+    and .per_check[0].kind=="verify" and .per_check[0].target=="login-smoke"
+    and .per_check[0].status=="pass"
   ' >/dev/null 2>&1; then
-  ok "qa-executor: per_check unverified, deferred reason, ran false, status unverified, exit 0"
+  ok "qa-executor: is the verify kind: per_check kind verify, status pass, exit 0 (the deferral is gone)"
 else
   no "(e) wrong (rc=$rcE): $jE"
 fi
 
-echo "== (e2) qa-executor coexisting with a passing cmd => status pass (deferred never blocks) =="
-oE2="$( cd "$CWD" && bash "$RUN" --check 'cmd: true' --check 'qa-executor: x' 2>/dev/null )"
+echo "== (e2) qa-executor: + a passing cmd, stub PASS => status pass, total 2, passed 2 =="
+mkdir -p "$TMP/e2-proj"
+oE2="$( cd "$TMP/e2-proj" && SELVEDGE_BIN="$STUB" STUB_LOG="$TMP/e2.log" STUB_VERDICTS=PASS \
+         bash "$RUN" --check 'cmd: true' --check 'qa-executor: x' 2>/dev/null )"
 jE2="$(gt_json "$oE2")"
 if printf '%s' "$jE2" | jq -e '
-    .status=="pass" and .checks_total==2 and .checks_passed==1
-    and ([.per_check[].status] | sort) == (["pass","unverified"])
+    .status=="pass" and .checks_total==2 and .checks_passed==2
+    and ([.per_check[].status] | sort) == (["pass","pass"])
   ' >/dev/null 2>&1; then
-  ok "deferred qa-executor + passing cmd => status pass, total 2, passed 1"
+  ok "qa-executor: (verify) + passing cmd => status pass, total 2, passed 2"
 else
   no "(e2) wrong: $jE2"
 fi
@@ -264,6 +329,7 @@ FAKE="$TMP/plugin-cache/loomwright/9.9.9/scripts"
 mkdir -p "$FAKE"
 cp "$RUN" "$FAKE/run-ground-truth.sh"
 cp "$HERE/exec-acceptance-lib.sh" "$FAKE/exec-acceptance-lib.sh"
+cp "$HERE/ground-truth-verify.sh" "$FAKE/ground-truth-verify.sh"
 cp -R "$HERE/eval-corpus" "$FAKE/eval-corpus"
 FAKE_RUN="$FAKE/run-ground-truth.sh"
 if [ -z "$REPO_ROOT" ]; then
@@ -461,7 +527,7 @@ if grep -qF "$BEGIN_MARK" "$RUN" && grep -qF "$END_MARK" "$RUN"; then
   sed -n "/$(printf '%s' "$END_MARK" | sed 's/[.[\*^$/]/\\&/g')/,\$p" "$RUN" >> "$MUTANT"
   # The mutant sources exec-acceptance-lib.sh relative to ITS OWN dirname — copy it alongside so
   # the mutant is self-contained (mirrors the (m) test's FAKE-dir copy for the same reason).
-  cp "$HERE/exec-acceptance-lib.sh" "$TMP/exec-acceptance-lib.sh"
+  cp "$HERE/exec-acceptance-lib.sh" "$HERE/ground-truth-verify.sh" "$TMP/"
 
   if [ -s "$MUTANT" ] && grep -qF "$END_MARK" "$MUTANT"; then
     ok "(n7) mutant_construction_ok"
@@ -656,7 +722,7 @@ jT8="$(gt_json "$( cd "$KREPO" && HOME="$KHOME" bash "$RUN" --check 'rule: kille
 
 echo "  -- (t9) MUTATION CONTROL for (t8b): drop the trailer/rc validation => the forgery must PASS"
 MUT_DIR="$TMP/rule-mut"; mkdir -p "$MUT_DIR"
-cp "$HERE/exec-acceptance-lib.sh" "$HERE/rules-check.sh" "$MUT_DIR/"
+cp "$HERE/exec-acceptance-lib.sh" "$HERE/ground-truth-verify.sh" "$HERE/rules-check.sh" "$MUT_DIR/"
 R_MUT="$MUT_DIR/run-ground-truth.sh"
 sed 's/^\([[:space:]]*\)RULE_RUN_MODE="unresolved"\([[:space:]]*# (c)2\)/\1RULE_RUN_MODE="mapped"\2/' "$RUN" > "$R_MUT"
 if [ -s "$R_MUT" ] && ! cmp -s "$R_MUT" "$RUN" && bash -n "$R_MUT" 2>/dev/null; then
@@ -694,7 +760,7 @@ mk_rsb() {
 
 echo "  -- (t10) a failing or ABSENT --list-selected call => every rule: bullet rule_unresolved"
 LS_DIR="$TMP/rule-no-lister"; mkdir -p "$LS_DIR"
-cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$LS_DIR/"
+cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$HERE/ground-truth-verify.sh" "$LS_DIR/"
 [ ! -e "$LS_DIR/rules-check.sh" ] && ok "(t10a) precondition: the copied runner has NO rules-check.sh beside it" \
   || no "(t10a) precondition: rules-check.sh unexpectedly present in $LS_DIR"
 rm -f "$CANARY"
@@ -708,7 +774,7 @@ else
 fi
 # A lister that prints a plausible id list but exits non-zero: the rc, not the text, decides.
 LF_DIR="$TMP/rule-failing-lister"; mkdir -p "$LF_DIR"
-cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$LF_DIR/"
+cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$HERE/ground-truth-verify.sh" "$LF_DIR/"
 printf '#!/usr/bin/env bash\nprintf "canary-rule\\n"\nexit 3\n' > "$LF_DIR/rules-check.sh"
 jT10c="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$LF_DIR/run-ground-truth.sh" \
   --check 'rule: canary-rule' </dev/null 2>/dev/null )")"
@@ -814,6 +880,238 @@ sup_with_gt '{status: skipped}' "$TMP/u-nochk.md"
 [ "$(sc_of "$TMP/u-516.md"):$(sc_of "$TMP/u-nochk.md")" = "fail:fail" ] \
   && ok "(u) the two hand-mapped #616 shapes (pass_rate / no checked) still fail sidecar-check" \
   || no "(u) #616 shapes: $(sc_of "$TMP/u-516.md"):$(sc_of "$TMP/u-nochk.md")"
+
+echo
+echo "== (v) the verify: kind (stub SELVEDGE_BIN) and the unknown-prefix refusal =="
+VER="$HERE/ground-truth-verify.sh"
+# vproj <name>: a fresh project dir (non-git: the runner's project root is the dir itself).
+# Printed physically (pwd -P): the runner's project root is `pwd -P`, so the folder the stub prints is too.
+vproj() { mkdir -p "$TMP/vp-$1" && ( cd "$TMP/vp-$1" && pwd -P ); }
+# vstat <json> <index> => "<kind>/<status>/<reason>" of per_check[<index>].
+vstat() { printf '%s' "$1" | jq -r --argjson i "$2" '.per_check[$i] | "\(.kind)/\(.status)/\(.reason // "")"' 2>/dev/null; }
+# nruns <proj>: how many Selvedge run folders exist under the project.
+nruns() { ( shopt -s nullglob; set -- "$1"/.selvedge/runs/*/; echo $# ); }
+# ncalls <log> <command>: how many stub calls of that command were logged.
+ncalls() { grep -c "^$2 " "$1" 2>/dev/null || true; }
+
+echo "  -- (v-A1) an unknown <word>: prefix is unverified/unknown_kind and never executed"
+VA_MARK="$TMP/va-marker.$$"; rm -f "$VA_MARK"
+VA_BRIEF="$TMP/va-brief.md"
+printf "## Executable Acceptance\n- cmd: true\n- frobnicate: x; touch '%s'\n" "$VA_MARK" > "$VA_BRIEF"
+VA_STAMP="$(bash "$HASH" "$VA_BRIEF")"
+printf '\n## Configuration\n- **Executable Acceptance Approved:** %s\n' "$VA_STAMP" >> "$VA_BRIEF"
+VA_SUB="$TMP/va-sub.md"; printf '## Executable Acceptance\n- cmd: true\n' > "$VA_SUB"
+jVA="$(gt_json "$( cd "$CWD" && bash "$RUN" --brief "$VA_BRIEF" 2>/dev/null )")"
+if [ "$(vstat "$jVA" 1)" = "unknown_kind/unverified/unknown_kind" ] && [ ! -e "$VA_MARK" ] \
+   && [ "$(vstat "$jVA" 0)" = "cmd/pass/" ]; then
+  ok "(v-A1a) brief 'frobnicate: …' => unverified/unknown_kind, marker absent; the stamped cmd: still runs"
+else
+  no "(v-A1a) got '$(vstat "$jVA" 1)' marker=$([ -e "$VA_MARK" ] && echo PRESENT || echo absent): $jVA"
+fi
+[ "$VA_STAMP" = "$(bash "$HASH" "$VA_SUB")" ] \
+  && ok "(v-A1b) the unknown_kind line is not part of exec_acceptance_hash (brief hash == its cmd-only subset)" \
+  || no "(v-A1b) the unknown_kind line leaked into the hash"
+# The --check form is never stamp-gated, so a line misread as cmd WOULD run here (mutation control).
+rm -f "$VA_MARK"
+jVA2="$(gt_json "$( cd "$CWD" && bash "$RUN" --check "frobnicate: x; touch '$VA_MARK'" 2>/dev/null )")"
+if [ "$(vstat "$jVA2" 0)" = "unknown_kind/unverified/unknown_kind" ] && [ ! -e "$VA_MARK" ] \
+   && printf '%s' "$jVA2" | jq -e '.status=="unverified" and .ran==false' >/dev/null 2>&1; then
+  ok "(v-A1c) --check 'frobnicate: x; touch …' (no stamp gate on --check) => unknown_kind, marker absent, ran false"
+else
+  no "(v-A1c) got '$(vstat "$jVA2" 0)' marker=$([ -e "$VA_MARK" ] && echo PRESENT || echo absent): $jVA2"
+fi
+
+echo "  -- (v-B2/C4) two verify: lines => ONE Selvedge run folder, a result per line, the counts line"
+VP="$(vproj b2)"
+oV2="$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_VERDICTS="PASS,NOT_VERIFIABLE:material_assumption" \
+         bash "$RUN" --check 'verify: the cart total reads 6' --check 'verify: the page shows "Hello, Ada"' 2>/dev/null )"; rcV2=$?
+jV2="$(gt_json "$oV2")"
+[ "$(nruns "$VP")" = "1" ] && [ "$(ncalls "$VP/stub.log" plan)" = "1" ] && [ "$(ncalls "$VP/stub.log" run)" = "1" ] \
+  && ok "(v-B2a) exactly one .selvedge/runs/* folder, one plan call, one run call for two verify: lines" \
+  || no "(v-B2a) runs=$(nruns "$VP") plan=$(ncalls "$VP/stub.log" plan) run=$(ncalls "$VP/stub.log" run)"
+if [ "$rcV2" -eq 0 ] && [ "$(vstat "$jV2" 0)" = "verify/pass/" ] \
+   && [ "$(vstat "$jV2" 1)" = "verify/unverified/NOT_VERIFIABLE material_assumption" ] \
+   && printf '%s' "$jV2" | jq -e '.per_check[0].target=="the cart total reads 6" and .per_check[1].target=="the page shows \"Hello, Ada\"" and .status=="pass"' >/dev/null 2>&1; then
+  ok "(v-B2b) line 1 => pass, line 2 => unverified (NOT_VERIFIABLE material_assumption), mapped in order from the one verdict.json"
+else
+  no "(v-B2b) rc=$rcV2 got '$(vstat "$jV2" 0)' / '$(vstat "$jV2" 1)': $jV2"
+fi
+grep -qxF 'Verify: verify 1 PASS · 1 NOT_VERIFIABLE' < <(printf '%s\n' "$oV2") \
+  && ok "(v-C4a) stdout carries 'Verify: verify 1 PASS · 1 NOT_VERIFIABLE' (never a bare pass)" \
+  || no "(v-C4a) no counts line in: $(printf '%s' "$oV2" | grep -v '^GROUND_TRUTH')"
+printf '%s' "$jV2" | jq -e '.verify_counts == {total:2,pass:1,fail:0,blocked:0,not_verifiable:1,unverified:0}' >/dev/null 2>&1 \
+  && ok "(v-C4b) GROUND_TRUTH_JSON.verify_counts == {total:2,pass:1,fail:0,blocked:0,not_verifiable:1,unverified:0}" \
+  || no "(v-C4b) verify_counts: $(printf '%s' "$jV2" | jq -c '.verify_counts' 2>/dev/null)"
+oV0="$( cd "$CWD" && bash "$RUN" --check 'cmd: true' 2>/dev/null )"
+if ! grep -q '^Verify:' < <(printf '%s\n' "$oV0") && printf '%s' "$(gt_json "$oV0")" | jq -e 'has("verify_counts") | not' >/dev/null 2>&1; then
+  ok "(v-C4c) no verify: line => no 'Verify:' line and no verify_counts key (additive only)"
+else
+  no "(v-C4c) a verify-free run printed counts: $oV0"
+fi
+
+VP="$(vproj b2d)"
+jV2d="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_DEDUPE=1 STUB_VERDICTS="FAIL,PASS" \
+         bash "$RUN" --check 'verify: same text' --check 'verify: other' --check 'verify:   same   text' 2>/dev/null )")"
+if [ "$(vstat "$jV2d" 0)" = "verify/fail/FAIL" ] && [ "$(vstat "$jV2d" 1)" = "verify/pass/" ] \
+   && [ "$(vstat "$jV2d" 2)" = "verify/fail/FAIL" ] && [ "$(nruns "$VP")" = "1" ]; then
+  ok "(v-B2c) Selvedge folds identical criteria: lines map by normalized text (both copies get that criterion's FAIL)"
+else
+  no "(v-B2c) got $(vstat "$jV2d" 0) | $(vstat "$jV2d" 1) | $(vstat "$jV2d" 2): $jV2d"
+fi
+
+echo "  -- (v-B3/B8) the verdict mapping: PASS / FAIL / BLOCKED env_hooks_unapproved / NOT_VERIFIABLE"
+VP="$(vproj b3)"
+oV3="$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_RUN_RC=1 \
+         STUB_VERDICTS="PASS,FAIL,BLOCKED:env_hooks_unapproved,NOT_VERIFIABLE:no_value_read" \
+         bash "$RUN" --check 'verify: a1' --check 'verify: a2' --check 'verify: a3' --check 'verify: a4' 2>/dev/null )"
+jV3="$(gt_json "$oV3")"
+if [ "$(vstat "$jV3" 0)" = "verify/pass/" ] && [ "$(vstat "$jV3" 1)" = "verify/fail/FAIL" ] \
+   && [ "$(vstat "$jV3" 2)" = "verify/unverified/BLOCKED env_hooks_unapproved" ] \
+   && [ "$(vstat "$jV3" 3)" = "verify/unverified/NOT_VERIFIABLE no_value_read" ] \
+   && printf '%s' "$jV3" | jq -e '.status=="advisory_failures" and .checks_passed==1' >/dev/null 2>&1; then
+  ok "(v-B3) PASS->pass, FAIL->fail, BLOCKED/NOT_VERIFIABLE->unverified '<VERDICT> <reason>'; run rc 1 read from verdict.json"
+else
+  no "(v-B3) got $(vstat "$jV3" 0) | $(vstat "$jV3" 1) | $(vstat "$jV3" 2) | $(vstat "$jV3" 3): $jV3"
+fi
+grep -qxF 'Verify: verify 1 PASS · 1 FAIL · 1 BLOCKED · 1 NOT_VERIFIABLE' < <(printf '%s\n' "$oV3") \
+  && ok "(v-B3b) counts line lists every non-zero verdict in order" \
+  || no "(v-B3b) counts line: $(printf '%s\n' "$oV3" | grep '^Verify:')"
+b8_code="$(grep -nE 'env[[:space:]]+approve' "$VER" "$RUN" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+if [ -z "$b8_code" ] && ! grep -qE '^env approve' "$VP/stub.log" 2>/dev/null; then
+  ok "(v-B8) no 'env approve' call in the driver or the runner, and the stub never saw one"
+else
+  no "(v-B8) a hook approval call exists: $b8_code"
+fi
+
+echo "  -- (v-B4) neither SELVEDGE_BIN nor selvedge on PATH => verify_plugin_absent, exit 0"
+MINPATH="$HERMETIC_SHIM_DIR:/usr/bin:/bin"
+if [ -n "$(PATH="$MINPATH" command -v selvedge 2>/dev/null)" ] || ! PATH="$MINPATH" command -v jq >/dev/null 2>&1; then
+  no "(v-B4) precondition: the scrubbed PATH '$MINPATH' still finds selvedge, or lacks jq"
+else
+  VP="$(vproj b4)"
+  oV4="$( cd "$VP" && env -u SELVEDGE_BIN PATH="$MINPATH" bash "$RUN" --check 'verify: x' --check 'qa-executor: y' 2>/dev/null )"; rcV4=$?
+  jV4="$(gt_json "$oV4")"
+  if [ "$rcV4" -eq 0 ] && [ "$(vstat "$jV4" 0)" = "verify/unverified/verify_plugin_absent" ] \
+     && [ "$(vstat "$jV4" 1)" = "verify/unverified/verify_plugin_absent" ] && [ "$(nruns "$VP")" = "0" ]; then
+    ok "(v-B4a) scrubbed PATH, no SELVEDGE_BIN: both lines unverified/verify_plugin_absent, exit 0"
+  else
+    no "(v-B4a) rc=$rcV4: $jV4"
+  fi
+  oV4b="$( cd "$VP" && SELVEDGE_BIN="$TMP/no-such-selvedge" PATH="$MINPATH" bash "$RUN" --check 'verify: x' 2>/dev/null )"
+  [ "$(vstat "$(gt_json "$oV4b")" 0)" = "verify/unverified/verify_plugin_absent" ] \
+    && ok "(v-B4b) a set-but-missing SELVEDGE_BIN => verify_plugin_absent (no fall-back to PATH)" \
+    || no "(v-B4b) got: $(gt_json "$oV4b")"
+fi
+
+echo "  -- (v-B5) refusals and unreadable verdicts are never a pass"
+VP="$(vproj b5a)"
+jV5a="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_NO_VERDICT=1 bash "$RUN" --check 'verify: x' --check 'verify: y' 2>/dev/null )")"
+[ "$(vstat "$jV5a" 0)" = "verify/unverified/verify_verdict_unreadable" ] && [ "$(vstat "$jV5a" 1)" = "verify/unverified/verify_verdict_unreadable" ] \
+  && ok "(v-B5a) run writes no verdict.json => every line unverified/verify_verdict_unreadable" \
+  || no "(v-B5a) got: $jV5a"
+VP="$(vproj b5b)"
+jV5b="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_SCHEMA=2 bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+[ "$(vstat "$jV5b" 0)" = "verify/unverified/verify_verdict_unreadable" ] \
+  && ok "(v-B5b) verdict.json schema_version 2 => verify_verdict_unreadable (only version 1 is read)" \
+  || no "(v-B5b) got: $jV5b"
+VP="$(vproj b5c)"
+jV5c="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_CRITERIA_RC=2 bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+[ "$(vstat "$jV5c" 0)" = "verify/unverified/verify_refused" ] && [ "$(ncalls "$VP/stub.log" plan)" = "0" ] \
+  && ok "(v-B5c) criteria from-text refuses => verify_refused, plan never called" \
+  || no "(v-B5c) got: $jV5c"
+VP="$(vproj b5d)"
+jV5d="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_VERDICTS="BOGUS,PASS" bash "$RUN" --check 'verify: x' --check 'verify: y' 2>/dev/null )")"
+[ "$(vstat "$jV5d" 0)" = "verify/unverified/verify_verdict_unreadable" ] && [ "$(vstat "$jV5d" 1)" = "verify/pass/" ] \
+  && ok "(v-B5d) a verdict outside PASS|FAIL|BLOCKED|NOT_VERIFIABLE => verify_verdict_unreadable; the other line still maps" \
+  || no "(v-B5d) got: $jV5d"
+
+echo "  -- (v-B6/C2) --no-cmd and a missing stamp do not stop verify:"
+VP="$(vproj b6)"
+printf '## Executable Acceptance\n- verify: the total reads 6\n- cmd: true\n' > "$VP/brief.md"
+jV6="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --no-cmd --brief "$VP/brief.md" 2>/dev/null )")"
+if [ "$(vstat "$jV6" 0)" = "verify/pass/" ] && [ "$(vstat "$jV6" 1)" = "cmd/unverified/cmd_disabled" ] && [ "$(ncalls "$VP/stub.log" run)" = "1" ]; then
+  ok "(v-B6) --no-cmd: verify: still runs (stub invoked, pass) while cmd: stays cmd_disabled"
+else
+  no "(v-B6) got $(vstat "$jV6" 0) | $(vstat "$jV6" 1): $jV6"
+fi
+VP="$(vproj c2)"
+printf '## Executable Acceptance\n- verify: the total reads 6\n- cmd: true\n' > "$VP/brief.md"
+jC2="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --brief "$VP/brief.md" 2>/dev/null )")"
+if [ "$(vstat "$jC2" 0)" = "verify/pass/" ] && [ "$(vstat "$jC2" 1)" = "cmd/unverified/cmd_unapproved" ]; then
+  ok "(v-C2) unstamped brief: verify: runs (pass); the stamp gates cmd: only (cmd_unapproved)"
+else
+  no "(v-C2) got $(vstat "$jC2" 0) | $(vstat "$jC2" 1): $jC2"
+fi
+
+echo "  -- (v-B7) plan gets --base <ref>; run only on the folder plan printed, never after a refusal"
+VP="$(vproj b7)"
+jV7="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" GROUND_TRUTH_VERIFY_BASE="origin/release-x" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+b7_plan="$(grep '^plan ' "$VP/stub.log" 2>/dev/null)"
+b7_run="$(grep '^run ' "$VP/stub.log" 2>/dev/null)"
+b7_dir="$( cd "$VP" && shopt -s nullglob && for d in "$VP"/.selvedge/runs/*; do printf '%s' "$d"; done )"
+case "$b7_plan" in
+  *" --base origin/release-x") ok "(v-B7a) the plan call ends '--base origin/release-x' (selvedge.json from the base branch)" ;;
+  *) no "(v-B7a) plan call: '$b7_plan'" ;;
+esac
+if [ -n "$b7_dir" ] && [ "${b7_run##* }" = "$b7_dir" ] && [ "$(ncalls "$VP/stub.log" run)" = "1" ]; then
+  ok "(v-B7b) run is called once, on exactly the folder plan printed"
+else
+  no "(v-B7b) run call '$b7_run' vs folder '$b7_dir'"
+fi
+case "$b7_run" in
+  *--base*) no "(v-B7c) run was passed --base (Selvedge's run lists no such flag)" ;;
+  *) ok "(v-B7c) run is never passed --base" ;;
+esac
+VP="$(vproj b7d)"
+jV7d="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+case "$(grep '^plan ' "$VP/stub.log")" in
+  *" --base origin/main") ok "(v-B7d) no GROUND_TRUTH_VERIFY_BASE, no origin/HEAD => --base origin/main" ;;
+  *) no "(v-B7d) default base: '$(grep '^plan ' "$VP/stub.log")'" ;;
+esac
+VP="$(vproj b7e)"
+jV7e="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_PLAN_RC=2 bash "$RUN" --check 'verify: x' --check 'verify: y' 2>/dev/null )")"
+if [ "$(vstat "$jV7e" 0)" = "verify/unverified/verify_refused" ] && [ "$(vstat "$jV7e" 1)" = "verify/unverified/verify_refused" ] \
+   && [ "$(ncalls "$VP/stub.log" run)" = "0" ]; then
+  ok "(v-B7e) plan exits 2 => every line verify_refused, run never called"
+else
+  no "(v-B7e) got: $jV7e (run calls: $(ncalls "$VP/stub.log" run))"
+fi
+VP="$(vproj b7f)"
+jV7f="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_PLAN_PRINT="$TMP/not-a-run-folder" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+[ "$(vstat "$jV7f" 0)" = "verify/unverified/verify_refused" ] && [ "$(ncalls "$VP/stub.log" run)" = "0" ] \
+  && ok "(v-B7f) plan prints a folder that does not exist => verify_refused, run never called" \
+  || no "(v-B7f) got: $jV7f"
+
+echo "  -- (v-C5) a verify: FAIL stays advisory; gate-eval keeps seven conditions"
+VP="$(vproj c5)"
+oC5="$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_VERDICTS=FAIL STUB_RUN_RC=1 bash "$RUN" --check 'verify: the total reads 6' 2>/dev/null )"
+nC5="$(gt_nested "$oC5")"
+if printf '%s' "$nC5" | jq -e '
+    (keys - ["checked","status","checks_total","checks_passed","findings"]) == []
+    and .status=="advisory_failures"
+    and .findings == [{check:"verify:the total reads 6", detail:"FAIL", severity:"advisory"}]' >/dev/null 2>&1; then
+  ok "(v-C5a) a verify: FAIL is ONE NESTED finding, severity advisory; NESTED keeps its key set"
+else
+  no "(v-C5a) NESTED: $nC5"
+fi
+sup_with_gt "$nC5" "$TMP/v-c5.md"
+[ "$(sc_of "$TMP/v-c5.md")" = ok ] && ok "(v-C5b) that NESTED line copied into SUPERVISOR_RESULT passes sidecar-check" \
+  || no "(v-C5b) sidecar-check: $(bash "$HERE/automate-helpers.sh" sidecar-check "$TMP/v-c5.md")"
+AH="$HERE/automate-helpers.sh"
+ge_start="$(grep -n '^gate_eval() {' "$AH" | head -n1 | cut -d: -f1)"
+if [ -z "$ge_start" ]; then
+  no "(v-C5c) precondition: no 'gate_eval() {' line in automate-helpers.sh"
+else
+  ge_body="$(awk -v s="$ge_start" 'NR >= s { print; if (NR > s && /^}/) exit }' "$AH")"
+  ge_hits="$(printf '%s\n' "$ge_body" | grep -nE 'ground_truth|GROUND_TRUTH|verify_counts|selvedge|verify:' || true)"
+  ge_last="$(head -n $((ge_start-1)) "$AH" | grep -E '^#   cond [0-9]+ ' | tail -n 1 | awk '{print $3}')"
+  ge_eight="$(head -n $((ge_start-1)) "$AH" | grep -cE '^#   cond 8' || true)"
+  if [ -n "$ge_body" ] && [ -z "$ge_hits" ] && [ "$ge_last" = "7" ] && [ "$ge_eight" = "0" ]; then
+    ok "(v-C5c) gate_eval names no ground_truth/verify input and its header's last condition is cond 7"
+  else
+    no "(v-C5c) gate_eval hits='$ge_hits' last-cond='$ge_last' cond8-lines=$ge_eight"
+  fi
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -5,9 +5,10 @@
 #
 # Covers AC1 (loomwright/red-team-hardening item 05 — "cmd: valve by provenance"):
 #   (a) brief with ONLY cmd:/bare bullets           => sha256:<hex> covering all of them.
-#   (b) brief with ONLY corpus-task:/qa-executor:    => hash == "none" (nothing hashable).
-#   (c) brief with a MIX of kinds                    => hash covers ONLY the cmd:/bare subset,
-#                                                       identical to hashing just that subset alone.
+#   (b) brief with corpus-task: + qa-executor:       => NOT "none": qa-executor: is the verify:
+#                                                       alias, and verify: lines are hashed.
+#   (c) brief with a MIX of kinds                    => hash covers ONLY the cmd:/bare + verify:
+#                                                       subset, identical to hashing that subset alone.
 #   (d) whitespace normalization                     => a trailing-space-only edit to a bullet does
 #                                                       NOT change the hash (matches run-ground-truth.sh's
 #                                                       own bullet trimming).
@@ -22,6 +23,10 @@
 #                                                       classify_kind definition) — structurally
 #                                                       impossible to diverge, verified here by
 #                                                       grepping both scripts' source line.
+#   (j) the prefix grammar and the verify kind: an unknown `<word>:` prefix is unknown_kind and never
+#       hashed (A2); bare shell lines stay cmd and hashed (A3); known kinds keep their kind, and
+#       qa-executor: is verify (A4, B1); verify: lines are hashed in their stripped form, an edit
+#       changes the hash, and a verify-free brief hashes exactly as under the cmd-only rule (C1).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -48,30 +53,35 @@ else
   no "(a) wrong (rc=$rcA): $outA"
 fi
 
-echo "== (b) brief with ONLY corpus-task:/qa-executor: => hash == none =="
+echo "== (b) brief with corpus-task: + qa-executor: => hashed (qa-executor: is the verify: alias) =="
 B_BRIEF="$TMP/b.md"
 printf '## Executable Acceptance\n- corpus-task: version-consistent\n- qa-executor: login-smoke\n' > "$B_BRIEF"
 outB="$(bash "$HASH" "$B_BRIEF")"; rcB=$?
-if [ "$rcB" -eq 0 ] && [ "$outB" = "none" ]; then
-  ok "(b) corpus-task:/qa-executor:-only brief => none"
+B_SUB="$TMP/b-sub.md"
+printf '## Executable Acceptance\n- qa-executor: login-smoke\n' > "$B_SUB"
+if [ "$rcB" -eq 0 ] && grep -qE '^sha256:[0-9a-f]{64}$' < <(printf '%s' "$outB") && [ "$outB" = "$(bash "$HASH" "$B_SUB")" ]; then
+  ok "(b) corpus-task: + qa-executor: brief => sha256 of the qa-executor: line alone (corpus-task: still excluded)"
 else
   no "(b) wrong (rc=$rcB): $outB"
 fi
 
-echo "== (c) brief with a MIX => hash covers ONLY the cmd:/bare subset =="
+echo "== (c) brief with a MIX => hash covers ONLY the cmd:/bare + verify: subset =="
 C_BRIEF="$TMP/c.md"
 printf '## Executable Acceptance\n- corpus-task: version-consistent\n- cmd: true\n- qa-executor: x\n- npm test\n' > "$C_BRIEF"
 outC="$(bash "$HASH" "$C_BRIEF")"; rcC=$?
-# A brief with ONLY the cmd:/bare subset, in the same relative order, must hash identically —
-# proving corpus-task:/qa-executor: bullets are excluded from the hash input entirely (not merely
-# order-invariant, but genuinely absent).
+# A brief with ONLY the cmd:/bare + verify: subset, in the same relative order, must hash
+# identically — proving corpus-task: bullets are excluded from the hash input entirely (not merely
+# order-invariant, but genuinely absent) while the qa-executor: (verify) line is included.
 CSUB_BRIEF="$TMP/c-subset.md"
-printf '## Executable Acceptance\n- cmd: true\n- npm test\n' > "$CSUB_BRIEF"
+printf '## Executable Acceptance\n- cmd: true\n- qa-executor: x\n- npm test\n' > "$CSUB_BRIEF"
 outCsub="$(bash "$HASH" "$CSUB_BRIEF")"
-if [ "$rcC" -eq 0 ] && [ "$outC" = "$outCsub" ] && [ "$outC" != "none" ]; then
-  ok "(c) mixed brief hashes identically to the cmd:/bare-only subset (corpus-task/qa-executor excluded)"
+CCMD_BRIEF="$TMP/c-cmd-only.md"
+printf '## Executable Acceptance\n- cmd: true\n- npm test\n' > "$CCMD_BRIEF"
+outCcmd="$(bash "$HASH" "$CCMD_BRIEF")"
+if [ "$rcC" -eq 0 ] && [ "$outC" = "$outCsub" ] && [ "$outC" != "none" ] && [ "$outC" != "$outCcmd" ]; then
+  ok "(c) mixed brief hashes identically to its cmd:/bare + verify: subset (corpus-task excluded, qa-executor included)"
 else
-  no "(c) wrong (rc=$rcC): mixed=$outC subset-only=$outCsub"
+  no "(c) wrong (rc=$rcC): mixed=$outC subset=$outCsub cmd-only=$outCcmd"
 fi
 
 echo "== (d) whitespace normalization: trailing-space-only edit does NOT change the hash =="
@@ -158,6 +168,58 @@ outI2="$(bash "$HASH" "$I2_BRIEF")"; outI2s="$(bash "$HASH" "$I2_SUB")"
 [ "$outI2" = "$outI2s" ] && [ "$outI2" != "none" ] \
   && ok "(i4) a mixed cmd:+rule: brief hashes identically to its cmd:-only subset (rule: excluded from the stamp)" \
   || no "(i4) rule: bullets leaked into the stamp hash: '$outI2' vs '$outI2s'"
+
+echo "== (j) the prefix grammar and the verify kind (A2, A3, A4, B1, C1) =="
+ck() { ( . "$LIB"; classify_kind "$1" ); }
+J_BRIEF="$TMP/j-unknown.md"
+printf '## Executable Acceptance\n- frobnicate: x\n' > "$J_BRIEF"
+outJ="$(bash "$HASH" "$J_BRIEF")"; rcJ=$?
+[ "$rcJ" -eq 0 ] && [ "$outJ" = "none" ] \
+  && ok "(j1) A2: a brief whose only line is 'frobnicate: x' => none (unknown_kind is never hashed)" \
+  || no "(j1) frobnicate-only brief hashed as '$outJ' (rc=$rcJ)"
+j_bad=""
+for l in 'frobnicate: x' 'frobnicate:' 'verfy: the cart total updates' 'Frob_9-x: y' 'CMD: true'; do
+  [ "$(ck "$l")" = "unknown_kind" ] || j_bad="$j_bad [$l => $(ck "$l")]"
+done
+[ -z "$j_bad" ] && ok "(j2) A4 grammar: '<letter><letters|digits|-|_>*:' + blank/EOL that is no known kind => unknown_kind" \
+  || no "(j2) not unknown_kind:$j_bad"
+j_bad=""
+for l in 'bash scripts/x.sh' 'npm test -- --grep "a: b"' 'abc:def' '9x: y' 'http://localhost:4173/cart' 'echo a: b'; do
+  [ "$(ck "$l")" = "cmd" ] || j_bad="$j_bad [$l => $(ck "$l")]"
+done
+[ -z "$j_bad" ] && ok "(j3) A3: bare shell lines with no <word>: prefix (incl. 'npm test -- --grep \"a: b\"') stay cmd" \
+  || no "(j3) not cmd:$j_bad"
+J3_BRIEF="$TMP/j3.md"
+printf '## Executable Acceptance\n- bash scripts/x.sh\n- npm test -- --grep "a: b"\n' > "$J3_BRIEF"
+outJ3="$(bash "$HASH" "$J3_BRIEF")"
+grep -qE '^sha256:[0-9a-f]{64}$' < <(printf '%s' "$outJ3") \
+  && ok "(j4) A3: a brief of bare shell lines is still hashed (stamp-gated as before)" \
+  || no "(j4) bare-shell brief hashed as '$outJ3'"
+j_bad=""
+for pair in 'cmd: x|cmd' 'cmd:x|cmd' 'corpus-task: x|corpus-task' 'rule: x|rule' 'verify: x|verify' 'verify:x|verify' 'qa-executor: x|verify'; do
+  l="${pair%|*}"; want="${pair##*|}"
+  [ "$(ck "$l")" = "$want" ] || j_bad="$j_bad [$l => $(ck "$l"), want $want]"
+done
+[ -z "$j_bad" ] && ok "(j5) A4/B1: known kinds keep their kind; verify: and qa-executor: (alias) are both verify" \
+  || no "(j5) wrong kind:$j_bad"
+J6A="$TMP/j6a.md"; J6B="$TMP/j6b.md"; J6S="$TMP/j6s.md"
+printf '## Executable Acceptance\n- cmd: true\n- verify: the cart total reads 6\n' > "$J6A"
+printf '## Executable Acceptance\n- cmd: true\n- verify: the cart total reads 7\n' > "$J6B"
+printf '## Executable Acceptance\n-   cmd: true  \n-    verify: the cart total reads 6   \n' > "$J6S"
+oJ6A="$(bash "$HASH" "$J6A")"; oJ6B="$(bash "$HASH" "$J6B")"; oJ6S="$(bash "$HASH" "$J6S")"
+oJ6cmd="$(bash "$HASH" "$D1_BRIEF")"
+J6_EXPECT="sha256:$( . "$LIB"; sha256_hex "$(printf 'cmd: true\nverify: the cart total reads 6')" )"
+if [ "$oJ6A" = "$J6_EXPECT" ] && [ "$oJ6A" != "$oJ6B" ] && [ "$oJ6A" = "$oJ6S" ] && [ "$oJ6A" != "$oJ6cmd" ]; then
+  ok "(j6) C1: verify: lines are hashed in their stripped form; editing one changes the hash"
+else
+  no "(j6) A=$oJ6A B=$oJ6B stripped=$oJ6S expect=$J6_EXPECT cmd-only=$oJ6cmd"
+fi
+# The literal is the hash the cmd-only rule printed for this brief before verify: existed, so a stamp
+# written then still matches (sha256 of "cmd: true<LF>npm test").
+J7_EXPECT="sha256:85d5bff47519c89b990f2480d4b284db22bf8fdf73ba381ab086bf705fd4148e"
+[ "$(bash "$HASH" "$A_BRIEF")" = "$J7_EXPECT" ] \
+  && ok "(j7) C1: a verify-free brief hashes byte-identically to the cmd-only rule (pinned literal)" \
+  || no "(j7) verify-free brief hash changed: $(bash "$HASH" "$A_BRIEF") vs $J7_EXPECT"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
