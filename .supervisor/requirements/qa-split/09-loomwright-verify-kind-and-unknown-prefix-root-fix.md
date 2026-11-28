@@ -119,6 +119,17 @@ their tests and the docs that copy the kind list):
   advisory in Phase 3.
 - 2026-11-27 (Vikash): a `verify:` line holds the criterion text, and all `verify:` lines of one
   ground-truth run go into ONE Selvedge run (`/loomwright:product-owner` session, PO-ASSUME question).
+- 2026-11-28 (Vikash, `/automate` scope gate after Launch Pad stopped on `scope_widening_non_interactive`):
+  extend `## Touches` with the 4 paths the plan needs: `loomwright/scripts/ground-truth-verify.sh` (the
+  Selvedge driver as its own module, since the runner is 693 lines), `docs/evidence/qa-split-09-verify-kind.md`,
+  `loomwright/docs/loop-inventory/supervisor.md` and `loomwright/docs/loop-inventory/launch-pad-autonomous.md`.
+- 2026-11-28 (Vikash): the merge does NOT wait for a Selvedge release. Checked on 2026-11-27: selvedge 0.12.1
+  `run` reads `selvedge.json` from the run folder's checkout (`selvedge/lib/runner/run.mjs`,
+  `loadConfig({ cwd: runDir })`, no `--base`), so D15b holds at plan time only. This PR ships with that gap
+  named in the evidence file and the PR body as an open item (a later, separate Selvedge fix); Loomwright
+  still never works around it and never passes an unsupported flag to `run`. Merge through `/automate`'s
+  auto-merge gate once review and fixes are clean. The open item's fix is the Selvedge requirement
+  `.supervisor/requirements/2026-11-28-081548-selvedge-run-reads-selvedge-json-from-the-base-the-plan-was-frozen-against.md`.
 
 ## Priority: MVP
 
@@ -132,8 +143,9 @@ dogfood clock starts when this item ships.
   `selvedge help` on 2026-11-27. The base-branch read uses Selvedge's own `--base <ref>`, which
   `env check`, `plan`, `plan --validate` and `plan --freeze` accept; `run`'s help lists no `--base`.
   The worker confirms that `run` does not re-read the PR head's `selvedge.json` (or that the frozen plan
-  carries the base-branch origins). If it does re-read it, that is a Selvedge fix, released on its own,
-  that this PR waits for. It is not a Loomwright workaround.
+  carries the base-branch origins). If it does re-read it, that is a Selvedge fix, released on its own.
+  It is not a Loomwright workaround. Confirmed 2026-11-27 that 0.12.1 `run` does re-read it; per the
+  2026-11-28 owner decision this PR does not wait for that fix (it records the gap as an open item).
 - The target app is already running when Phase 4.5 runs; when it is not, Selvedge reports BLOCKED and
   the line is `unverified` (advisory, never a failure of the run).
 - The prefix grammar in Part A does not match a real bare command in any current brief. Checked by
@@ -183,4 +195,14 @@ loomwright/docs/RESULT_SCHEMAS.md
 loomwright/docs/qa-removal-manifest.md
 loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/scripts/ground-truth-verify.sh
+docs/evidence/qa-split-09-verify-kind.md
+loomwright/docs/loop-inventory/supervisor.md
+loomwright/docs/loop-inventory/launch-pad-autonomous.md
 changelog.d
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T05:37:39Z
+- **Brief:** .supervisor/jobs/done/2026-11-28-qa09-verify-kind-unknown-prefix.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/995
