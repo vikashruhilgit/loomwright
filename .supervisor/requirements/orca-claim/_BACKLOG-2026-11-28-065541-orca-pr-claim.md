@@ -1,0 +1,34 @@
+# Orca PR claim for Loomwright — plan doc (index document, not an implementable item)
+
+## Status: done (index document — nothing to implement)
+
+## Why now
+Orca bots already take and enforce the loomwright-orca CLAIM.md v1 claim, and the `claim-guard` hook is installed on this Mac: it fails closed for `vikashruhilgit` repos. Loomwright drains do not take the claim yet. So a bot can work the same PR at the same time, and once a bot holds the claim, a drain's push is refused. The shared PR-merge bot also has no signal for the PRs Loomwright's gate declined. Owner approved 2026-11-28; orca-plugin-dev answered the open questions the same day.
+
+## Owner decisions
+none recorded
+
+## Order
+| Item | Delivers | Depends on | Can run in parallel with |
+|---|---|---|---|
+| 01 | `pr-claim.sh` (take / renew / release / assert / holder / write-prefix) | none | none |
+| 02 | `/review-pr` drains hold the claim, holder on every write | 01 | none |
+| 03 | `/automate` per-run holder, item claim, `loomwright:parked` on a gate PARK | 02 | none |
+
+## Run
+/automate --backlog .supervisor/requirements/orca-claim/_BACKLOG-2026-11-28-065541-orca-pr-claim.md
+Safe mode, sequential (each item needs the previous one). Not before the repo-wide `/automate` lock is free.
+
+## Considered and not queued
+- Marker field `reason=parked`: rejected, because release deletes the marker, so the field would disappear with it.
+- One holder per machine: rejected, because lanes and concurrent drains would be indistinguishable (design note §"Holder id").
+- Background renew heartbeat: rejected, because it risks leaking a child process; renewal happens on driver calls instead.
+- Claiming inside Supervisor Phase 4.5 / FINALIZE: deferred, because no drain works the PR yet.
+
+## Revisit when
+CLAIM.md changes past v1, or the merge bot's wake contract changes.
+
+## Checklist
+- [ ] .supervisor/requirements/orca-claim/2026-11-28-065541-pr-claim-01-helper.md
+- [ ] .supervisor/requirements/orca-claim/2026-11-28-065541-pr-claim-02-drains.md
+- [ ] .supervisor/requirements/orca-claim/2026-11-28-065541-pr-claim-03-automate.md
