@@ -271,6 +271,22 @@ o="$(bash "$H" meta-publish --paths-from "$BM_T/pub/list9" --root --x 2>/dev/nul
 [ "$o" = "meta-publish: FAILED — --root requires a value (got '--x')" ] && [ "$rc" -eq 0 ] && ok "BP10 option-shaped --root ⇒ '$o', exit 0" || no "BP10 --root --x ⇒ '$o' rc=$rc"
 o="$(bash "$H" meta-publish --root "$PW" 2>/dev/null)"; rc=$?
 [ "$o" = "meta-publish: FAILED — --paths-from <file> is required" ] && [ "$rc" -eq 0 ] && ok "BP10 no --paths-from ⇒ '$o', exit 0" || no "BP10 no --paths-from ⇒ '$o' rc=$rc"
+o="$(bash "$H" meta-publish --paths-from "$BM_T/pub/no-such-list" --root "$PW" 2>/dev/null)"; rc=$?
+[ "$o" = "meta-publish: FAILED — --paths-from '$BM_T/pub/no-such-list' is not a file" ] && [ "$rc" -eq 0 ] && ok "BP10 a missing list file ⇒ FAILED, exit 0" || no "BP10 missing list ⇒ '$o' rc=$rc"
+
+# (bp11) meta-sync's own failures on the other arms, through the LOOMWRIGHT_META_SYNC_BIN seam (a stub
+# that fails ONE subcommand and runs the real meta-sync for the rest): each is ONE named line,
+# exit 0, nothing pushed.
+printf '#!/bin/bash\ncase "$1:$BP_FAIL" in\n  list-managed:lm) echo "meta_sync: symlink .supervisor/x"; exit 1 ;;\n  scrub:sc) echo "meta_sync: usage: scrub broke"; exit 1 ;;\n  push:p2) echo "meta_sync: scrub .supervisor/requirements/bp11.md: email" >&2; echo "meta_sync: aborted — scrub hit(s) above" >&2; exit 2 ;;\nesac\nexec bash "%s" "$@"\n' "$BM_MS" > "$BM_T/bp-fail.sh"
+echo "bp11" > "$PW/$RQ/bp11.md"; printf '%s\n' "$RQ/bp11.md" > "$BM_T/pub/list11"
+for c in "lm|meta-publish: FAILED — list-managed: symlink .supervisor/x (nothing pushed)" \
+         "sc|meta-publish: FAILED — scrub: usage: scrub broke (nothing pushed)" \
+         "p2|meta-publish: blocked — scrub hit (nothing pushed; files kept locally)"; do
+  o="$(bm_pub "$PW" "$BM_T/pub/list11" LOOMWRIGHT_META_SYNC_BIN="$BM_T/bp-fail.sh" BP_FAIL="${c%%|*}")"; rc=$?
+  [ "$(printf '%s\n' "$o" | head -n1)" = "${c#*|}" ] && bp_one "$o" && [ "$rc" -eq 0 ] && ok "BP11 ${c%%|*} ⇒ '${c#*|}', exit 0" || no "BP11 ${c%%|*} ⇒ '$o' rc=$rc"
+done
+printf '%s\n' "$o" | grep -q '^meta_sync: scrub .supervisor/requirements/bp11.md: email' && ok "BP11 a push-time scrub hit names its path" || no "BP11 push-time scrub line missing in '$o'"
+bp_on_origin "$PO" "$RQ/bp11.md" && no "BP11 a failed arm pushed bp11.md" || ok "BP11 no failed arm pushed anything"
 rm -rf "$BM_T"
 
 
