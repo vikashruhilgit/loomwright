@@ -40,7 +40,8 @@ SELVEDGE_BIN=<checkout>/selvedge/bin/selvedge GROUND_TRUTH_VERIFY_BASE=main \
 ```
 
 `GROUND_TRUTH_VERIFY_BASE=main` names the base ref the driver passes to `plan --base`; the scratch repo has
-no `origin`, so the default (`origin/HEAD`, else `origin/main`) would not resolve there.
+no `origin`, so the default (`origin/<branch>` from `resolve-base-branch.sh`, which fails CLOSED with no
+hardcoded fallback) would not resolve there.
 
 ## Full output
 

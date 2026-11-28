@@ -34,6 +34,11 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 # days_ago <n> — an ISO-8601 UTC stamp n days before now (jq, so no date(1) dialect). Heal-signal
 # fixtures are dated relative to now: a fixed date ages past the dashboard's staleness limit.
 days_ago() { jq -nr --argjson d "$1" '(now - ($d * 86400)) | floor | todate'; }
+# FRESH_TS — the "fresh" stamp for every fixture field an age threshold reads (churn `ts`, rules
+# `provenance.added`): 30 days before now, so it stays under every 90/180-day limit whatever the
+# date the suite runs on. A hard-coded recent date ages past those limits and fails later (the
+# 2026-06-01 fixtures went stale on 2026-11-28). The deliberately stale stamps stay 2020-01-01.
+FRESH_TS="$(days_ago 30)"
 # mkrepo_named <name> — a committed git repo at <fresh tmp dir>/<name>, printed. The heal-signal
 # section compares a ledger row's repos with the checkout basename, and a bare mktemp dir is
 # itself named tmp.* (which the section always treats as a fixture name).
@@ -506,7 +511,7 @@ CH="$(mktemp -d)"; ( cd "$CH" && git init -q && git config user.email t@t && git
 mkdir -p "$CH/.supervisor/logs" "$CH/.supervisor/postmortem" "$CH/.supervisor/memory"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CH/.supervisor/logs/sess-ch.jsonl"
 {
-  printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/1","changed_paths":["a"],"review_rounds":2}'
+  printf '{"ts":"%s","pr_url":"https://github.com/o/r/pull/1","changed_paths":["a"],"review_rounds":2}\n' "$FRESH_TS"
   printf '%s\n' '{"ts":"2020-01-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/2","changed_paths":["b"],"review_rounds":1}'
   printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"retract","target_key":"https://github.com/o/r/pull/2","replacement":null,"reason":"noise","ts":"2026-06-02T00:00:00Z"}'
   printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"supersede","target_key":"https://github.com/o/r/pull/2","replacement":"https://github.com/o/r/pull/5","reason":"replaced by a later PR","ts":"2026-06-03T00:00:00Z"}'
@@ -550,7 +555,7 @@ rm -rf "$CA"
 CB="$(mktemp -d)"; ( cd "$CB" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$CB/.supervisor/logs" "$CB/.supervisor/postmortem"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CB/.supervisor/logs/sess-cb.jsonl"
-printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/9","changed_paths":["c"]}' > "$CB/.supervisor/postmortem/results.jsonl"
+printf '{"ts":"%s","pr_url":"https://github.com/o/r/pull/9","changed_paths":["c"]}\n' "$FRESH_TS" > "$CB/.supervisor/postmortem/results.jsonl"
 ( cd "$CB" && bash "$BUILD" >/dev/null 2>&1 )
 cbd="$CB/.supervisor/insights/dashboard.md"
 grep -qF -- "- churn ledger: 1 entries, 0 curation targets (retracted/superseded), 0 stale (>180d)" "$cbd" 2>/dev/null && ok "churn line renders alone (1 entry, zeros)" || no "churn-only line wrong"
@@ -566,7 +571,7 @@ CM="$(mktemp -d)"; ( cd "$CM" && git init -q && git config user.email t@t && git
 mkdir -p "$CM/.supervisor/logs" "$CM/.supervisor/postmortem" "$CM/.supervisor/memory"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CM/.supervisor/logs/sess-cm.jsonl"
 {
-  printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/3","changed_paths":["a"]}'
+  printf '{"ts":"%s","pr_url":"https://github.com/o/r/pull/3","changed_paths":["a"]}\n' "$FRESH_TS"
   printf '%s\n' '{not json at all'
   printf '%s\n' '42'
   printf '%s\n' '{"source":"curation","curation_action":"retract"'
@@ -596,7 +601,7 @@ CO="$(mktemp -d)"; ( cd "$CO" && git init -q && git config user.email t@t && git
 mkdir -p "$CO/.supervisor/logs" "$CO/.supervisor/postmortem"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CO/.supervisor/logs/sess-co.jsonl"
 {
-  printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/4","changed_paths":["a"]}'
+  printf '{"ts":"%s","pr_url":"https://github.com/o/r/pull/4","changed_paths":["a"]}\n' "$FRESH_TS"
   printf '%s\n' '{"ts":"2020-01-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/5","changed_paths":["b"]}'
 } > "$CO/.supervisor/postmortem/results.jsonl"
 cod="$CO/.supervisor/insights/dashboard.md"
@@ -778,10 +783,10 @@ echo "== 27. Corpus health — rules decay: aged entry flagged, fresh entry not,
 RD="$(mktemp -d)"; ( cd "$RD" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$RD/.supervisor/logs" "$RD/.agent/rules"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$RD/.supervisor/logs/sess-rd.jsonl"
-cat > "$RD/.agent/rules/general.json" <<'EOF'
+cat > "$RD/.agent/rules/general.json" <<EOF
 [
   {"id":"r-old","category":"general","statement":"old one","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2020-01-01T00:00:00Z"}},
-  {"id":"r-fresh","category":"general","statement":"fresh one","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2026-06-01T00:00:00Z"}}
+  {"id":"r-fresh","category":"general","statement":"fresh one","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"$FRESH_TS"}}
 ]
 EOF
 ( cd "$RD" && bash "$BUILD" >/dev/null 2>&1 )
@@ -916,9 +921,9 @@ echo "==     populated rules/orientation decay line (seed ONLY rules+orientation
 CR="$(mktemp -d)"; ( cd "$CR" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$CR/.supervisor/logs" "$CR/.agent/rules" "$CR/.agent/orientation"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CR/.supervisor/logs/sess-cr.jsonl"
-cat > "$CR/.agent/rules/general.json" <<'EOF'
+cat > "$CR/.agent/rules/general.json" <<EOF
 [
-  {"id":"cr-rule","category":"general","statement":"a live rule","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2026-06-01T00:00:00Z"}}
+  {"id":"cr-rule","category":"general","statement":"a live rule","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"$FRESH_TS"}}
 ]
 EOF
 CR_HEAD_SHA="$(cd "$CR" && git rev-parse HEAD)"

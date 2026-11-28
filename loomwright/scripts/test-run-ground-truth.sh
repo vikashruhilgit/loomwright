@@ -182,8 +182,14 @@ else
   no "(d) wrong (rc=$rcD): $jD"
 fi
 
+# seed_base <dir> [branch]: give a stub-Selvedge project a base branch the ONE resolver
+# (resolve-base-branch.sh) can read — `.supervisor/config.json .base_branch` (default main) — so
+# the verify: driver gets `--base origin/<branch>` without a remote. A project without it has no
+# base, which the driver refuses (verify_refused, see v-B7d).
+seed_base() { mkdir -p "$1/.supervisor" && printf '{"base_branch":"%s"}\n' "${2:-main}" > "$1/.supervisor/config.json"; }
+
 echo "== (e) qa-executor: (alias of verify:) + stub SELVEDGE_BIN PASS => per_check kind verify, pass =="
-mkdir -p "$TMP/e-proj"
+mkdir -p "$TMP/e-proj"; seed_base "$TMP/e-proj"
 oE="$( cd "$TMP/e-proj" && SELVEDGE_BIN="$STUB" STUB_LOG="$TMP/e.log" STUB_VERDICTS=PASS \
         bash "$RUN" --check 'qa-executor: login-smoke' 2>/dev/null )"; rcE=$?
 jE="$(gt_json "$oE")"
@@ -198,7 +204,7 @@ else
 fi
 
 echo "== (e2) qa-executor: + a passing cmd, stub PASS => status pass, total 2, passed 2 =="
-mkdir -p "$TMP/e2-proj"
+mkdir -p "$TMP/e2-proj"; seed_base "$TMP/e2-proj"
 oE2="$( cd "$TMP/e2-proj" && SELVEDGE_BIN="$STUB" STUB_LOG="$TMP/e2.log" STUB_VERDICTS=PASS \
          bash "$RUN" --check 'cmd: true' --check 'qa-executor: x' 2>/dev/null )"
 jE2="$(gt_json "$oE2")"
@@ -884,9 +890,11 @@ sup_with_gt '{status: skipped}' "$TMP/u-nochk.md"
 echo
 echo "== (v) the verify: kind (stub SELVEDGE_BIN) and the unknown-prefix refusal =="
 VER="$HERE/ground-truth-verify.sh"
-# vproj <name>: a fresh project dir (non-git: the runner's project root is the dir itself).
+# vproj <name>: a fresh project dir (non-git: the runner's project root is the dir itself), seeded
+# with base branch `main` (seed_base). vproj_bare <name>: the same without any base.
 # Printed physically (pwd -P): the runner's project root is `pwd -P`, so the folder the stub prints is too.
-vproj() { mkdir -p "$TMP/vp-$1" && ( cd "$TMP/vp-$1" && pwd -P ); }
+vproj_bare() { mkdir -p "$TMP/vp-$1" && ( cd "$TMP/vp-$1" && pwd -P ); }
+vproj() { local d; d="$(vproj_bare "$1")" && seed_base "$d" && printf '%s\n' "$d"; }
 # vstat <json> <index> => "<kind>/<status>/<reason>" of per_check[<index>].
 vstat() { printf '%s' "$1" | jq -r --argjson i "$2" '.per_check[$i] | "\(.kind)/\(.status)/\(.reason // "")"' 2>/dev/null; }
 # nruns <proj>: how many Selvedge run folders exist under the project.
@@ -1062,12 +1070,38 @@ case "$b7_run" in
   *--base*) no "(v-B7c) run was passed --base (Selvedge's run lists no such flag)" ;;
   *) ok "(v-B7c) run is never passed --base" ;;
 esac
-VP="$(vproj b7d)"
+# The default base comes from the ONE resolver (resolve-base-branch.sh), prefixed `origin/`; with
+# no base anywhere it fails CLOSED and the driver refuses — never a hardcoded origin/main.
+VP="$(vproj_bare b7d)"
 jV7d="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+# No stub.log at all = the stub was never invoked (ncalls prints nothing for a missing log).
+if [ "$(vstat "$jV7d" 0)" = "verify/unverified/verify_refused" ] && [ ! -e "$VP/stub.log" ]; then
+  ok "(v-B7d) no GROUND_TRUTH_VERIFY_BASE and no resolvable base => verify_refused, Selvedge never called (no origin/main fallback)"
+else
+  no "(v-B7d) got $(vstat "$jV7d" 0), stub calls: $(cat "$VP/stub.log" 2>/dev/null): $jV7d"
+fi
+VP="$(vproj_bare b7g)"; seed_base "$VP" development
+jV7g="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
 case "$(grep '^plan ' "$VP/stub.log")" in
-  *" --base origin/main") ok "(v-B7d) no GROUND_TRUTH_VERIFY_BASE, no origin/HEAD => --base origin/main" ;;
-  *) no "(v-B7d) default base: '$(grep '^plan ' "$VP/stub.log")'" ;;
+  *" --base origin/development") ok "(v-B7g) config base_branch development => resolver => --base origin/development" ;;
+  *) no "(v-B7g) config base: '$(grep '^plan ' "$VP/stub.log")' ($jV7g)" ;;
 esac
+VP="$(vproj_bare b7h)"
+( cd "$VP" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init \
+    && git update-ref refs/remotes/origin/trunk HEAD \
+    && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk ) >/dev/null 2>&1
+jV7h="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+case "$(grep '^plan ' "$VP/stub.log")" in
+  *" --base origin/trunk") ok "(v-B7h) origin/HEAD -> origin/trunk, no config => resolver => --base origin/trunk" ;;
+  *) no "(v-B7h) origin-head base: '$(grep '^plan ' "$VP/stub.log")' ($jV7h)" ;;
+esac
+VP="$(vproj_bare b7i)"; mkdir -p "$VP/.supervisor"; printf '{"base_branch":"@{-1}"}\n' > "$VP/.supervisor/config.json"
+jV7i="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" bash "$RUN" --check 'verify: x' 2>/dev/null )")"
+if [ "$(vstat "$jV7i" 0)" = "verify/unverified/verify_refused" ] && [ ! -e "$VP/stub.log" ]; then
+  ok "(v-B7i) an invalid configured base (base_branch_invalid:config) => verify_refused, Selvedge never called"
+else
+  no "(v-B7i) got $(vstat "$jV7i" 0), stub calls: $(cat "$VP/stub.log" 2>/dev/null): $jV7i"
+fi
 VP="$(vproj b7e)"
 jV7e="$(gt_json "$( cd "$VP" && SELVEDGE_BIN="$STUB" STUB_LOG="$VP/stub.log" STUB_PLAN_RC=2 bash "$RUN" --check 'verify: x' --check 'verify: y' 2>/dev/null )")"
 if [ "$(vstat "$jV7e" 0)" = "verify/unverified/verify_refused" ] && [ "$(vstat "$jV7e" 1)" = "verify/unverified/verify_refused" ] \

@@ -142,8 +142,10 @@ raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task
   chain `criteria from-text` → `plan <criteria.json> --base <ref>` → `run` → `verdict.json`). ALL
   `verify:` lines of one run go into ONE Selvedge run; each line's per-check result comes from that
   run's `verdict.json` (lines map to `criteria.json` ids in order). `plan --base <ref>` reads
-  `selvedge.json` from the base ref (`GROUND_TRUTH_VERIFY_BASE`, else `origin/HEAD`, else
-  `origin/main`), never from the PR head; `run` takes no `--base`, so that holds at plan time only.
+  `selvedge.json` from the base ref (`GROUND_TRUTH_VERIFY_BASE`, else `origin/<branch>` from
+  `scripts/resolve-base-branch.sh`; no hardcoded fallback — when that resolver fails, every
+  `verify:` line is `verify_refused` and Selvedge is not called), never from the PR head; `run`
+  takes no `--base`, so that holds at plan time only.
   `run`'s exit code is never read as a verdict. Hashed into the brief stamp but never gated by it, and
   NOT disabled by `--no-cmd`. Per-check results (the authoritative list — other surfaces point here):
   - PASS → `pass`; FAIL → `fail`, reason `FAIL`.

@@ -27,10 +27,14 @@
 # CLI discovery: `SELVEDGE_BIN` when it is set and non-empty (it must then be an executable file —
 # a set-but-broken SELVEDGE_BIN never falls back to PATH, where a stale copy may sit), else
 # `command -v selvedge`. Neither -> every line `unverified`, reason `verify_plugin_absent`.
-# Base ref: `GROUND_TRUTH_VERIFY_BASE` when set and non-empty, else the project's
-# `refs/remotes/origin/HEAD` target (e.g. `origin/main`), else `origin/main`. A ref Selvedge cannot
-# read is Selvedge's refusal (`base_config_unreadable`), which maps to `verify_refused` — never a
-# silent fall-back to the working-tree `selvedge.json`.
+# Base ref: `GROUND_TRUTH_VERIFY_BASE` when set and non-empty (passed as given), else
+# `origin/<branch>` where <branch> is what the ONE base resolver, the sibling
+# `resolve-base-branch.sh --repo <project-root>`, prints (no --flag/--brief is passed, so its
+# config -> origin-head -> gh steps apply, with its one `git remote set-head origin -a` side
+# effect — see its header). There is no hardcoded fallback branch: when the resolver fails CLOSED
+# (`base_branch_unresolved` / `base_branch_invalid:config`), every line is `verify_refused` and
+# Selvedge is never called. A ref Selvedge cannot read is Selvedge's refusal (`base_config_unreadable`), which
+# also maps to `verify_refused` — never a silent fall-back to the working-tree `selvedge.json`.
 #
 # Mapping (the Selvedge verdict set PASS | FAIL | BLOCKED | NOT_VERIFIABLE, verdict.json
 # schema_version 1 — the same set and version propose-from-verify.sh reads):
@@ -44,7 +48,8 @@
 #   verify_plugin_absent       no CLI found (see discovery)
 #   verify_refused             `criteria from-text` or `plan` exited non-zero, printed no usable
 #                              output, or printed no existing run folder (`run` is then never
-#                              called); also a `verify:` line with no criterion text
+#                              called); also a `verify:` line with no criterion text, and every
+#                              line when no base ref resolves (see Base ref)
 #   verify_verdict_unreadable  the run folder has no readable verdict.json, or its schema_version
 #                              is not 1, or it is not an object with a `criteria` object
 # Lines map to criteria.json ids IN ORDER when criteria.json holds exactly one criterion per sent
@@ -55,7 +60,8 @@
 # Functions:
 #   gt_verify_target <line>            -> the criterion text of a `verify:`/`qa-executor:` line
 #   gt_verify_resolve_bin              -> prints the CLI path; returns 1 when none is usable
-#   gt_verify_base_ref <project-root>  -> prints the base ref `plan --base` gets
+#   gt_verify_base_ref <project-root>  -> prints the base ref `plan --base` gets; returns 1 (prints
+#                                         nothing) when the base resolver fails
 #   gt_verify_check <project-root> <criterion-text>...
 #                                      -> runs the chain once; sets, per argument position i
 #                                         (0-based), GT_VERIFY_STATUS[i] (pass|fail|unverified),
@@ -103,16 +109,25 @@ gt_verify_resolve_bin() {
   printf '%s\n' "$p"
 }
 
-# gt_verify_base_ref <project-root>
+# gt_verify_base_ref <project-root> — GROUND_TRUTH_VERIFY_BASE (set and non-empty) as given, else
+# `origin/<branch>` from the sibling resolve-base-branch.sh. Prints nothing and returns 1 when the
+# resolver fails (its status token goes to stderr); there is no hardcoded fallback branch.
 gt_verify_base_ref() {
-  local root="$1" r=""
+  local root="$1" b="" rc=0 err=""
   if [ -n "${GROUND_TRUTH_VERIFY_BASE:-}" ]; then
     printf '%s\n' "$GROUND_TRUTH_VERIFY_BASE"
     return 0
   fi
-  r="$(git -C "$root" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-  [ -n "$r" ] || r="origin/main"
-  printf '%s\n' "$r"
+  err="$(mktemp "${TMPDIR:-/tmp}/gt-verify-base.XXXXXX" 2>/dev/null)" || err="/dev/null"
+  b="$(bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/resolve-base-branch.sh" --repo "$root" \
+        </dev/null 2>"$err")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$b" ]; then
+    _gt_verify_diag "resolve-base-branch.sh exited $rc ($(head -n 1 "$err" 2>/dev/null)), no base ref for plan --base, plan not called (verify_refused)" "$err"
+    [ "$err" = "/dev/null" ] || rm -f "$err"
+    return 1
+  fi
+  [ "$err" = "/dev/null" ] || rm -f "$err"
+  printf 'origin/%s\n' "$b"
 }
 
 # _gt_verify_set <i> <status> <reason> <verdict>
@@ -165,7 +180,10 @@ gt_verify_check() {
     _gt_verify_all "$n" "unverified" "verify_plugin_absent"
     return 0
   fi
-  base="$(gt_verify_base_ref "$root")"
+  if ! base="$(gt_verify_base_ref "$root")"; then
+    _gt_verify_all "$n" "unverified" "verify_refused"
+    return 0
+  fi
 
   # The criteria list: one `- <text>` item per non-empty line; an empty line is refused on its own.
   i=0
