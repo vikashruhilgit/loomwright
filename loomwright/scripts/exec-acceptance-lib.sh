@@ -35,9 +35,11 @@
 #                                           (classify_kind == "cmd" or "verify"), or the literal
 #                                           `none` when that filtered list is empty (incl.
 #                                           brief/section absent, or only corpus-task:/rule:/
-#                                           unknown_kind bullets present). A brief with no verify
-#                                           bullet hashes byte-identically to the cmd-only rule, so
-#                                           a stamp written before `verify:` existed stays valid.
+#                                           unknown_kind bullets present). A brief with no verify:/
+#                                           qa-executor: bullet and no unknown-prefix bullet hashes
+#                                           byte-identically to the cmd-only rule; any other stamped
+#                                           brief must be re-stamped (its cmd: bullets read
+#                                           cmd_unapproved until then).
 #                                           Returns 1 (with a stderr diagnostic, no stdout) only
 #                                           when the filtered list is non-empty and no sha256 tool
 #                                           is available — a hash claiming to represent content it

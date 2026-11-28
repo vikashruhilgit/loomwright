@@ -629,7 +629,7 @@ SUPERVISOR_RESULT:
     delta: number | null                     # value - baseline, null if no baseline
     unit: string
   ground_truth:                              # optional (System Twin / M2b slice 1a, v14.19.0) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Populated from scripts/run-ground-truth.sh. Exactly these keys: NO pass_rate (that is the flat session_end ground_truth_pass_rate only).
-    checked: boolean                         # ALWAYS present. gt.ran — true when >=1 check actually executed; false on skipped / no-jq / all-deferred
+    checked: boolean                         # ALWAYS present. gt.ran — true when >=1 check actually executed; false on skipped / no-jq / nothing-verifiable
     status: enum [pass, advisory_failures, unverified, skipped]
     checks_total: integer
     checks_passed: integer

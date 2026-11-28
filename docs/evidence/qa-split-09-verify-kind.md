@@ -81,8 +81,9 @@ one plan; the run itself calls no model).
 - Only PASS came back. FAIL, BLOCKED and NOT_VERIFIABLE mapping, the `verify 1 PASS · 1 NOT_VERIFIABLE`
   counts form, plugin-absent, refusals and an unreadable `verdict.json` are pinned with a stub
   `SELVEDGE_BIN` in `loomwright/scripts/test-run-ground-truth.sh` section (v), not by this real run.
-- The run was started by hand, not from Supervisor Phase 4.5. Phase 4.5 does not set
-  `GROUND_TRUTH_VERIFY_BASE` yet, so there the base ref is derived (`origin/HEAD`, else `origin/main`).
+- The run was started by hand, not from Supervisor Phase 4.5. Phase 4.5 passes
+  `GROUND_TRUTH_VERIFY_BASE="origin/$BASE_BRANCH"` (`loomwright/skills/self-heal-advisory/completion-tail.md`),
+  which this hand run stood in for with `GROUND_TRUTH_VERIFY_BASE=main`.
 
 ## Open items
 

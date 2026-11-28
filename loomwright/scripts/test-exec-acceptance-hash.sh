@@ -26,7 +26,8 @@
 #   (j) the prefix grammar and the verify kind: an unknown `<word>:` prefix is unknown_kind and never
 #       hashed (A2); bare shell lines stay cmd and hashed (A3); known kinds keep their kind, and
 #       qa-executor: is verify (A4, B1); verify: lines are hashed in their stripped form, an edit
-#       changes the hash, and a verify-free brief hashes exactly as under the cmd-only rule (C1).
+#       changes the hash, and a brief with no verify:/qa-executor:/unknown-prefix line hashes exactly as
+#       under the cmd-only rule (C1).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
