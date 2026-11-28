@@ -40,15 +40,50 @@ sg_ctl="$(awk -v F=control "$SG_SCAN" "$SGC" 2>&1)"
 [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4\ncontrol:8\ncontrol:12\ncontrol:14')" ] \
   && ok "SG1 control: the cd-group scan flags the seven unsafe shapes (two backslash-continued, reported at their first line) and none of the four safe ones" \
   || no "SG1 control: the cd-group scan read the planted lines as: $(printf '%s' "$sg_ctl" | tr '\n' ' ')"
-# This part is scanned too, with only its marked control block blanked (line numbers kept); the block
-# must be exactly the three printf lines, so nothing else can hide in it.
+# This part is scanned too, with only its marked control block blanked (line numbers kept). sg_pins
+# compares that block, and the SG_SCAN program, line for line (leading whitespace stripped) with the
+# same spans in test-automate-trail.sh, so the block is exactly the three control printf lines and
+# nothing else can hide in it. Status: 0 both match, 1 the control block differs, 2 the program differs.
+sg_trail="$TAH_D/../test-automate-trail.sh"
+sg_span() {  # <file> <first-line prefix> <last-line suffix>: that span, leading whitespace stripped
+  SGS_S="$2" SGS_E="$3" awk '{ sub(/^[ \t]+/, "") } !f && index($0, ENVIRON["SGS_S"]) == 1 { f = 1 }
+    f { print; n = length($0); m = length(ENVIRON["SGS_E"]); if (n >= m && substr($0, n - m + 1) == ENVIRON["SGS_E"]) exit }' "$1"
+}
+sg_pins() {
+  local ctl prog tc tp
+  ctl="$(awk '/^# >>> sg1-control /{ f = 1; next } /^# <<< sg1-control$/{ f = 0 } f { sub(/^[ \t]+/, ""); print }' "$1")"
+  tc="$(sg_span "$sg_trail" "printf '%s\n' '( cd \"\$P\" && git checkout -q -- README; rm -f stray.txt )'" ' > "$SGC"')"
+  [ -n "$tc" ] && [ "$ctl" = "$tc" ] || return 1
+  prog="$(sg_span "$1" "SG_SCAN='!cont && /^[ \t]*#/ { next }" "i = e } }'")"
+  tp="$(sg_span "$sg_trail" "SG_SCAN='!cont && /^[ \t]*#/ { next }" "i = e } }'")"
+  [ -n "$tp" ] && [ "$prog" = "$tp" ] || return 2
+  return 0
+}
 sg_self="$TAH_D/20-standalone-guard.sh"
-sg_blk="$(awk '/^# >>> sg1-control /{ f = 1; next } /^# <<< sg1-control$/{ f = 0 } f' "$sg_self")"
-sg_blk_ok=0
-if [ "$(printf '%s\n' "$sg_blk" | wc -l | tr -d ' ')" = 3 ]; then
-  case "$sg_blk" in "  printf '%s\n' '( cd \"\$P\" && git checkout -q -- README; rm -f stray.txt )' "*' > "$SGC"') sg_blk_ok=1 ;; esac
+sg_pins "$sg_self"; sg_rc=$?
+[ "$sg_rc" -eq 0 ] && ok "SG1 this part's sg1-control block and SG_SCAN program are test-automate-trail.sh's, line for line" \
+  || no "SG1 20-standalone-guard.sh differs from test-automate-trail.sh: $( [ "$sg_rc" -eq 1 ] && echo 'the sg1-control block is not exactly its three control printf lines' || echo 'the SG_SCAN program')"
+# The pin goes red on a copy (never this file) with a command hidden inside the first control line,
+# with a fourth line added to the block, and with one character of the program changed.
+# (The '' keeps this line's own text out of the cd-group scan; the copy reads `( cd "$SG_T/nope"; …`.)
+sg_hide='>/dev/null; ( ''cd "$SG_T/nope"; : > "$SG_T/HIDDEN-RAN"; echo HIDDEN-RAN ); printf '"'%s\\n' "
+SG_HIDE="$sg_hide" awk '/^# >>> sg1-control /{ f = 1; print; next } f && !d { i = index($0, "stray.txt )'"' "'")
+  $0 = substr($0, 1, i + 12) ENVIRON["SG_HIDE"] substr($0, i + 13); d = 1 } { print }' "$sg_self" > "$SG_T/mut-hide.sh"
+awk '/^# <<< sg1-control$/{ print "  : extra line" } { print }' "$sg_self" > "$SG_T/mut-extra.sh"
+awk '!d && /^    i = e [}] [}]'"'"'$/{ sub(/i = e/, "i = e + 0"); d = 1 } { print }' "$sg_self" > "$SG_T/mut-prog.sh"
+sg_m1=0; sg_m2=0; sg_m3=0
+sg_pins "$SG_T/mut-hide.sh" || sg_m1=$?; sg_pins "$SG_T/mut-extra.sh" || sg_m2=$?; sg_pins "$SG_T/mut-prog.sh" || sg_m3=$?
+# The hidden-command copy keeps the block's old shape (three lines, the first control argument first,
+# `> "$SGC"` last), so a line-count and prefix/suffix check would pass it.
+sg_mblk="$(awk '/^# >>> sg1-control /{ f = 1; next } /^# <<< sg1-control$/{ f = 0 } f' "$SG_T/mut-hide.sh")"
+sg_mshape=0
+case "$sg_mblk" in "  printf '%s\n' '( cd \"\$P\" && git checkout -q -- README; rm -f stray.txt )' >/dev/null; ( "*' > "$SGC"')
+  [ "$(printf '%s\n' "$sg_mblk" | wc -l | tr -d ' ')" = 3 ] && sg_mshape=1 ;; esac
+if [ "$sg_m1" -eq 1 ] && [ "$sg_m2" -eq 1 ] && [ "$sg_m3" -eq 2 ] && [ "$sg_mshape" = 1 ]; then
+  ok "SG1 the pin fails a copy with a command hidden in a control line (block still three lines), an added block line, and an edited program"
+else
+  no "SG1 the pin missed a mutant copy: hidden-command=$sg_m1 extra-line=$sg_m2 program-edit=$sg_m3 (want 1 1 2), hidden copy keeps the old shape=$sg_mshape"
 fi
-[ "$sg_blk_ok" = 1 ] || no "SG1 the sg1-control block in 20-standalone-guard.sh is not exactly the three control printf lines"
 sg_hits=""
 for sg_p in $TAH_PARTS; do
   if [ "$sg_p" = 20-standalone-guard ]; then
