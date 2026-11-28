@@ -56,6 +56,13 @@
 #      skip/abandon check-off (each before the lock release); NO park path
 #      (awaiting_merge/escalated/rate_limit/drain_died/token_ceiling/
 #      limit_reached) calls it; old heading referenced nowhere.
+#   SG. standalone guard (issue #994; runs in group 1 and --all) — SG1 static: no part opens a
+#      ( / $( cd "…" group that runs on after a failed cd (end of line, `;`, or `&&` with a `;`
+#      before the group's `)`), with a planted-shape control; SG2: each part's first command is the
+#      exact guard, and each, run on its own from a scratch checkout holding sentinel
+#      .supervisor/automate/ files, exits 2 naming this file and keeps the sentinels; SG3: a cd group with
+#      an empty or missing target runs nothing (this file's cd refuses an empty operand, which bash 3.2
+#      accepts). test-meta-sync.sh's SG4 pins the SG scan, the SG2 check and that cd to its own copies.
 #
 # Part B legs:
 #   C. closeout — squash-merged fixture PR (a new commit on origin/main, not the
@@ -347,6 +354,10 @@ SUP_GOOD='SUPERVISOR_RESULT:
 # group; each selected part is then sourced BY NAME (never a glob) at top level, so it shares this file's
 # setup, stubs, helpers and counters; a missing or unreadable part aborts the suite (exit 1, the part
 # named) instead of silently dropping its legs. Part A: 01. Part B: 02–06.
+# Each fixture cd group opens `cd "$X" || exit 1`, but bash 3.2 (macOS /bin/bash) treats `cd ""` as a
+# successful no-op, so an EMPTY $X ran the group on in the caller's directory (bash 5 refuses it).
+# This cd refuses an empty operand on every bash, so `|| exit 1` stops the group (leg SG3).
+cd() { if [ "$#" -ge 1 ] && [ -z "$1" ]; then echo "cd: empty directory operand (a fixture path is unset)" >&2; return 1; fi; builtin cd "$@"; }
 TAT_D="$HERE/test-automate-trail.d"
 # tat_part also records the part, so the summary can check that exactly the selected parts were sourced.
 TAT_DONE=" "
@@ -358,6 +369,82 @@ pg_want 03-stamps-gate              && tat_part 03-stamps-gate              && .
 pg_want 04-watcher-branch-mode      && tat_part 04-watcher-branch-mode      && . "$TAT_D/04-watcher-branch-mode.sh"
 pg_want 05-finalize-closeout-others && tat_part 05-finalize-closeout-others && . "$TAT_D/05-finalize-closeout-others.sh"
 pg_want 06-sweep                    && tat_part 06-sweep                    && . "$TAT_D/06-sweep.sh"
+
+# ---- SG. a part refuses to run standalone; a fixture cd group stops on a failed cd ----------
+# A part run alone (`bash <part>`) has no $TOP / $P, so a `( cd "$P" && a; rm … )` group once ran its
+# rm in the caller's checkout and deleted a live /automate run file. Each part's first command is
+# the guard naming this runner; each cd group opens `cd "$X" || exit 1`. Group 1 / --all only.
+if pg_want 01-sidecar-trail-pr; then
+  echo "== SG. parts refuse to run standalone; fixture cd groups stop on a failed cd =="
+  # SG1 static — a ( / $( subshell opening with cd "…" then end of line, `;`, or `&&` with a `;` before
+  # the group's own `)` on that logical line
+  # (backslash-continued lines are joined first). Reads 00-shared plus every $TAT_PARTS entry, by name.
+  SG_SCAN='!cont && /^[ \t]*#/ { next }
+{ if (cont) buf = buf $0; else { buf = $0; st = FNR }
+  if (buf ~ /\\$/) { sub(/\\$/, "", buf); cont = 1; next }
+  cont = 0; line = buf; n = length(line); i = 1
+  while (i <= n && match(substr(line, i), /\([ \t]*cd "[^"]*"/)) {
+    e = i + RSTART - 1 + RLENGTH; tl = substr(line, e); bad = 0
+    if (tl ~ /^[ \t]*$/ || tl ~ /^[ \t]*;/) bad = 1
+    else if (tl ~ /^[ \t]*&&/) {
+      d = 1; q = 0
+      for (j = e; j <= n; j++) { c = substr(line, j, 1)
+        if (q) { if (c == "\047") q = 0; continue }
+        if (c == "\047") q = 1
+        else if (c == "#" && j > 1 && substr(line, j - 1, 1) ~ /[ \t]/) break
+        else if (c == "(") d++
+        else if (c == ")") { d--; if (d == 0) break }
+        else if (c == ";" && d == 1) { bad = 1; break } } }
+    if (bad) print F ":" st
+    i = e } }'
+  SGC="$TOP/sg-scan-control.sh"
+  printf '%s\n' '( cd "$P" && git checkout -q -- README; rm -f stray.txt )' '  ( cd "$P"' 'x="$(cd "$P" && a >/dev/null; b)"' \
+    '(cd "$P"; rm -f x)' '(cd "$P" && bash "$H" trail-pr x)   # a; b' '( cd "$P" || exit 1; rm -f x )' "(cd \"\$P\" && printf ';')" \
+      '( cd "$P" \' '  ; rm -f x )' '( cd "$P" && git status \' '  && rm -f x )' '( cd "$P" && a \' '  ; rm -f x )' '(cd "$P"; rm -f y)' > "$SGC"
+  sg_ctl="$(awk -v F=control "$SG_SCAN" "$SGC" 2>&1)"
+  [ "$sg_ctl" = "$(printf 'control:1\ncontrol:2\ncontrol:3\ncontrol:4\ncontrol:8\ncontrol:12\ncontrol:14')" ] \
+    && ok "SG1 control: the cd-group scan flags the seven unsafe shapes (two backslash-continued, reported at their first line) and none of the four safe ones" \
+    || no "SG1 control: the cd-group scan read the planted lines as: $(printf '%s' "$sg_ctl" | tr '\n' ' ')"
+  sg_hits=""
+  for sg_p in 00-shared $TAT_PARTS; do
+    sg_hits="$sg_hits$(awk -v F="test-automate-trail.d/$sg_p.sh" "$SG_SCAN" "$TAT_D/$sg_p.sh" 2>&1)
+"
+  done
+  sg_hits="$(printf '%s' "$sg_hits" | grep -v '^$')"
+  [ -z "$sg_hits" ] && ok "SG1 no part opens a cd group that runs on after a failed cd (cd \"\$X\" || exit 1)" \
+    || no "SG1 cd group(s) that run on after a failed cd: $(printf '%s' "$sg_hits" | tr '\n' ' ')"
+  # SG3 an empty or missing cd target stops the group: none of its later commands runs.
+  sg_m="$TOP/sg-empty-cd.marker"; sg_x=""
+  ( cd "$sg_x" || exit 1; : > "$sg_m" ) 2>/dev/null; sg_rc1=$?
+  ( cd "$TOP/sg-no-such-dir" || exit 1; : >> "$sg_m" ) 2>/dev/null; sg_rc2=$?
+  if [ "$sg_rc1" -eq 1 ] && [ "$sg_rc2" -eq 1 ] && [ ! -e "$sg_m" ]; then
+    ok "SG3 ( cd \"\$X\" || exit 1; … ) runs nothing when \$X is empty or not a directory"
+  else
+    no "SG3 a cd group ran on after a failed cd: empty rc=$sg_rc1, missing-dir rc=$sg_rc2, marker $( [ -e "$sg_m" ] && echo written || echo absent)"
+  fi
+  # SG2 the incident replayed — each part run on its own from a scratch checkout holding sentinels.
+  SGX="$TOP/sg-checkout"; mkdir -p "$SGX/.supervisor/automate"; git init -q "$SGX"
+  printf 'sentinel run\n' > "$SGX/.supervisor/automate/sentinel-run.md"
+  printf '{"sentinel":true}\n' > "$SGX/.supervisor/automate/sentinel.next-step.json"
+  # The exact guard (AC1) must be a part's first command, within its first 15 lines, BEFORE the part is
+  # run: an unguarded part run standalone is the incident itself, so it is reported red, never run.
+  SG_GUARD='declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite'"'"'s \$TOP)" >&2; exit 2; }'
+  for sg_p in 00-shared $TAT_PARTS; do
+    if [ "$(awk 'NR > 15 { exit } /^[ \t]*(#|$)/ { next } { print; exit }' "$TAT_D/$sg_p.sh")" != "$SG_GUARD" ]; then
+      no "SG2 $sg_p.sh: the standalone guard is not its first command within its first 15 lines — not run standalone"
+      continue
+    fi
+    sg_err="$(cd "$SGX" || exit 1; env -u TOP -u P -u FX bash "$TAT_D/$sg_p.sh" </dev/null 2>&1 >/dev/null)"; sg_rc=$?
+    sg_want="$sg_p.sh: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)"
+    if [ "$sg_rc" -eq 2 ] && [ "$sg_err" = "$sg_want" ] \
+       && [ "$(cat "$SGX/.supervisor/automate/sentinel-run.md" 2>/dev/null)" = "sentinel run" ] \
+       && [ -f "$SGX/.supervisor/automate/sentinel.next-step.json" ]; then
+      ok "SG2 $sg_p.sh run standalone exits 2 naming test-automate-trail.sh; the scratch sentinels are kept"
+    else
+      no "SG2 $sg_p.sh run standalone: rc=$sg_rc stderr=$(printf '%s' "$sg_err" | head -n 3 | tr '\n' '|') sentinels: $(ls "$SGX/.supervisor/automate" 2>/dev/null | tr '\n' ' ')"
+    fi
+  done
+fi
 
 [ "$TAT_DONE" = "$PG_SEL" ] || no "parts sourced ($TAT_DONE) differ from the parts selected ($PG_SEL): a TAT_PARTS entry has no source line"
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then

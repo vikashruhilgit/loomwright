@@ -1,3 +1,4 @@
+declare -F tms_part >/dev/null && [ -n "${TROOT:-}" ] && [ -d "$TROOT" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-meta-sync.sh, never standalone (its fixtures need the suite's \$TROOT)" >&2; exit 2; }
 echo "== 67. learning stores in the managed set (af36-03 AC1): both closed lists move together =="
 # ---- learning-store helpers (af36-03) ----
 # grant <clone> [grant|decline] — this world's user-scope consent record (scratch HOME; the key is

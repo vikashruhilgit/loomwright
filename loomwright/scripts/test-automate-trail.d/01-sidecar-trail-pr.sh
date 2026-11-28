@@ -1,4 +1,5 @@
 # =============================================================================
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 echo "== S. sidecar-check =="
 SD="$TOP/sc"; mkdir -p "$SD"
 printf '%s\n' "$RH_GOOD" > "$SD/rh-good.md"
@@ -352,7 +353,7 @@ new_fixture 23
 NC=".supervisor/jobs/done/brief-a.md"
 grep -qxF -- "$NC" < <(git -C "$P" diff --cached --name-only) && ok "done brief staged by trail-pr" || no "done brief not staged"
 printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > "$P/$NC"
-case "$(cd "$P" && bash "$H" trail-unstage "$RF_REL0" >/dev/null; git -C "$P" diff --cached --name-only)" in *"$NC"*) no "recorded non-candidate brief left staged" ;; *) ok "brief re-pointed away is still unstaged (from the record)" ;; esac
+case "$(cd "$P" || exit 1; bash "$H" trail-unstage "$RF_REL0" >/dev/null; git -C "$P" diff --cached --name-only)" in *"$NC"*) no "recorded non-candidate brief left staged" ;; *) ok "brief re-pointed away is still unstaged (from the record)" ;; esac
 [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "trail-unstage cleared the recorded non-candidate path too" || no "left staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
 
 # =============================================================================

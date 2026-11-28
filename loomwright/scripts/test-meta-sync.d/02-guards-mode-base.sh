@@ -1,3 +1,4 @@
+declare -F tms_part >/dev/null && [ -n "${TROOT:-}" ] && [ -d "$TROOT" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-meta-sync.sh, never standalone (its fixtures need the suite's \$TROOT)" >&2; exit 2; }
 echo "== 30. a newline in a name fails closed (remote tree, R's history, local find) =="
 synced_pair
 OG="$W/origin.git"
@@ -369,7 +370,7 @@ SHIM
 }
 # cds_snapshot — every regular file under B's .supervisor/ EXCEPT the ledger, with its checksum.
 cds_snapshot() {
-  (cd "$W/B" && find .supervisor -type f ! -path "./$LG" ! -path "$LG" | env LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$(cksum < "$f")" "$f"; done)
+  (cd "$W/B" || exit 1; find .supervisor -type f ! -path "./$LG" ! -path "$LG" | env LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$(cksum < "$f")" "$f"; done)
 }
 cds_run() { OUT="$(PATH="$W/cdsshim:$PATH" bash "$SCRIPT" pull --root "$W/B" 2>&1)"; RC=$?; }
 # blob_at <tree-ish> <path> — the blob SHA B's meta-base tree holds at <path> (B's object store);
@@ -510,7 +511,7 @@ TW="throwaway-meta"
 # `setup-memory.sh apply --branch-mode`, the real writer). World building always runs the shipped
 # $SUT; the subject under test is $SCRIPT.
 mode_line() {
-  (cd "$W/$1" && bash "$HERE/setup-memory.sh" --root "$W/$1" apply --branch-mode "$2" >/dev/null 2>&1; rm -f .gitignore.backup.*)
+  (cd "$W/$1" || exit 1; bash "$HERE/setup-memory.sh" --root "$W/$1" apply --branch-mode "$2" >/dev/null 2>&1; rm -f .gitignore.backup.*)
 }
 br_tip_of() { git --git-dir="$W/origin.git" rev-parse -q --verify "refs/heads/$1" 2>/dev/null; }
 br_show_of() { git --git-dir="$W/origin.git" show "refs/heads/$1:$2" 2>/dev/null; }

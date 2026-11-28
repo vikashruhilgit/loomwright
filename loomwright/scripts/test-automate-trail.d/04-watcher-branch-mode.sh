@@ -1,4 +1,5 @@
 # =============================================================================
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 echo "== W. merge watcher =="
 WATCH="$SPYD/automate-merge-watch.sh"
 cp "$HERE/automate-merge-watch.sh" "$WATCH"

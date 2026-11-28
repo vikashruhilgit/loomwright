@@ -1,4 +1,5 @@
 # =============================================================================
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 echo "== SW. sweep: squash-safe sweep of plugin-made worktrees + local branches (af/39a) =="
 # Real repos in $TOP; gh and lsof stubbed through the LOOMWRIGHT_GH_BIN /
 # LOOMWRIGHT_LSOF_BIN seams. The sweep gh stub answers `pr list --head <B>` per branch.

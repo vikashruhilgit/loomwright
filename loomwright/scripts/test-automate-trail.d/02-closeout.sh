@@ -1,6 +1,7 @@
 # =============================================================================
 # Part B — closeout + merge watcher
 # =============================================================================
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 
 echo "== C. closeout =="
 closeout_fixture 4
@@ -154,7 +155,7 @@ fi
 #      resumed and picked 02-b) ⇒ ## Current byte-identical; the check-off still lands.
 closeout_fixture 103
 LATER=".supervisor/requirements/f/02-b.md"
-( cd "$P"
+( cd "$P" || exit 1
   awk -v L="$LATER" '/^- item: /{print "- item: " L " | status: running | pr: https://github.com/acme/widgets/pull/8 | branch: feature/y"; next}
        /^- pause_reason:/{print "- pause_reason: null"; next} {print}' "$RF_REL" > "$RF_REL.tmp" && mv "$RF_REL.tmp" "$RF_REL"
   sed -i.bak 's/^## Status: paused$/## Status: running/' "$RF_REL" && rm -f "$RF_REL.bak" )
@@ -169,7 +170,7 @@ MUTG="$TOP/mutd-guard"; mkdir -p "$MUTG"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTG/";
 sed 's/^  if \[ "\$cur_item" != "\$item" \] || \[ "\$cur_pr" != "\$pr" \]; then$/  if false; then/' "$TB" > "$MUTG/automate-trail.sh"
 if ! cmp -s "$TB" "$MUTG/automate-trail.sh" && bash -n "$MUTG/automate-trail.sh"; then
   closeout_fixture 104
-  ( cd "$P"
+  ( cd "$P" || exit 1
     awk -v L="$LATER" '/^- item: /{print "- item: " L " | status: running | pr: https://github.com/acme/widgets/pull/8 | branch: feature/y"; next}
          /^- pause_reason:/{print "- pause_reason: null"; next} {print}' "$RF_REL" > "$RF_REL.tmp" && mv "$RF_REL.tmp" "$RF_REL" )
   (cd "$P" && bash "$MUTG/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
@@ -354,7 +355,7 @@ for v in pointer nopointer; do
   REQ="$SR_REQ_SAVED"   # closeout_fixture / new_fixture read the global REQ
   if [ "$v" = pointer ]; then closeout_fixture 120; else closeout_fixture 121; fi
   REQ="stories/02-x.md"
-  ( cd "$P" && git pull -q --ff-only origin main 2>/dev/null; mkdir -p stories
+  ( cd "$P" || exit 1; git pull -q --ff-only origin main 2>/dev/null; mkdir -p stories
     printf '# Story 02\n\n## Status: ready\n\nA story kept outside the handoff directory.\n' > "$REQ"
     printf '# Story 03\n\nstill to do\n' > stories/03-y.md
     git add stories && git commit -qm "stories" && git push -q origin main 2>/dev/null
@@ -391,7 +392,7 @@ for v in pointer nopointer; do
     # The two fail-closed guards: a queued story a done brief names that carries NO done heading
     # (its WIP must never ride), and one that is a symlink (here to the stamped story, so only the
     # -L guard keeps it out). Neither may appear among the paths the trail branch changes.
-    ( cd "$P"
+    ( cd "$P" || exit 1
       printf '# Story 04\n\n## Status: ready\n\nlocal WIP\n' > stories/04-z.md
       ln -s 02-x.md stories/05-l.md
       awk -v r="$REQ" '{ print } $0 ~ /^- \[[ xX]\] / && substr($0, 7) == r { print "- [ ] stories/04-z.md"; print "- [ ] stories/05-l.md" }' \

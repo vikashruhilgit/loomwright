@@ -1,4 +1,5 @@
 # =============================================================================
+declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)" >&2; exit 2; }
 echo "== F. finalize-empty / resume-glob --finalize (a closed-out run finalizes itself) =="
 # SKILL §1.5 `finalize-empty` row, §3 "`done`", §4 step 1. closeout never writes
 # `done`; a finished lane run stayed paused/awaiting_go and every RESUME listed it.
@@ -168,7 +169,7 @@ fi
 
 # (F2) eligibility + lock: only paused/awaiting_go/remaining-0/Current-done runs finalize.
 new_fixture 204
-( cd "$P" && git checkout -q -- README; rm -f stray.txt; rm -f "$AUTD"/*.md )
+( cd "$P" || exit 1; git checkout -q -- README; rm -f stray.txt; rm -f "$AUTD"/*.md )
 fe_rf automate-a-eligible paused awaiting_go x done
 fe_rf automate-b-unchecked paused awaiting_go ' ' done
 fe_rf automate-c-otherreason paused awaiting_merge x done
