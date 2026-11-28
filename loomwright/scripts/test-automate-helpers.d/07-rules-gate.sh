@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 07-rules-gate; fi
 echo "== R. gate-eval condition 7 — rules gate (self-resolved via sibling rules-gate-verdict.sh; named PARK reasons; refused ctx keys; gated mutants) =="
 # Section letter "R" (rules): "F" is already this file's learning-emit section.
 # Reuses Section E's harness ($GWD gate copy + stub rules-gate-verdict.sh, gate(),

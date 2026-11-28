@@ -44,7 +44,7 @@ bl_run() {
   BL_ERR="$(cat "$BL/err")"
 }
 bl_is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 — got '$(printf '%s' "$2" | tr '\n' '|')', want '$(printf '%s' "$3" | tr '\n' '|')'"; fi; }
-bl_sum() { (cd "$1" && find .supervisor -type f -exec cksum {} \; | sort); }
+bl_sum() { (cd "$1" || exit 1; find .supervisor -type f -exec cksum {} \; | sort); }
 # bl_mut_check <label> <anchor> <replacement|__DELETE__> <scenario_fn> <expected> — a COPY of the bundle
 # with the FIRST line containing <anchor> replaced (or deleted), trusted only when the anchor is unique,
 # the mutant non-empty, different and `bash -n` clean; <scenario_fn> must then print something other

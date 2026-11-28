@@ -1,5 +1,7 @@
 # =============================================================================
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 05-gate-eval-harness; fi
 echo "== E. auto-merge gate (SELF-RESOLVING, red-team-hardening/03): fail CLOSED on EACH condition; ctx-owned-key refusal; all-pass MERGE fires once =="
 
 WD="$(mktemp -d)"; WD="$(cd "$WD" && pwd -P)"; BIN="$WD/bin"; make_stub_bin "$BIN"

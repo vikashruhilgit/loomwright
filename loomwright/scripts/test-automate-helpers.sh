@@ -219,6 +219,11 @@
 #      nothing; --confirm adds ONE file, removes exactly the named drafts, one Progress line per draft with a
 #      run file; every refusal writes nothing; a bundled per-finding / summary draft is not re-reported by
 #      dismissed-drafts; injected finding text stays `> `-quoted; the nudge line and its threshold; gated mutants.
+#   SG. standalone guard (issue #994; 20-standalone-guard): SG1 static — no part opens a cd group that runs
+#      on after a failed cd (test-automate-trail.sh's scan, with its planted-shape control); SG3 — such a
+#      group stops for an empty and a missing directory, and cd is this runner's empty-operand-refusing
+#      function; SG2 — each part's first command is the re-exec guard naming itself, checked BEFORE a copy
+#      is run alone from a scratch checkout with sentinel .supervisor/automate/ files beside a stub runner.
 # >>> runner-only
 #
 # Layout (automate-speed/21): this file is the runner (header, shared setup, summary). The legs moved
@@ -350,8 +355,12 @@ bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../docs/result-sche
 # TAH_PARTS is the ONE part list (base order), TAH_PREREQ the ONE prerequisite map (<part>:<prerequisite>);
 # no argument = every part, as before. "$@" is cleared before any part is sourced, so legs see the empty
 # "$@" of base.
+# bash 3.2 (macOS /bin/bash) treats `cd ""` as a successful no-op, so a fixture group `( cd "$X" || exit 1; … )`
+# with an EMPTY $X ran on in the caller's directory. This cd (test-automate-trail.sh's, byte-for-byte) refuses
+# an empty operand on every bash; 20-standalone-guard's SG3 pins it.
+cd() { if [ "$#" -ge 1 ] && [ -z "$1" ]; then echo "cd: empty directory operand (a fixture path is unset)" >&2; return 1; fi; builtin cd "$@"; }
 TAH_D="$HERE/test-automate-helpers.d"
-TAH_PARTS="01-config 02-runfile 03-intake 04-resume 05-gate-eval-harness 05-gate-eval 06-gate-eval-tail 07-rules-gate 08-learning-emit 09-brief-repair 10-reconcile-status 11-ceiling 12-meta 13-plan-waves 14-escalation 15-lane-seams 16-queue-gates 17-right-size 18-backlog 19-followup"
+TAH_PARTS="01-config 02-runfile 03-intake 04-resume 05-gate-eval-harness 05-gate-eval 06-gate-eval-tail 07-rules-gate 08-learning-emit 09-brief-repair 10-reconcile-status 11-ceiling 12-meta 13-plan-waves 14-escalation 15-lane-seams 16-queue-gates 17-right-size 18-backlog 19-followup 20-standalone-guard"
 TAH_PREREQ="05-gate-eval:05-gate-eval-harness 06-gate-eval-tail:05-gate-eval-harness 07-rules-gate:05-gate-eval-harness"
 tah_prereq() { local e; for e in $TAH_PREREQ; do [ "${e%%:*}" = "$1" ] && echo "${e#*:}"; done; }
 # A part that does not parse would make `.` fail, skip every leg in it and leave the suite green, which
@@ -442,6 +451,7 @@ tah_run 16-queue-gates && . "$TAH_D/16-queue-gates.sh"
 tah_run 17-right-size && . "$TAH_D/17-right-size.sh"
 tah_run 18-backlog && . "$TAH_D/18-backlog.sh"
 tah_run 19-followup && . "$TAH_D/19-followup.sh"
+tah_run 20-standalone-guard && . "$TAH_D/20-standalone-guard.sh"
 # >>> runner-only
 if [ -n "$TAH_ONLY" ]; then rm -rf "$SPLIT_D"; fi
 [ "$tah_done" = "$tah_list" ] || { echo "  FAIL: parts sourced ($tah_done ) differ from parts selected ($tah_list ): a TAH_PARTS entry has no source line, or source lines are out of TAH_PARTS order"; exit 1; }

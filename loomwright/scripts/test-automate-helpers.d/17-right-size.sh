@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 17-right-size; fi
 echo "== RZ. right-size + merge-items (parallel-automate/18b; hermetic trees under mktemp -d, --root = the tree) =="
 # Every tree is built here or copied from fixtures/right-size/ (README there: provenance + edits); no leg
 # reads the live .supervisor/requirements/. Section letters: RZ (right-size), MI (merge-items).
@@ -234,9 +236,9 @@ done
 rz_is "RZ10 _rsz_basename / _rsz_dirname equal basename(1) / dirname(1) on every probed shape" "${RZ10_BAD:-none}" none
 
 # ---- RZ11 read-only: right-size leaves the tree byte-identical.
-RZ11_BEFORE="$(cd "$T2B" && find . -type f -exec cksum {} \; | env LC_ALL=C sort)"
+RZ11_BEFORE="$(cd "$T2B" || exit 1; find . -type f -exec cksum {} \; | env LC_ALL=C sort)"
 rz_run "$H" right-size "$T2B/.supervisor/requirements/solo" --root "$T2B" --json
-RZ11_AFTER="$(cd "$T2B" && find . -type f -exec cksum {} \; | env LC_ALL=C sort)"
+RZ11_AFTER="$(cd "$T2B" || exit 1; find . -type f -exec cksum {} \; | env LC_ALL=C sort)"
 rz_is "RZ11 right-size (dir input, --json) writes nothing in the tree" "rc=$RZ_RC same=$([ "$RZ11_BEFORE" = "$RZ11_AFTER" ] && echo y || echo n)" "rc=0 same=y"
 
 # =============================================================================
@@ -321,7 +323,7 @@ rz_run "$H" plan-waves "$MI2R/f/10-ab.md" --lint --root "$MI2"
 rz_is "MI2 the merged item lints clean with the planner's own parser" "rc=$RZ_RC" "rc=0"
 
 # MI3 (AC11) the post-check: a lost body / Touches / Depends on line ⇒ exit 1 and NOTHING written.
-mi_snap() { (cd "$1" && find . -type f -exec cksum {} \; | env LC_ALL=C sort); }
+mi_snap() { (cd "$1" || exit 1; find . -type f -exec cksum {} \; | env LC_ALL=C sort); }
 # mi_drop <helper> <line> — prints `rc=<rc> written=<y|n> unchanged=<y|n> named=<y|n>`
 mi_drop() {
   local t="$RZ/mi3" before

@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 14-escalation; fi
 echo "== ESC. escalation-cause classifier + current-escalation writer (automate-followups/31) =="
 # Replay fixtures (fixtures/escalation-cause/) through a stubbed gh: s2-c (`ci` red only in
 # scripts/test-ci-local.sh, which PR #381 does not touch) and s2-d (`claude-review` still

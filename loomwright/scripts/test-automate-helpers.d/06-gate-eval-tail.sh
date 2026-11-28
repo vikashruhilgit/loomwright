@@ -1,3 +1,5 @@
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 06-gate-eval-tail; fi
 # --- Condition 5 with NO required context (a 404, GitHub's paid-plan 403, or reviews-only
 # protection): never vacuously green — the gate reads the whole statusCheckRollup. A failing,
 # pending or in-progress check parks checks_not_green; all success / neutral / skipped, or an

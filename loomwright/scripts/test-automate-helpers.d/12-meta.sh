@@ -3,6 +3,8 @@
 # on-write; skills/automate-loop/SKILL.md §"Branch mode"). Hermetic: a mktemp world with a LOCAL bare
 # origin, never GitHub.
 # ============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 12-meta; fi
 echo "== branch mode: meta-entry / meta-push-failed / meta-publish =="
 BM_T="$(mktemp -d)"
 BM_MS="$HERE/meta-sync.sh"

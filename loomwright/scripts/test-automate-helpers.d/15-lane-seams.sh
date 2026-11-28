@@ -1,3 +1,5 @@
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 15-lane-seams; fi
 echo "== LANE. parallel-automate/05 engine seams: resume-glob -L<n> skip, lane self-resume, ready_for_release, current-wave, lane dispatch arms =="
 LN_T="$(mktemp -d)"; LN_A="$LN_T/p/.supervisor/automate"; mkdir -p "$LN_A"
 printf '# Automate Run: par-1 — queue\n## Status: running\n' > "$LN_A/par-1.md"

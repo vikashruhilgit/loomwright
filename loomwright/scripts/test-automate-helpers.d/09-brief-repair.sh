@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 09-brief-repair; fi
 echo "== G. brief-repair (fail-SAFE, evidence-positive engine seam; ONE mover) =="
 
 GK=".supervisor/requirements/r/03.md"

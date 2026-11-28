@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 04-resume; fi
 echo "== D. resume reconcile (run-file BELIEF vs gh TRUTH) =="
 
 WD="$(mktemp -d)"; BIN="$WD/bin"; make_stub_bin "$BIN"

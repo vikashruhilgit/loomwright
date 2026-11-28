@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 16-queue-gates; fi
 echo "== QG. automate-speed/01: queue-confirm (AUT-QUEUE, D1) + park-ask-gate (park first, then ask, D2/D3) =="
 QG="$(mktemp -d)"; QG="$(cd "$QG" && pwd -P)"
 QG_MUT="$(dirname "$H")/qg-mutant.sh"

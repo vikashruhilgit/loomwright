@@ -1,6 +1,8 @@
 # ---------------------------------------------------------------------------
 # I. ceiling-check — PICK-time token ceiling (red-team-hardening/06)
 # ---------------------------------------------------------------------------
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 11-ceiling; fi
 
 ck_root() {
   local d; d="$(mktemp -d)"

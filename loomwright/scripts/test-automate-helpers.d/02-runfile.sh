@@ -1,4 +1,6 @@
 # =============================================================================
+# Run alone (`bash <this file>`), this part re-runs the suite for itself and nothing else (see 01-config.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 02-runfile; fi
 echo "== B. run-file atomic write + append-only Progress + check-off + remaining =="
 
 WD="$(mktemp -d)"; RF="$WD/automate/run-1.md"
