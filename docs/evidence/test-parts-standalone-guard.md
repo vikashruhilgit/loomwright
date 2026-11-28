@@ -18,9 +18,15 @@ that a part's first command is the exact guard, and report a part without it red
 an unguarded part is the incident. They then run every part on its own from a scratch checkout under the suite's
 temp root, holding the sentinels `sentinel-run.md` and `sentinel.next-step.json`, and check the exit code, the exact
 stderr line and both sentinels.
-The `cd "$X" || exit 1` form stops a group on a missing directory. Under macOS `/bin/bash` 3.2, `cd ""` succeeds
-and stays in the current directory, so for an EMPTY `$X` the standalone guard is the protection that counts there.
-Under bash 5, `cd ""` fails and the group stops too.
+The `cd "$X" || exit 1` form stops a group on a missing directory on every bash. An EMPTY `$X` needs one more
+piece: macOS `/bin/bash` 3.2 treats `cd ""` as a successful no-op that stays in the current directory (bash 5
+refuses it). Each runner therefore defines a `cd` that refuses an empty operand before it sources any part, so
+the same `|| exit 1` stops the group under bash 3.2 too, and the converted lines stay byte-identical. That `cd`
+lives in the runner, so it covers a part only while the runner sources it; a part run on its own is stopped by the
+standalone guard first. Each runner's `SG3` leg runs `( cd "$X" || exit 1; … )` with `$X` empty and with `$X` a
+missing directory and checks that the later command never ran (deleting the runner's `cd` turns it red under
+`/bin/bash` 3.2). `test-meta-sync.sh`'s `SG4` leg checks that the SG1 scan program, the SG2 first-command check and
+that `cd` are byte-identical in the two runners, so a fix to one copy cannot silently diverge.
 
 ## Exact commands
 

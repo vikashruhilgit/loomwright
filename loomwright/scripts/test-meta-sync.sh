@@ -271,7 +271,9 @@
 #      after a failed cd (end of line, `;`, or `&&` with a `;` before the group's `)`), with a
 #      planted-shape control; SG2: each part's first command is the exact guard, and each, run on its
 #      own from a scratch checkout holding sentinel .supervisor/automate/ files, exits 2 naming this
-#      file and keeps the sentinels
+#      file and keeps the sentinels; SG3: a cd group with an empty or missing target runs nothing (this
+#      file's cd refuses an empty operand, which bash 3.2 accepts); SG4: the SG scan, the SG2 check and
+#      that cd are byte-identical to test-automate-trail.sh's copies
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -349,6 +351,10 @@ synced_pair() {
 SUTB="$TROOT/meta-sync.bundle.sh"
 ( eval "$(awk '/^_ms_bundle\(\) \{$/,/^}$/' "$SUT")"; _ms_bundle "$SUT" ) > "$SUTB" && [ -s "$SUTB" ] \
   || { echo "  FAIL: could not build the single-file meta-sync.sh bundle (_ms_bundle) into $SUTB"; exit 1; }
+# Each fixture cd group opens `cd "$X" || exit 1`, but bash 3.2 (macOS /bin/bash) treats `cd ""` as a
+# successful no-op, so an EMPTY $X ran the group on in the caller's directory (bash 5 refuses it).
+# This cd refuses an empty operand on every bash, so `|| exit 1` stops the group (leg SG3).
+cd() { if [ "$#" -ge 1 ] && [ -z "$1" ]; then echo "cd: empty directory operand (a fixture path is unset)" >&2; return 1; fi; builtin cd "$@"; }
 TMS_D="$HERE/test-meta-sync.d"
 # tms_part also records the part, so the SG legs below read the names this file sourced.
 TMS_DONE=""
@@ -401,6 +407,15 @@ if [ -n "$TMS_DONE" ] && [ -z "$sg_hits" ]; then
 else
   no "SG1 cd group(s) that run on after a failed cd (parts read: ${TMS_DONE:-none}): $(printf '%s' "$sg_hits" | tr '\n' ' ')"
 fi
+# SG3 an empty or missing cd target stops the group: none of its later commands runs.
+sg_m="$TROOT/sg-empty-cd.marker"; sg_x=""
+( cd "$sg_x" || exit 1; : > "$sg_m" ) 2>/dev/null; sg_rc1=$?
+( cd "$TROOT/sg-no-such-dir" || exit 1; : >> "$sg_m" ) 2>/dev/null; sg_rc2=$?
+if [ "$sg_rc1" -eq 1 ] && [ "$sg_rc2" -eq 1 ] && [ ! -e "$sg_m" ]; then
+  ok "SG3 ( cd \"\$X\" || exit 1; … ) runs nothing when \$X is empty or not a directory"
+else
+  no "SG3 a cd group ran on after a failed cd: empty rc=$sg_rc1, missing-dir rc=$sg_rc2, marker $( [ -e "$sg_m" ] && echo written || echo absent)"
+fi
 # SG2 the incident replayed — each part run on its own from a scratch checkout holding sentinels.
 SGX="$TROOT/sg-checkout"; mkdir -p "$SGX/.supervisor/automate"; git init -q "$SGX"
 printf 'sentinel run\n' > "$SGX/.supervisor/automate/sentinel-run.md"
@@ -421,6 +436,20 @@ for sg_p in $TMS_DONE; do
     ok "SG2 $sg_p.sh run standalone exits 2 naming test-meta-sync.sh; the scratch sentinels are kept"
   else
     no "SG2 $sg_p.sh run standalone: rc=$sg_rc stderr=$(printf '%s' "$sg_err" | head -n 3 | tr '\n' '|') sentinels: $(ls "$SGX/.supervisor/automate" 2>/dev/null | tr '\n' ' ')"
+  fi
+done
+# SG4 the SG scan, the SG2 first-command check and the empty-operand cd are copied in
+# test-automate-trail.sh; each pair must stay byte-identical, so a fix to one cannot silently diverge.
+sg_scan_of() { awk '/^[ \t]*SG_SCAN=\047/ { f = 1; sub(/^[ \t]*SG_SCAN=/, "") } f { print } f && /\047$/ { exit }' "$1"; }
+sg_first_of() { grep -oE "awk 'NR > 1[5] [{] exit [}][^']*'" "$1"; }
+sg_cd_of() { grep -E '^cd[(][)] [{]' "$1"; }
+SG_TAT="$HERE/test-automate-trail.sh"
+for sg_f in sg_scan_of sg_first_of sg_cd_of; do
+  sg_a="$("$sg_f" "$HERE/test-meta-sync.sh")"; sg_b="$("$sg_f" "$SG_TAT")"
+  if [ -n "$sg_a" ] && [ "$sg_a" = "$sg_b" ]; then
+    ok "SG4 $sg_f: test-meta-sync.sh and test-automate-trail.sh carry the same text"
+  else
+    no "SG4 $sg_f: test-meta-sync.sh and test-automate-trail.sh differ (or one is missing) — keep the two copies identical"
   fi
 done
 echo
