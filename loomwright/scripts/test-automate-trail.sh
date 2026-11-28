@@ -56,6 +56,11 @@
 #      skip/abandon check-off (each before the lock release); NO park path
 #      (awaiting_merge/escalated/rate_limit/drain_died/token_ceiling/
 #      limit_reached) calls it; old heading referenced nowhere.
+#   SG. standalone guard (issue #994; runs in group 1 and --all) — SG1 static: no part opens a
+#      ( / $( cd "…" group that runs on after a failed cd (end of line, `;`, or `&&` with a `;`
+#      before the group's `)`), with a planted-shape control; SG2: each part's first command is the
+#      exact guard, and each, run on its own from a scratch checkout holding sentinel
+#      .supervisor/automate/ files, exits 2 naming this file and keeps the sentinels.
 #
 # Part B legs:
 #   C. closeout — squash-merged fixture PR (a new commit on origin/main, not the
@@ -402,7 +407,14 @@ if pg_want 01-sidecar-trail-pr; then
   SGX="$TOP/sg-checkout"; mkdir -p "$SGX/.supervisor/automate"; git init -q "$SGX"
   printf 'sentinel run\n' > "$SGX/.supervisor/automate/sentinel-run.md"
   printf '{"sentinel":true}\n' > "$SGX/.supervisor/automate/sentinel.next-step.json"
+  # The exact guard (AC1) must be a part's first command, within its first 15 lines, BEFORE the part is
+  # run: an unguarded part run standalone is the incident itself, so it is reported red, never run.
+  SG_GUARD='declare -F tat_part >/dev/null && [ -n "${TOP:-}" ] && [ -d "$TOP" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-trail.sh, never standalone (its fixtures need the suite'"'"'s \$TOP)" >&2; exit 2; }'
   for sg_p in 00-shared $TAT_PARTS; do
+    if [ "$(awk 'NR > 15 { exit } /^[ \t]*(#|$)/ { next } { print; exit }' "$TAT_D/$sg_p.sh")" != "$SG_GUARD" ]; then
+      no "SG2 $sg_p.sh: the standalone guard is not its first command within its first 15 lines — not run standalone"
+      continue
+    fi
     sg_err="$(cd "$SGX" || exit 1; env -u TOP -u P -u FX bash "$TAT_D/$sg_p.sh" </dev/null 2>&1 >/dev/null)"; sg_rc=$?
     sg_want="$sg_p.sh: run via test-automate-trail.sh, never standalone (its fixtures need the suite's \$TOP)"
     if [ "$sg_rc" -eq 2 ] && [ "$sg_err" = "$sg_want" ] \

@@ -9,13 +9,15 @@ tells the two apart.
 Verdict: PASS for Validation 2
 
 **How it was run:** in a `git clone` of this branch into `mktemp -d`, never the real checkout's `.supervisor/`. The
-clone's HEAD was the branch's code commit (`ccdb120`). The commit that adds this file changes no script, so the
-guarded part is byte-identical at the branch tip. The control clone was checked out at `6febfe0`, the branch's base
+clone's HEAD was the branch's code commit (`ccdb120`). Later commits on the branch change no part file, so the
+replayed part is byte-identical at the branch tip. The control clone was checked out at `6febfe0`, the branch's base
 on `main`, with `HOME` relocated into the scratch dir and a 300 s alarm on the part.
 
-**Honest limit:** this replays one part, 05, by hand. The suites pin the rest: each runner's `SG2` legs run every
-one of its parts on its own from a scratch checkout under the suite's temp root, holding the sentinels
-`sentinel-run.md` and `sentinel.next-step.json`, and check the exit code, the exact stderr line and both sentinels.
+**Honest limit:** this replays one part, 05, by hand. The suites pin the rest. Each runner's `SG2` legs first check
+that a part's first command is the exact guard, and report a part without it red without running it, because running
+an unguarded part is the incident. They then run every part on its own from a scratch checkout under the suite's
+temp root, holding the sentinels `sentinel-run.md` and `sentinel.next-step.json`, and check the exit code, the exact
+stderr line and both sentinels.
 The `cd "$X" || exit 1` form stops a group on a missing directory. Under macOS `/bin/bash` 3.2, `cd ""` succeeds
 and stays in the current directory, so for an EMPTY `$X` the standalone guard is the protection that counts there.
 Under bash 5, `cd ""` fails and the group stops too.
