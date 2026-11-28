@@ -93,3 +93,5 @@ Suggested batches:
 Shrinking existing agent prompts (diet), graduating the SDK runner, running
 FABLE_PARITY_EVAL, building/refreshing graphs, langfuse A/B, making the graph required,
 live `count_tokens` in CI, changing heal/gate shapes or never-merge invariants.
+
+## Status: done_with_escalation — ABANDONED (reference-only overview for token-economy/; each per-item file carries its own state)

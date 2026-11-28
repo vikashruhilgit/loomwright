@@ -135,3 +135,5 @@ regardless, being consumers of existing signals.
 
 `--limit 1` for batch A deliberately: read 01's outcome before queueing anything behind it.
 Directory order is processing order, so the numeric prefixes give the intended sequence.
+
+## Status: done_with_escalation — ABANDONED (reference-only overview for loom-floor-ui/; each per-item file carries its own state)

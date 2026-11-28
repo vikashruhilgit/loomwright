@@ -85,3 +85,9 @@ Close the verified Phase 3 residual without changing any gate, verdict, or `heal
 
 Job `.supervisor/jobs/done/auto-2026-06-17-153825-learning-loop-phase-3-residual.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T07:32:36Z
+- **Brief:** .supervisor/jobs/done/auto-2026-06-17-153825-learning-loop-phase-3-residual.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/62

@@ -331,3 +331,5 @@ Everything downstream depends on the read path landing and measuring well.
 **Rubric:** 7/7
 **Completed:** 2026-06-16
 **Remaining (deferred):** Phase 2 (/setup brain), Phase 3 (write path — cross-repo), Phase 4 (Twin↔Graphify), Phase 5 (freshness feedback)
+
+## Status: done_with_escalation — ABANDONED (reference-only design doc (not a brief); its read-path slice shipped as PR #60, the deferred phases 2-5 were never carried forward as written)

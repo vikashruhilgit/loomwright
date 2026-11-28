@@ -59,3 +59,5 @@ if both are active; 09 Parts A–C don't depend on 08.
 - "9 hooks lack `|| true` and can block agents" — overstated; every hook script terminates
   with unconditional `exit 0` (verified). Item 06 adds `|| true` as optional belt-and-suspenders only.
 - Hook count 21 — verified correct.
+
+## Status: done_with_escalation — ABANDONED (reference-only overview for review-remediation/; each per-item file carries its own state)

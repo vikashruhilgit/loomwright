@@ -86,3 +86,9 @@ No new required gate is introduced.
 
 Job `.supervisor/jobs/done/2026-06-23-local-twin-step5-apply.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T07:32:37Z
+- **Brief:** .supervisor/jobs/done/2026-06-23-local-twin-step5-apply.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/79

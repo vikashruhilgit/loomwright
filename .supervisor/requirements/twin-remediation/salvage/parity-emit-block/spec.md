@@ -26,3 +26,5 @@ each row it:
 Fail if any agent has no fenced block naming its result block, or if a
 required field is absent from the emit region while present elsewhere in
 the file. Deterministic and read-only.
+
+## Status: done_with_escalation — ABANDONED (reference-only salvage spec; replaced by loomwright/scripts/eval-corpus/parity-emit-block/ (ported in PR #105, twin-remediation/01))

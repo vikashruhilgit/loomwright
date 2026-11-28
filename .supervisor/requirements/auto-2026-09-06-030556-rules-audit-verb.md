@@ -111,3 +111,10 @@ verbs must not be confused, and the docs must say so in a way a gate can assert.
 
 Job `.supervisor/jobs/done/2026-09-06-rules-audit-verb.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T07:32:37Z
+- **Brief:** .supervisor/jobs/done/2026-09-06-rules-audit-verb.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/194
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/195

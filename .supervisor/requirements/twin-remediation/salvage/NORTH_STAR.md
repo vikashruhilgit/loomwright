@@ -68,3 +68,5 @@ Priority order:
 3. Only after ~30 merged-PR data points, consider flipping any advisory
    signal to gating (the deferred M3 milestone) — and only signals whose
    catch-rate the data supports.
+
+## Status: done_with_escalation — ABANDONED (reference-only north-star salvage copy; its unattended-quality funnel shipped via twin-remediation/01-prove-the-loop.md (PR #105))

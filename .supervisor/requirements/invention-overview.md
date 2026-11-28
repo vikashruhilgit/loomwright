@@ -100,3 +100,5 @@ instance is just one more project.
   without a human. Separate track.
 - **Going and getting users.** If a project's audience turns out to need real user signal,
   that is a different project and does not belong in a requirement file here.
+
+## Status: done_with_escalation — ABANDONED (reference-only overview for invention/; each per-item file carries its own state)

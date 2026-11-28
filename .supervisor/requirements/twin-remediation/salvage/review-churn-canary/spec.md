@@ -25,3 +25,5 @@ before the pattern normalizes.
 
 Deterministic (same HEAD ⇒ same result) and read-only. Advisory via the
 eval harness: a FAIL lowers the eval pass rate; nothing blocks.
+
+## Status: done_with_escalation — ABANDONED (reference-only salvage spec; replaced by loomwright/scripts/eval-corpus/review-churn-canary/ (ported in PR #105, twin-remediation/01))
