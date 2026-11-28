@@ -89,3 +89,5 @@ The `ci` required check finishes in roughly (longest single test + per-job setup
 - Editing `.github/workflows/claude-code-review.yml`. That would self-skip the reviewer on this PR.
 - Caching test results across pushes, or skipping unaffected tests in CI. Every push still runs every test (owner decision D1's spirit: shrink the run's wall time, never its coverage).
 - `concurrency:` cancellation of superseded runs. It is a separate decision with its own trade-off (a cancelled run reports `cancelled`, which a required check treats as not passing).
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

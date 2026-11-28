@@ -97,3 +97,5 @@ loomwright/docs/RESULT_SCHEMAS.md
 loomwright/docs/prompt-token-budgets.json
 loomwright/docs/vendor-coupling-manifest.json
 changelog.d/agnostic-phase1-03-silent-script-failures.md
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md and .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md)

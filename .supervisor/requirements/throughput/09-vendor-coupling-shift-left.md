@@ -90,3 +90,5 @@ The gate stays exactly as strict as today. A pasted suggestion with an unfilled 
 - Seeing runtime-assembled references (the gate's stated literal-match limit). Out of scope, and never to be "solved" by advising authors to use it.
 - Editing `loomwright/agents/worker.md` (see Scope 3).
 - Resolving manifest merge conflicts mechanically (#410/#412/#417). Option B or C would reduce how often they happen. Neither removes them.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

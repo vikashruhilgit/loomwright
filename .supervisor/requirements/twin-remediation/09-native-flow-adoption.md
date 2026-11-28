@@ -48,3 +48,5 @@ No orchestration rewrite in this item. No removal of the review-heal loop (it is
 - **Refine before running items 2–5:** replace the dead references to items 05 and 07 (both ABANDONED) for follow-up discipline and cadence; map each overlap to a CORE_CONTRACT port; the worktree re-probe needs a reinstalled-plugin session (manual).
 - **Proposed Touches:** `loomwright/docs/CAPABILITY_BASELINE.json`, a new overlap doc under `loomwright/docs/`, `loomwright/skills/agent-teams/SKILL.md`, `loomwright/commands/capability-check.md`. Depends on: none.
 - **Shipped 2026-10-12 in v15.133.0** (integration PR #493, merge b6e1100): item 1 (capability baseline refreshed, 8 candidates propose-only; changelog coverage partial) — PR #489. **Remaining:** items 2–5 (refine first). Follow-up worth filing: the fail-CLOSED PreToolUse guards fail OPEN on a crash — `onFailure: "block"` (Claude Code v2.1.295+), unverified against docs. Requirement stays open.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/twin-remediation/09b-overlap-map-and-scan-cadence.md)

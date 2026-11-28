@@ -94,3 +94,5 @@ scripts/test-ci-local.sh
 AGENT_GUIDELINES.md
 CLAUDE.md
 changelog.d/parallel-automate-20-lane-run-hygiene.md
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/af36-remainder/01-validation-unrun-gate.md, 02-meta-allowlist-grant.md, 03-meta-sync-learning-stores.md and 04-dreaming-memory-pr.md)

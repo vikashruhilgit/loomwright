@@ -531,3 +531,5 @@ changelog.d/dismissed-followups-06-docs-and-evidence-drift.md
 - `automate-2026-10-22-123646-L8--39f-janitor-command-fd1e55--dismissed-summary.md`
 - `automate-2026-10-22-123646-L9--25-backlog-board-feeds-b22457--dismissed-summary.md`
 - `automate-2026-10-26-193127--01-module-layout-standard-091a74--dismissed-summary.md`
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/dismissed-followups/06a-docs-and-evidence-drift.md, 06b-docs-and-evidence-drift.md and 06c-docs-and-evidence-drift.md)

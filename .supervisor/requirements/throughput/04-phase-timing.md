@@ -123,3 +123,5 @@ For any Supervisor run and any `/automate` item, a script answers from local log
 - **The stranded-close-out bucketing** (`proposed/insights-stranded-closeouts-counted-as-failed.md`). Not folded in; see Scope 7.
 - **GitHub CI wall-clock per push** (`gh run list` timings). This is local-log-only, consistent with `/insights`' "no data leaves your machine". A later item may add it.
 - **The output-token source.** This is separate, and not about timing. Session 33e9ed8c's 15 subagent transcripts hold 398 assistant message ids. **356 of them (89%) carry only the stream-start placeholder `output_tokens`, with no final `stop_reason` line.** So the F8 limit in `loomwright/docs/TELEMETRY.md` §"Transcript usage" ("output tokens of a message whose final line is absent … are UNDER-counted", described there as "common in older transcripts") is the **common** case in current transcripts, not an edge case. This needs its own follow-up on where output tokens come from. Pointer only; not scoped here.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

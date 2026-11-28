@@ -252,3 +252,5 @@ changelog.d/dismissed-followups-04a-next-step-and-review-heal-driver-defects.md
 - `automate-2026-10-15-163325-L9--06-next-step-driver-tail-7f5104--dismissed-summary.md`
 - `automate-2026-10-22-123646-L3--07-pilot-and-docs-169ead--dismissed-summary.md`
 - `automate-2026-10-22-123646-L6--18a-backlog-board-dca85a--dismissed-summary.md`
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/dismissed-followups/12-bundle-04ab-drivers-and-gate-tooling.md)

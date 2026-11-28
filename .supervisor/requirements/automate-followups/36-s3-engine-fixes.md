@@ -310,3 +310,5 @@ Owner direction, 2026-10-03, session cc4eaee3 (after M1): carry everything that 
 - **Stale Touches:** `skills/automate-loop/SKILL.md` is split (resume.md, per-item-loop.md, branch-mode.md, lanes.md, …); `fixtures/automate-helpers-help.golden` is now `fixtures/automate-helpers-help/*.golden`. Rewrite Touches for the remaining parts before queuing.
 - **Shipped 2026-10-12 in v15.133.0** (integration PR #493, merge b6e1100): Part A (all seven) + Part B item B — PR #492. **Remaining:** Part B item A (`validation_unrun` gate) and Part C (learning stores). Requirement stays open.
 - **Split 2026-10-12:** the remainder is now four items in `.supervisor/requirements/af36-remainder/` — 01 `validation_unrun` gate (B-A), 02 allowlist grant (C-A), 03 learning stores + consent (C-B), 04 /dreaming memory PR (C-C) — each with Touches rewritten for today's tree. This file is parked; work from the split.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/af36-remainder/01-validation-unrun-gate.md, 02-meta-allowlist-grant.md, 03-meta-sync-learning-stores.md and 04-dreaming-memory-pr.md)

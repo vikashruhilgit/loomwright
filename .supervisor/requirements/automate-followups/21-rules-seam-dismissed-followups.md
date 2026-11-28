@@ -40,3 +40,5 @@ loomwright/scripts/test-rules-gate-seams.sh
 loomwright/scripts/test-rules-seams.sh
 loomwright/skills/automate-loop/SKILL.md
 changelog.d/automate-followups-21-rules-seam-dismissed-followups.md
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md and .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md)

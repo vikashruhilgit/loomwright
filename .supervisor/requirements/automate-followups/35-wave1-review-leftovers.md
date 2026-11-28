@@ -93,3 +93,5 @@ loomwright/scripts/test-meta-sync.sh
 loomwright/docs/result-schemas/execute-result.md
 loomwright/skills/automate-loop/SKILL.md
 changelog.d/automate-followups-35-wave1-review-leftovers.md
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/af36-remainder/01-validation-unrun-gate.md, 02-meta-allowlist-grant.md, 03-meta-sync-learning-stores.md and 04-dreaming-memory-pr.md)

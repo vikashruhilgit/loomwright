@@ -77,3 +77,5 @@ A non-trivial item reaches Phase 4.5 PASS on its **first** review iteration, and
 ## Non-goals
 - Changing the drain's validate-then-fix rule or adding a post-READY "drop LOW nits" stop rule — a separate owner decision.
 - `ci-local` fail-fast / `--affected` inner loop / scripting the per-item loop (the throughput findings) — separate items; this one reduces how many cycles happen, not what a cycle costs.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

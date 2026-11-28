@@ -118,3 +118,5 @@ Every fix-now option the owner sees states what fix-now will cost, and the estim
 - Changing the non-interactive can't-ask branch or the PICK-time ask.
 - Per-phase timing instrumentation (item 04).
 - Reducing what a fix-now re-drain costs (items 01/03, implementation-quality/01).
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

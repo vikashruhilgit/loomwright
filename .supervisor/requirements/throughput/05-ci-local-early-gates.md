@@ -86,3 +86,5 @@ A full `ci-local` run whose tree breaks a cheap gate or an `early`-marked self-t
 - Stopping at the first early failure. Every early entry runs, so one fix round sees all of them.
 - Making `test-check-vendor-coupling.sh`, `test-check-doc-currency.sh` or `test-ci-local.sh` early. They are 26–45 s, and their live-repo arms duplicate gates already in (a).
 - Fixing the S6 race (item 07) or the serial tail (item 06).
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

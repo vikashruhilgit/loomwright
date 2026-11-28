@@ -102,3 +102,5 @@ No test asserts on async output after a fixed sleep. Every such wait is a bounde
 - Whole-second sleeps that separate timestamps or mtimes (e.g. `test-set-otel-resource-attrs.sh`, `test-token-ledger.sh`). They are not waits on async output, and the guard exempts them by annotation.
 - `test-harvest-conventions.sh` (M1)'s PTY feed and the serial markers (item 06).
 - A guard with no false positives. The ratchet-plus-annotation shape accepts that a line-based heuristic cannot fully parse bash. It only has to stop the count from growing silently.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

@@ -82,3 +82,5 @@ No test needs the serial tail, or the tail that is left is ≤ 30 s with a writt
 - Sharding CI (item 08) or adding an early phase (item 05).
 - Removing the `serial` marker mechanism itself: `test-run-self-tests.sh` (S) covers it, and a future wall-clock test may need it.
 - Speeding up a test by deleting assertions. A split moves assertions. It never drops them.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

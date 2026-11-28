@@ -97,3 +97,5 @@ No single foreground `wait-for-checks.sh` call exceeds the host cap. The **total
 - Backgrounding the wait, or any notification/callback-based wait. Foreground remains the contract.
 - Speeding up GitHub CI or `ci-local`.
 - Changing `drain-rounds.sh`, the confirming pass's GREEN/RED/UNREADABLE mapping, or any READY/ESCALATED decision logic (item 01 owns the sub-floor decision).
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

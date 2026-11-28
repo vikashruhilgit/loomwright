@@ -160,3 +160,5 @@ changelog.d/dismissed-followups-04b-gate-tooling-defects.md
 - `automate-2026-10-15-163325-L25--18-lock-the-gains-cbc1c4--dismissed-summary.md`
 - `automate-2026-10-15-163325-L4--17-prompt-size-ratchet-94542a--dismissed-summary.md`
 - `automate-2026-10-26-193127--01-module-layout-standard-091a74--dismissed-summary.md`
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/dismissed-followups/12-bundle-04ab-drivers-and-gate-tooling.md)

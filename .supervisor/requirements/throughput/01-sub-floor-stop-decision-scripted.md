@@ -115,3 +115,5 @@ On the round's real inputs, the drain's sub-floor stop decision is printed by a 
 - Making `sub_floor_converged` auto-merge-eligible, or any change to `gate-eval`.
 - Mechanizing the rest of §U4 (channel scan, validation, fix dispatch). Only the stop decision is in scope.
 - Shortening CI or the per-round wait. That belongs to items 02/03 and others.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md)

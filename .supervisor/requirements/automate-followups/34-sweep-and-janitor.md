@@ -257,3 +257,5 @@ take action based on your suggestions". Evidence from the same session's `ps` in
 - `automate-helpers.sh` kept (Part A adds the `sweep` dispatcher arm, delegated to `automate-trail.sh`) +
   `fixtures/automate-helpers-help.golden` (a new subcommand regenerates the `--help` golden,
   `test-automate-helpers-dispatch.sh` check 5).
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md and .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md)

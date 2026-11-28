@@ -88,3 +88,5 @@ Owner, 2026-10-03, during S1 (session 0d556d54): "the cleanup should be handled 
 in closeout". The lane-specific half was amended into `parallel-automate/05` (`lane-remove` refusals) and `/06`
 (fleet closeout teardown + leak summary) the same day. Evidence: 5 stale worktrees in the primary, removed by hand
 with `git worktree remove` after checking each was clean and merged; 20 old local branches still open.
+
+## Status: done_with_escalation — ABANDONED (superseded by .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md and .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md)
