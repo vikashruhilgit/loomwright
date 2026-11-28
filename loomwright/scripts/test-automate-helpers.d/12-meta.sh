@@ -246,7 +246,7 @@ o="$(bm_pub "$PW" "$BM_T/pub/list6b")"
 printf 'see /%s/%s/notes\n' Users realperson > "$PW/$RQ/bp7.md"; printf '%s\n' "$RQ/bp7.md" > "$BM_T/pub/list7"
 o="$(bm_pub "$PW" "$BM_T/pub/list7")"
 [ "$(printf '%s\n' "$o" | head -n1)" = "meta-publish: blocked — scrub hit (nothing pushed; files kept locally)" ] && bp_one "$o" && ok "BP7 scrub hit ⇒ ONE blocked verdict line" || no "BP7 scrub hit ⇒ '$o'"
-printf '%s\n' "$o" | grep -q "^meta_sync: scrub-hit $RQ/bp7.md:1: home_path" && ok "BP7 the hit is named (scrub-hit $RQ/bp7.md:1: home_path)" || no "BP7 no scrub-hit line in '$o'"
+grep -q "^meta_sync: scrub-hit $RQ/bp7.md:1: home_path" <<<"$o" && ok "BP7 the hit is named (scrub-hit $RQ/bp7.md:1: home_path)" || no "BP7 no scrub-hit line in '$o'"
 ! bp_on_origin "$PO" "$RQ/bp7.md" && [ -f "$PW/$RQ/bp7.md" ] && ok "BP7 nothing pushed and the file is still in the checkout" || no "BP7 pushed, or the local file is gone"
 
 # (bp8) a failed push (origin removed) ⇒ FAILED with the reason + the retry command, exit 0.
@@ -296,7 +296,7 @@ for c in "lm|meta-publish: FAILED — list-managed: symlink .supervisor/x (nothi
   o="$(bm_pub "$PW" "$BM_T/pub/list11" LOOMWRIGHT_META_SYNC_BIN="$BM_T/bp-fail.sh" BP_FAIL="${c%%|*}")"; rc=$?
   [ "$(printf '%s\n' "$o" | head -n1)" = "${c#*|}" ] && bp_one "$o" && [ "$rc" -eq 0 ] && ok "BP11 ${c%%|*} ⇒ '${c#*|}', exit 0" || no "BP11 ${c%%|*} ⇒ '$o' rc=$rc"
 done
-printf '%s\n' "$o" | grep -q '^meta_sync: scrub .supervisor/requirements/bp11.md: email' && ok "BP11 a push-time scrub hit names its path" || no "BP11 push-time scrub line missing in '$o'"
+grep -q '^meta_sync: scrub .supervisor/requirements/bp11.md: email' <<<"$o" && ok "BP11 a push-time scrub hit names its path" || no "BP11 push-time scrub line missing in '$o'"
 bp_on_origin "$PO" "$RQ/bp11.md" && no "BP11 a failed arm pushed bp11.md" || ok "BP11 no failed arm pushed anything"
 # (bp12) scope: only requirement files travel this route. A managed run-history path outside
 # .supervisor/requirements/ (a job brief, a run file — trail-pr's evidence gate owns those) and a
