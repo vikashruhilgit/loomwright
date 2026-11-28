@@ -234,11 +234,11 @@ rm -f "$PW/.supervisor/lane.json"
 mkdir -p "$PW/notes"; echo n > "$PW/notes/bp6.txt"; echo "managed" > "$PW/$RQ/bp6.md"
 printf '%s\n' "$RQ/bp6.md" "notes/bp6.txt" > "$BM_T/pub/list6"
 o="$(bm_pub "$PW" "$BM_T/pub/list6")"
-[ "$o" = "meta-publish: refused — not managed: notes/bp6.txt" ] && ok "BP6 non-managed path ⇒ '$o'" || no "BP6 non-managed path ⇒ '$o'"
+[ "$o" = "meta-publish: refused — not a requirement file: notes/bp6.txt" ] && ok "BP6 non-managed path ⇒ '$o'" || no "BP6 non-managed path ⇒ '$o'"
 bp_on_origin "$PO" "$RQ/bp6.md" && no "BP6 the managed sibling was pushed despite the refusal" || ok "BP6 nothing pushed (the managed sibling stays local)"
 printf '%s\n' "$RQ/bp6.md" "$RQ/nope.md" > "$BM_T/pub/list6b"
 o="$(bm_pub "$PW" "$BM_T/pub/list6b")"
-[ "$o" = "meta-publish: refused — not managed: $RQ/nope.md (missing)" ] && ok "BP6 a missing listed path ⇒ '$o'" || no "BP6 missing path ⇒ '$o'"
+[ "$o" = "meta-publish: refused — not a requirement file: $RQ/nope.md (missing)" ] && ok "BP6 a missing listed path ⇒ '$o'" || no "BP6 missing path ⇒ '$o'"
 : > "$BM_T/pub/list6c"; o="$(bm_pub "$PW" "$BM_T/pub/list6c")"
 [ "$o" = "meta-publish: refused — --paths-from $BM_T/pub/list6c lists no path" ] && ok "BP6 an empty list ⇒ refused" || no "BP6 empty list ⇒ '$o'"
 
@@ -287,6 +287,43 @@ for c in "lm|meta-publish: FAILED — list-managed: symlink .supervisor/x (nothi
 done
 printf '%s\n' "$o" | grep -q '^meta_sync: scrub .supervisor/requirements/bp11.md: email' && ok "BP11 a push-time scrub hit names its path" || no "BP11 push-time scrub line missing in '$o'"
 bp_on_origin "$PO" "$RQ/bp11.md" && no "BP11 a failed arm pushed bp11.md" || ok "BP11 no failed arm pushed anything"
+# (bp12) scope: only requirement files travel this route. A managed run-history path outside
+# .supervisor/requirements/ (a job brief, a run file — trail-pr's evidence gate owns those) and a
+# learning store (consent-gated, whole-set push only) are refused by name, with consent granted
+# or not; a nested requirement file is in scope and is pushed.
+mkdir -p "$PW/.supervisor/jobs/done" "$PW/.supervisor/automate" "$PW/.supervisor/agent-memory-proposals" "$PW/$RQ/grp"
+echo j > "$PW/.supervisor/jobs/done/fake.md"; echo r > "$PW/.supervisor/automate/automate-x.md"
+echo l > "$PW/.supervisor/agent-memory-proposals/p.md"; echo "nested story" > "$PW/$RQ/grp/bp12.md"
+printf '%s\n' ".supervisor/jobs/done/fake.md" ".supervisor/automate/automate-x.md" > "$BM_T/pub/list12a"
+o="$(bm_pub "$PW" "$BM_T/pub/list12a")"
+[ "$o" = "meta-publish: refused — not a requirement file: .supervisor/jobs/done/fake.md; .supervisor/automate/automate-x.md" ] && ok "BP12 a job brief + a run file ⇒ '$o'" || no "BP12 jobs/automate paths ⇒ '$o'"
+{ bp_on_origin "$PO" ".supervisor/jobs/done/fake.md" || bp_on_origin "$PO" ".supervisor/automate/automate-x.md"; } && no "BP12 a run-history path outside requirements was pushed" || ok "BP12 neither the job brief nor the run file was pushed"
+printf '%s\n' ".supervisor/agent-memory-proposals/p.md" > "$BM_T/pub/list12b"
+for cs in grant decline; do
+  bm_env bash "$BM_SM" --root "$PW" consent "$cs" >/dev/null 2>&1
+  st="$(bm_env bash "$BM_SM" --root "$PW" consent status 2>/dev/null | head -n1)"
+  [ "$st" = "${cs}ed" ] || [ "$st" = "${cs%e}ed" ] || no "BP12 precondition: consent $cs ⇒ status '$st'"
+  o="$(bm_pub "$PW" "$BM_T/pub/list12b")"
+  [ "$o" = "meta-publish: refused — not a requirement file: .supervisor/agent-memory-proposals/p.md" ] && ok "BP12 a learning store (consent $cs) ⇒ refused by name" || no "BP12 learning store (consent $cs) ⇒ '$o'"
+done
+bp_on_origin "$PO" ".supervisor/agent-memory-proposals/p.md" && no "BP12 the learning store was pushed" || ok "BP12 the learning store was not pushed"
+printf '%s\n' "$RQ/grp/bp12.md" > "$BM_T/pub/list12c"
+o="$(bm_pub "$PW" "$BM_T/pub/list12c")"
+case "$o" in "meta-publish: pushed loomwright-meta "*" (1 path(s))") ok "BP12 a nested requirement file ⇒ '$o'" ;; *) no "BP12 nested requirement file ⇒ '$o'" ;; esac
+[ "$(git --git-dir="$PO" show "loomwright-meta:$RQ/grp/bp12.md" 2>/dev/null)" = "nested story" ] && ok "BP12 the nested file is on the branch" || no "BP12 the nested file is not on the branch"
+
+# (bp13) a FAILED retry command is shell-quoted: a world under a path with a space, origin
+# unreachable ⇒ the printed retry, eval'd once origin is back, lands the file on the branch.
+bm_world "$BM_T/D sp" on
+SW="$BM_T/D sp/work"; SO="$BM_T/D sp/origin.git"
+mkdir -p "$SW/$RQ"; echo "spaced story" > "$SW/$RQ/bp13.md"; printf '%s\n' "$RQ/bp13.md" > "$BM_T/D sp/l"
+git -C "$SW" remote set-url origin "$BM_T/D sp/no-such-origin.git"
+o="$(bm_pub "$SW" "$BM_T/D sp/l")"
+case "$o" in "meta-publish: FAILED — "*"; retry: bash "*) ok "BP13 spaced root, origin unreachable ⇒ FAILED + retry" ;; *) no "BP13 spaced root ⇒ '$o'" ;; esac
+git -C "$SW" remote set-url origin "$SO"
+r="${o#*; retry: }"
+(cd "$SW" && eval "bm_env $r") >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(git --git-dir="$SO" show "loomwright-meta:$RQ/bp13.md" 2>/dev/null)" = "spaced story" ] && ok "BP13 the printed retry runs as-is and lands the file on the branch" || no "BP13 eval of the retry ('$r') rc=$rc did not land the file"
 rm -rf "$BM_T"
 
 

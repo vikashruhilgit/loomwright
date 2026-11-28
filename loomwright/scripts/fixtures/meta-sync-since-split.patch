@@ -55,7 +55,25 @@
  #   Project extension: TRACKED file `.agent/meta-sync-deny.txt` — one extra POSIX ERE per line
  #   (blank and `#` lines ignored). It is DATA handed to `grep -E -e`, never executed or eval'd; an
  #   invalid pattern is itself a hit (fail closed). Rule name: `deny_pattern:<line>`.
-@@ -606,8 +613,8 @@
+@@ -411,10 +418,13 @@
+ # list (an UNREADABLE git index is: exit 1, nothing changed).
+ #
+ # Callers: automate-helpers.sh `meta-entry` (pull), automate-trail.sh `trail-pr` (push
+-# --paths-from) and automate-lanes.sh `lane-remove` (status --paths) — each passes `--branch <the
+-# mode's branch>`, which the mode check accepts. meta-entry's pull takes the learning stores like
+-# any managed path (a tracked one excepted — TRACKED LEARNING STORES); trail-pr's (and the lanes') exact --paths-from lists never name them, so they
+-# are published by a whole-set push (no --paths-from) only.
++# --paths-from), automate-lanes.sh `lane-remove` (status --paths) and automate-helpers.sh
++# `meta-publish` (list-managed --run-history, scrub --paths-from, push --paths-from) — each
++# pull / push / status passes `--branch <the mode's branch>`, which the mode check accepts.
++# meta-entry's pull takes the learning stores like any managed path (a tracked one excepted —
++# TRACKED LEARNING STORES); trail-pr's, the lanes' and meta-publish's (requirement files only)
++# exact --paths-from lists never name them, so they are published by a whole-set push (no
++# --paths-from) only.
+ 
+ set -uo pipefail
+ 
+@@ -606,8 +616,8 @@
    ps -p "$1" >/dev/null 2>&1
  }
  # lock_is_stale <dir> <token> — 0 when <dir>, carrying <token> (the pid read from <dir>/pid), is
@@ -66,7 +84,7 @@
  lock_is_stale() {
    [ -d "$1" ] || return 1
    if [ -n "$2" ]; then
-@@ -617,8 +624,10 @@
+@@ -617,8 +627,10 @@
    [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
  }
  # reclaim_lock <dir> <token> <depth> — remove <dir> iff it STILL carries <token> and is STILL stale.
@@ -79,7 +97,7 @@
  # only be removed by it (its holder is dead; every other reclaimer re-checks a DIFFERENT token or
  # waits on this marker), so the re-check-then-rm below cannot hit a live lock: a lock re-acquired
  # in between carries another token and is left alone. Nothing is ever renamed aside and put back,
-@@ -628,10 +637,10 @@
+@@ -628,10 +640,10 @@
    local d="$1" t="$2" depth="$3" m w
    m="$1.reclaim.${2:-nopid}"
    [ "$depth" -le 4 ] || return 0
@@ -93,7 +111,7 @@
        rm -rf "$d" && [ "$depth" -eq 0 ] && RECLAIMED=1
      fi
      rm -rf "$m"; RECLAIM_MARK=""
-@@ -642,18 +651,20 @@
+@@ -642,18 +654,20 @@
    return 0
  }
  acquire_lock() {
@@ -117,7 +135,7 @@
      if lock_is_stale "$LOCK_DIR" "$holder"; then
        RECLAIMED=0
        reclaim_lock "$LOCK_DIR" "$holder" 0
-@@ -661,9 +672,11 @@
+@@ -661,9 +675,11 @@
          warn "reclaimed a stale lock left by pid ${holder:-unknown}"
          continue
        fi
@@ -130,7 +148,7 @@
      fi
      sleep 1
    done
-@@ -759,7 +772,7 @@
+@@ -759,7 +775,7 @@
    out="$(g ls-remote --exit-code origin "refs/heads/$BRANCH" 2>/dev/null)"; rc=$?
    REMOTE_SHA=""
    case "$rc" in
@@ -139,7 +157,7 @@
         [ -n "$REMOTE_SHA" ] || REMOTE_STATE="unreachable" ;;
      2) REMOTE_STATE="absent" ;;
      *) REMOTE_STATE="unreachable" ;;
-@@ -1169,23 +1182,35 @@
+@@ -1169,23 +1185,35 @@
    if [ "$4" = "1" ]; then echo "meta_sync: scrub-hit $1:$3: $2"; else echo "meta_sync: scrub $1: $2"; fi
  }
  
@@ -185,7 +203,7 @@
  }
  
  # first_match_line <i|s|e> <ERE> <file> — the 1-based number of the first line matching <ERE> (i = any
-@@ -1213,7 +1238,7 @@
+@@ -1213,7 +1241,7 @@
  scan_file() {
    local f="$1" p="$2" wl="${3:-0}" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc icase ln
    # rule<TAB>case(i = any letter case, s = exact, e = email: any letter case minus the exact forge
@@ -194,7 +212,7 @@
    while IFS="$TAB" read -r rule icase re; do
      case "$icase" in
        e) email_matches "$re" "$f" >/dev/null; rc=$? ;;
-@@ -1238,7 +1263,7 @@
+@@ -1238,7 +1266,7 @@
    # extractions are case-INSENSITIVE (a host or key in any case is the same context) and the output
    # is lowercased BEFORE the sed strip, so the strip patterns only ever see lowercase. The repo key
    # and its value may be bare or wrapped in double, single or back quotes.
@@ -203,7 +221,7 @@
    {
      env LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
        | tr 'A-Z' 'a-z' | sed -E 's#^[^/:]+[/:]##; s#^repos/##'
-@@ -1247,12 +1272,22 @@
+@@ -1247,12 +1275,22 @@
    } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | env LC_ALL=C sort -u > "$slugs"
    while IFS= read -r s; do
      [ -n "$s" ] || continue
@@ -231,7 +249,7 @@
    done < "$slugs"
    [ "$bad" -eq 1 ] && { scrub_report "$p" forge_slug - "$wl"; hits=1; }
    # project deny patterns — tracked DATA, handed to grep -E, never executed.
-@@ -1643,7 +1678,10 @@
+@@ -1643,7 +1681,10 @@
      fi
      commit="$(printf '%s\n' "$MESSAGE" | g commit-tree "$newtree" -p "$R")" \
        || die "commit-tree failed (is user.name / user.email configured?)"

@@ -418,10 +418,13 @@
 # list (an UNREADABLE git index is: exit 1, nothing changed).
 #
 # Callers: automate-helpers.sh `meta-entry` (pull), automate-trail.sh `trail-pr` (push
-# --paths-from) and automate-lanes.sh `lane-remove` (status --paths) — each passes `--branch <the
-# mode's branch>`, which the mode check accepts. meta-entry's pull takes the learning stores like
-# any managed path (a tracked one excepted — TRACKED LEARNING STORES); trail-pr's (and the lanes') exact --paths-from lists never name them, so they
-# are published by a whole-set push (no --paths-from) only.
+# --paths-from), automate-lanes.sh `lane-remove` (status --paths) and automate-helpers.sh
+# `meta-publish` (list-managed --run-history, scrub --paths-from, push --paths-from) — each
+# pull / push / status passes `--branch <the mode's branch>`, which the mode check accepts.
+# meta-entry's pull takes the learning stores like any managed path (a tracked one excepted —
+# TRACKED LEARNING STORES); trail-pr's, the lanes' and meta-publish's (requirement files only)
+# exact --paths-from lists never name them, so they are published by a whole-set push (no
+# --paths-from) only.
 
 # Modules (sourced in this order from meta-sync.d/):
 # - lock.sh: the per-root lock (pull / push) — g, the per-run temp dir WORK (META_INDEX,

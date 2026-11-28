@@ -2,7 +2,7 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/meta.golden.
 #:  meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing itself; the meta-sync pull it runs may update managed .supervisor/automate/ files; always exits 0
 #:  meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
-#:  meta-publish     --paths-from <file> [--root <checkout>]  # §"Branch mode": publish-on-write for /product-owner and /orchestrator — reads `setup-memory.sh mode` itself; mode on and not an /automate lane ⇒ refuses a path outside `meta-sync.sh list-managed`, scrubs, then `meta-sync.sh push --paths-from` (exactly the listed paths, never a whole set); ONE `meta-publish: skipped|refused|blocked|pushed|no_changes|FAILED …` line first, then any scrub-hit lines; never undoes a write; always exits 0
+#:  meta-publish     --paths-from <file> [--root <checkout>]  # §"Branch mode": publish-on-write for /product-owner and /orchestrator — reads `setup-memory.sh mode` itself; mode on and not an /automate lane ⇒ refuses a path that is not a `.supervisor/requirements/*.md` run-history path of `meta-sync.sh list-managed --run-history`, scrubs, then `meta-sync.sh push --paths-from` (exactly the listed paths, never a whole set); ONE `meta-publish: skipped|refused|blocked|pushed|no_changes|FAILED …` line first, then any scrub-hit lines; never undoes a write; always exits 0
 
 # --------------------------------------------------------------------------- #
 # §"Branch mode" — meta-entry (pull BEFORE the first read) + meta-push-failed + meta-publish
@@ -95,16 +95,19 @@ meta_push_failed() {
 #   - meta-publish: skipped — branch mode off: requirement files stay in this checkout
 #   - meta-publish: skipped — branch mode unknown (<reason>)
 #   - meta-publish: skipped — /automate lane: published at wave end (lane-convert-ready / lane-remove --abandon)
-#   - meta-publish: refused — not managed: <path>[; <path>…]   (nothing pushed; `(missing)` marks a listed path absent here)
+#   - meta-publish: refused — not a requirement file: <path>[; <path>…]   (nothing pushed; `(missing)` marks a listed path absent here)
 #   - meta-publish: refused — --paths-from <file> lists no path
 #   - meta-publish: blocked — scrub hit (nothing pushed; files kept locally)   then meta-sync's scrub lines
 #   - meta-publish: pushed <branch> <sha> (<n> path(s))
 #   - meta-publish: no_changes <branch>
-#   - meta-publish: FAILED — <reason>; retry: bash <meta-sync.sh> push --branch <b> --paths-from <file> --root <checkout>
+#   - meta-publish: FAILED — <reason>; retry: bash <meta-sync.sh> push --branch <b> --paths-from <file> --root <checkout>   (each value shell-quoted, printf %q)
 #   - meta-publish: FAILED — <misinvocation>   (a missing/option-shaped --root or --paths-from value)
 # Order: mode (setup-memory.sh mode — the one reader), lane check (automate-lanes.sh lane-info exit
-# 0 ⇒ skip: a lane publishes at wave end), managed check against `meta-sync.sh list-managed`
-# (meta-sync itself would skip a non-managed path SILENTLY), scrub dry run, then the push.
+# 0 ⇒ skip: a lane publishes at wave end), scope check — every listed path must be a planning
+# file, `.supervisor/requirements/*.md` (any depth), AND in `meta-sync.sh list-managed --run-history`
+# (meta-sync itself would skip a non-managed path SILENTLY; the scope keeps run files, job briefs
+# and the learning stores off this route — trail-pr's evidence gate and the consent-gated
+# whole-set push own those), scrub dry run, then the push.
 # LOOMWRIGHT_META_SYNC_BIN (the dispatcher's TEST SEAM) selects the meta-sync script for all three.
 meta_publish() {
   local root="" pf="" here mode branch ms out rc reason managed p bad="" n=0 sha cnt
@@ -133,7 +136,7 @@ meta_publish() {
   if bash "$here/automate-lanes.sh" lane-info --root "$root" >/dev/null 2>&1; then echo "meta-publish: skipped — /automate lane: published at wave end (lane-convert-ready / lane-remove --abandon)"; return 0; fi
   ms="${LOOMWRIGHT_META_SYNC_BIN:-$here/meta-sync.sh}"
   rc=0
-  managed="$(bash "$ms" list-managed --root "$root" 2>&1)" || rc=$?
+  managed="$(bash "$ms" list-managed --run-history --root "$root" 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     reason="$(printf '%s\n' "$managed" | sed -n 's/^meta_sync: //p' | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')"
     echo "meta-publish: FAILED — list-managed: ${reason:-meta-sync.sh list-managed exited $rc} (nothing pushed)"
@@ -142,10 +145,13 @@ meta_publish() {
   while IFS= read -r p || [ -n "$p" ]; do
     case "$p" in ""|"#"*) continue ;; esac
     n=$((n + 1))
-    grep -qxF -- "$p" <<<"$managed" || bad="${bad:+$bad; }$p$([ -e "$root/$p" ] || echo ' (missing)')"
+    case "$p" in
+      .supervisor/requirements/*.md) grep -qxF -- "$p" <<<"$managed" && continue ;;
+    esac
+    bad="${bad:+$bad; }$p$([ -e "$root/$p" ] || echo ' (missing)')"
   done < "$pf"
   [ "$n" -gt 0 ] || { echo "meta-publish: refused — --paths-from $pf lists no path"; return 0; }
-  [ -z "$bad" ] || { echo "meta-publish: refused — not managed: $bad"; return 0; }
+  [ -z "$bad" ] || { echo "meta-publish: refused — not a requirement file: $bad"; return 0; }
   rc=0
   out="$(bash "$ms" scrub --paths-from "$pf" --root "$root" 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -174,7 +180,7 @@ meta_publish() {
   fi
   reason="$(printf '%s\n' "$out" | sed -n 's/^meta_sync: //p' | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')"
   [ -n "$reason" ] || reason="meta-sync.sh push exited $rc"
-  echo "meta-publish: FAILED — $reason; retry: bash $ms push --branch $branch --paths-from $pf --root $root"
+  echo "meta-publish: FAILED — $reason; retry: $(printf 'bash %q push --branch %q --paths-from %q --root %q' "$ms" "$branch" "$pf" "$root")"
   return 0  # push failed: named above, the write stands
 }
 
