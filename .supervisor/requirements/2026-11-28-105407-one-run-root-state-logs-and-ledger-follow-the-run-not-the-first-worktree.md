@@ -40,6 +40,14 @@ still report to the run that created them.
 - [ ] Given one resolver for "the run root" (a single function or script every writer in Touches calls),
   when the writers are grepped, then none of them reads `git worktree list --porcelain`'s first entry
   directly.
+- [ ] Given a run in a linked worktree whose hooks wrote its session log under the run root, when
+  Supervisor FINALIZE point 5 checks that every child settled (`supervisor-next-step.sh`'s
+  `finalize-children` step and `guard-finalize-publish.sh`'s marker, both calling
+  `check-children-settled.sh`), then the log they read is resolved through the same run-root resolver
+  the writers use, so a child that ended reads settled. Today they read the worktree-relative
+  `.supervisor/logs/<session>.jsonl`, which does not exist there, and report an unsettled child
+  (2026-11-28, run automate-2026-11-28-081337, worker `a2da1c8f4d5ebaa41`: ended `completed` at
+  09:21:12Z in the primary's log, reported unsettled at SUP-CHILDREN).
 
 **Edge cases**
 - [ ] Given a run in the primary checkout, when it runs end to end, then every path it writes is
@@ -63,6 +71,8 @@ still report to the run that created them.
 - 2026-11-28 (Vikash, PO-ASSUME): the rule is "root = the run's checkout": the checkout where the run started
   is the one root; Supervisor marks each worker worktree it creates with that root; nothing pins to the
   first listed worktree any more.
+- 2026-11-28 (Vikash, via lw-dev): the readers of those logs are in scope too: FINALIZE's children-settled
+  check (`check-children-settled.sh` and its two callers) must resolve the log through the same resolver (#996).
 - 2026-11-28 (Vikash, standing rule): every defect gets a GitHub issue (#996), a linked requirement and a
   scratch-copy repro; fixes run in a later `/automate` run.
 
@@ -117,6 +127,9 @@ loomwright/scripts/close-stranded-run.sh
 loomwright/scripts/read-token-ledger.sh
 loomwright/scripts/run-lock.sh
 loomwright/scripts/run-root.sh
+loomwright/scripts/check-children-settled.sh
+loomwright/scripts/supervisor-next-step.sh
+loomwright/scripts/guard-finalize-publish.sh
 loomwright/agents/execute-manager.md
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 loomwright/docs/prompt-token-budgets.json
