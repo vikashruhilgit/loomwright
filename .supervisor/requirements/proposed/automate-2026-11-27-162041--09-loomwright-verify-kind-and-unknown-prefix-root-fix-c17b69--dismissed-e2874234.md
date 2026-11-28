@@ -11,7 +11,7 @@
 - **Severity:** unspecified
 - **Reason dismissed:** already-addressed
 - **Evidence:** PR body now reads "no unknown `<word>:` bullet" wording; review on eb01f24 confirms the stale hash-wording bullet is gone (eb01f24)
-- **Decision:** undecided
+- **Decision:** follow-up
 
 ## Depends on
 none

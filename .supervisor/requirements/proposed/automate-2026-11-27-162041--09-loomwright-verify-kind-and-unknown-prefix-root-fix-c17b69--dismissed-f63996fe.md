@@ -11,7 +11,7 @@
 - **Severity:** unspecified
 - **Reason dismissed:** already-addressed
 - **Evidence:** commit eb01f24 round: bullet removed from PR body; review on eb01f24 says "is gone from the current PR description — that's fixed"
-- **Decision:** undecided
+- **Decision:** follow-up
 
 ## Depends on
 none

@@ -88,6 +88,13 @@ me a synced file is local-only.
 - 2026-11-27 (Vikash): asked that Orchestrator be covered by the same change (it writes to the same folder).
 - 2026-11-27: the metadata branch is on the public repo `vikashruhilgit/loomwright`, so publishing on write
   makes a draft story public the moment it is written; the scrub runs first.
+- 2026-11-28 (Vikash, `/automate` scope gate after Launch Pad stopped on Plan Review FAIL 3/3): extend
+  `## Touches` with the 3 paths the plan needs: `loomwright/scripts/fixtures/automate-helpers-help/meta.golden`
+  (the help golden every new helper subcommand is added to), `loomwright/scripts/test-automate-helpers.d/12-meta.sh`
+  (where the branch-mode legs live) and `docs/evidence/po-publish-to-meta-branch.md` (the Validation 3 evidence).
+- 2026-11-28 (Vikash): this PR ships a `changelog.d/` fragment only and does NOT run
+  `scripts/bump-version.sh` or bump any version: an unfolded fragment merged without a bump is legal
+  (`changelog.d/README.md` §"Who runs the bump"), and the next bump folds it. No subtask owns a bump.
 
 ## Priority: MVP
 
@@ -143,4 +150,13 @@ loomwright/commands/orchestrator.md
 loomwright/skills/automate-loop/branch-mode.md
 loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/scripts/fixtures/automate-helpers-help/meta.golden
+loomwright/scripts/test-automate-helpers.d/12-meta.sh
+docs/evidence/po-publish-to-meta-branch.md
 changelog.d
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-28T08:08:25Z
+- **Brief:** .supervisor/jobs/done/2026-11-28-po-orchestrator-publish-to-meta-branch.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/999

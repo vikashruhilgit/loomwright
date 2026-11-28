@@ -11,7 +11,7 @@
 - **Severity:** unspecified
 - **Reason dismissed:** already-addressed
 - **Evidence:** docs/evidence/qa-split-09-verify-kind.md:85 now reads GROUND_TRUTH_VERIFY_BASE="origin/$BASE_BRANCH" (completion-tail.md), fixed in 0d160a2
-- **Decision:** undecided
+- **Decision:** follow-up
 
 ## Depends on
 none
