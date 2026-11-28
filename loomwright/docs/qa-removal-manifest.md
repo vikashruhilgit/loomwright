@@ -23,7 +23,7 @@ How to read a row (the full format contract is the checker's header comment):
 - `keep` — the path must still exist and, when a reference is given, still contain it. Every keep row is
   item 11b1, so every `--expect` level checks it. Keep rows protect what is not QA (`verify-provides.sh`
   and the `outputs_verified` gate, the `unit-testing` and `quality-checklist` skills), the `qa-executor:`
-  Executable Acceptance kind (kept until Phase 3 item 09 or D18 lands), this item's own files, and
+  Executable Acceptance prefix (kept as the alias of the `verify:` kind), this item's own files, and
   history (the changelog, evidence records, rationale docs, dated spikes, recorded fixtures).
 
 This doc restates no plugin count: the agent, command and skill counts live in the `description` field
@@ -423,8 +423,8 @@ Row count: 441
 | `docs/evidence/qa-split-11b1-removal.md` | — | keep | 11b1 | evidence record (history by design) |
 | `docs/evidence/review-gate-rounds.md` | — | keep | 11b1 | evidence record (history) |
 | `loomwright/agents/execute-manager.md` | `outputs_verified gate` | keep | 11b1 | home of the `outputs_verified` gate (the per-subtask gate); not QA |
-| `loomwright/agents/launch-pad.md` | `qa-executor:` | keep | 11b1 | keeps `qa-executor:` bullets when stripping `cmd:` bullets; kept until Phase 3 item 09 or D18 |
-| `loomwright/agents/plan-reviewer.md` | `qa-executor:` | keep | 11b1 | classifier sentence names the kept `qa-executor:` prefix; kept until Phase 3 item 09 or D18 |
+| `loomwright/agents/launch-pad.md` | `qa-executor:` | keep | 11b1 | keeps `verify:` bullets and their `qa-executor:` alias when stripping `cmd:` bullets; `qa-executor:` is kept as the `verify:` alias |
+| `loomwright/agents/plan-reviewer.md` | `qa-executor:` | keep | 11b1 | classifier sentence names the `qa-executor:` prefix; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/docs/IMPROVEMENTS_ROADMAP.md` | — | keep | 11b1 | dated roadmap with resolved verdicts (history) |
 | `loomwright/docs/POINTER_AUDIT.md` | — | keep | 11b1 | dated audit record (history) |
 | `loomwright/docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md` | — | keep | 11b1 | dated spike (history) |
@@ -434,21 +434,21 @@ Row count: 441
 | `loomwright/docs/SPIKES/LOCAL_TWIN_PATH.md` | — | keep | 11b1 | dated spike (history) |
 | `loomwright/docs/SPIKES/QA_AND_DURABILITY_BACKLOG.md` | — | keep | 11b1 | dated spike (history; superseded by the qa-split plan) |
 | `loomwright/docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` | — | keep | 11b1 | dated spike (history) |
-| `loomwright/docs/loop-inventory/launch-pad-autonomous.md` | `qa-executor:` | keep | 11b1 | inventory row for the kept `qa-executor:` bullets; kept until Phase 3 item 09 or D18 |
-| `loomwright/docs/loop-inventory/supervisor.md` | `qa-executor:` | keep | 11b1 | inventory row for the deferred `qa-executor:` checks; kept until Phase 3 item 09 or D18 |
+| `loomwright/docs/loop-inventory/launch-pad-autonomous.md` | `qa-executor:` | keep | 11b1 | inventory row for the kept `verify:` bullets and their `qa-executor:` alias; `qa-executor:` is kept as the `verify:` alias |
+| `loomwright/docs/loop-inventory/supervisor.md` | `qa-executor:` | keep | 11b1 | inventory row for the `verify:` checks and their `qa-executor:` alias; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/docs/qa-removal-manifest.md` | — | keep | 11b1 | this manifest: the reviewed list 11b1, 11b2 and 12 are checked against |
 | `loomwright/docs/rationale/automate-loop.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/rationale/launch-pad-autonomous.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/rationale/qa-split.md` | — | keep | 11b1 | rationale doc (history by design) |
 | `loomwright/docs/rationale/subagents.md` | — | keep | 11b1 | rationale doc (history by design) |
-| `loomwright/docs/result-schemas/ground-truth-json.md` | `qa-executor:` | keep | 11b1 | schema of the kept `qa-executor:` kind; kept until Phase 3 item 09 or D18 |
-| `loomwright/docs/result-schemas/schema-versioning.md` | `cmd\|corpus-task\|qa-executor` | keep | 11b1 | the GROUND_TRUTH_JSON entry's kind enum names the kept `qa-executor` kind; kept until Phase 3 item 09 or D18 |
-| `loomwright/docs/result-schemas/supervisor-result.md` | `qa-executor` | keep | 11b1 | its one `qa-executor` mention is the deferred kind; kept until Phase 3 item 09 or D18 |
+| `loomwright/docs/result-schemas/ground-truth-json.md` | `qa-executor:` | keep | 11b1 | schema of the `verify:` kind and its `qa-executor:` alias; `qa-executor:` is kept as the `verify:` alias |
+| `loomwright/docs/result-schemas/schema-versioning.md` | `cmd\|corpus-task\|qa-executor` | keep | 11b1 | history: the GROUND_TRUTH_JSON entry's kind enum as first shipped, naming the `qa-executor` kind (now the `verify:` alias) |
+| `loomwright/docs/result-schemas/supervisor-result.md` | `qa-executor` | keep | 11b1 | its one `qa-executor` mention names the `verify:` alias; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/scripts/automate-dismissed.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/automate-helpers.d/plan-waves.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/check-qa-removal-manifest.sh` | — | keep | 11b1 | the checker of this manifest |
-| `loomwright/scripts/exec-acceptance-hash.sh` | `qa-executor:` | keep | 11b1 | documents the kept `qa-executor:` Executable Acceptance kind; kept until Phase 3 item 09 or D18 |
-| `loomwright/scripts/exec-acceptance-lib.sh` | `qa-executor:*)` | keep | 11b1 | `classify_kind`'s `qa-executor` arm: kept until Phase 3 item 09 or D18 lands (owner decision 2026-11-12) |
+| `loomwright/scripts/exec-acceptance-hash.sh` | `qa-executor:` | keep | 11b1 | documents the `qa-executor:` alias in the hash input; `qa-executor:` is kept as the `verify:` alias |
+| `loomwright/scripts/exec-acceptance-lib.sh` | `qa-executor:*)` | keep | 11b1 | `classify_kind`'s `qa-executor` arm, which maps to `verify`; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/scripts/fixtures/closed-enum-pins/brief-plain.md` | — | keep | 11b1 | sample brief text in a fixture; QA names are its content, not a coupling |
 | `loomwright/scripts/fixtures/corpus-briefs/done/2026-09-15-verify-auth-pause.md` | — | keep | 11b1 | recorded done-brief in the eval corpus (fixture data) |
 | `loomwright/scripts/fixtures/corpus-briefs/done/2026-09-16-verify-impact-pass.md` | — | keep | 11b1 | recorded done-brief in the eval corpus (fixture data) |
@@ -459,24 +459,24 @@ Row count: 441
 | `loomwright/scripts/fixtures/pr-body-evidence/brief-pr-description.md` | — | keep | 11b1 | sample brief text in a fixture; QA names are its content |
 | `loomwright/scripts/guard-test-integrity.sh` | `playwright.config` | keep | 11b1 | generic test-runner config detection, not the QA system |
 | `loomwright/scripts/propose-common.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
-| `loomwright/scripts/run-ground-truth.sh` | `qa_executor_dispatch_deferred_m2b_1b` | keep | 11b1 | the deferred `qa-executor` branch: records DEFERRED, spawns nothing; kept until Phase 3 item 09 or D18 |
+| `loomwright/scripts/run-ground-truth.sh` | `qa-executor: <criterion text>` | keep | 11b1 | the header's `verify:` kind entry naming its `qa-executor:` alias; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/scripts/test-automate-dismissed.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/test-automate-helpers.d/13-plan-waves.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/test-automate-helpers.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/test-check-qa-removal-manifest.sh` | — | keep | 11b1 | the checker's self-test; its fixtures name QA terms on purpose |
 | `loomwright/scripts/test-classify-bot-review.sh` | — | keep | 11b1 | recorded bot-review PR body used as test input (fixture data) |
 | `loomwright/scripts/test-classify-risk.sh` | `.agent/verify.json` | keep | 11b1 | 12 keeps a negative test: an edit to the old path alone is no longer high-risk |
-| `loomwright/scripts/test-exec-acceptance-hash.sh` | `qa-executor:` | keep | 11b1 | pins the kept `qa-executor:` kind; kept until Phase 3 item 09 or D18 |
+| `loomwright/scripts/test-exec-acceptance-hash.sh` | `qa-executor:` | keep | 11b1 | pins that `qa-executor:` lines are hashed as the `verify:` alias; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/scripts/test-hermetic-egress.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
 | `loomwright/scripts/test-propose-common.sh` | `propose-from-verify.sh` | keep | 11b1 | names the `/propose` verify basis, which 12 re-points in place (the script name stays) |
-| `loomwright/scripts/test-rule-conformance-seam.sh` | `qa-executor:` | keep | 11b1 | pins the kept `qa-executor:` prefix in a classifier sentence; kept until Phase 3 item 09 or D18 |
-| `loomwright/scripts/test-run-ground-truth.sh` | `qa-executor:` | keep | 11b1 | pins the deferred `qa-executor` branch; kept until Phase 3 item 09 or D18 |
+| `loomwright/scripts/test-rule-conformance-seam.sh` | `qa-executor:` | keep | 11b1 | pins the `qa-executor:` prefix in a classifier sentence; `qa-executor:` is kept as the `verify:` alias |
+| `loomwright/scripts/test-run-ground-truth.sh` | `qa-executor:` | keep | 11b1 | pins that a `qa-executor:` line is checked as the `verify` kind; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/scripts/test-send-telemetry-core.sh` | `QA_RESULT` | keep | 11b1 | `no_qa_schema_scored` negative pin feeds the removed name to the core; 12 keeps it |
 | `loomwright/scripts/test-verify-provides.sh` | — | keep | 11b1 | self-test of the `outputs_verified` gate; not QA |
 | `loomwright/scripts/verify-provides.sh` | — | keep | 11b1 | the `outputs_verified` gate; not QA, only its name starts with `verify` (plan section 6, Phase 4) |
 | `loomwright/skills/quality-checklist/` | — | keep | 11b1 | general review checklist, not QA (plan section 6, Phase 4) |
-| `loomwright/skills/self-heal-advisory/completion-tail.md` | `qa-executor:` | keep | 11b1 | documents the deferred `qa-executor:` checks; kept until Phase 3 item 09 or D18 |
-| `loomwright/skills/supervisor-readiness/SKILL.md` | `qa-executor:` | keep | 11b1 | documents the kept `qa-executor:` kind; kept until Phase 3 item 09 or D18 |
+| `loomwright/skills/self-heal-advisory/completion-tail.md` | `qa-executor:` | keep | 11b1 | documents the `verify:` checks and their `qa-executor:` alias; `qa-executor:` is kept as the `verify:` alias |
+| `loomwright/skills/supervisor-readiness/SKILL.md` | `qa-executor:` | keep | 11b1 | documents the `verify:` kind and its `qa-executor:` alias; `qa-executor:` is kept as the `verify:` alias |
 | `loomwright/skills/unit-testing/` | — | keep | 11b1 | general testing skill, not QA (plan section 6, Phase 4) |
 
 ## Rollback

@@ -156,7 +156,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-137 | agents/launch-pad.md | q: **Executable Acceptance `cmd:`/bare-bullet NEEDS_HUMAN (Criterion 14).** | a Criterion 14 executable_acceptance issue | quote the flagged bullets verbatim, never paraphrase | rule | step-scoped | - | GAP |
 | LP-138 | agents/launch-pad.md | q: quoting every flagged bullet verbatim in the question text | interactive run | ask with exactly three options: approve-and-stamp / strip-cmd-bullets / discard | deterministic | prose | - | GAP |
 | LP-139 | agents/launch-pad.md | q: **`approve-and-stamp`** — compute the current stamp | user picks approve-and-stamp | write the Executable Acceptance Approved stamp into Configuration, re-run MATERIALIZE and Plan Review (consumes an attempt) | deterministic | prose | script:exec-acceptance-hash.sh | test-exec-acceptance-hash.sh |
-| LP-140 | agents/launch-pad.md | q: **`strip-cmd-bullets`** — remove every flagged | user picks strip-cmd-bullets | remove flagged cmd:/bare bullets (keep corpus-task:/qa-executor:), re-run MATERIALIZE and Plan Review | deterministic | prose | - | GAP |
+| LP-140 | agents/launch-pad.md | q: **`strip-cmd-bullets`** — remove every flagged | user picks strip-cmd-bullets | remove flagged cmd:/bare bullets (keep corpus-task:/rule:/verify:, alias qa-executor:), re-run MATERIALIZE and Plan Review | deterministic | prose | - | GAP |
 | LP-141 | agents/launch-pad.md | q: **`discard`** — Cancel without saving (`status: discarded`). | user picks discard (action 2a) | cancel without saving; status discarded | deterministic | prose | - | GAP |
 | LP-142 | agents/launch-pad.md | q: and never proceed with an unreviewed executable brief — automatically strip | non-interactive run with a Criterion 14 issue | auto-strip the flagged bullets, re-run MATERIALIZE and Plan Review, record cmd_bullets_stripped_non_interactive | deterministic | prose | - | GAP |
 | LP-143 | agents/launch-pad.md | q: **Idempotency / cap exhaustion:** both branches consume an attempt | the 3-spawn cap is exhausted | fall through to the FAIL x3 handling (action 4) rather than loop | deterministic | prose | - | GAP |
@@ -608,7 +608,7 @@ This file lists every branch (condition → action) and every standing rule stat
 47. LP-126 — the at-floor PASS refine loop consumes review attempts; the branch is untested
 48. LP-127 — deferred at-floor issues must never block save; untested
 49. LP-132 — NEEDS_HUMAN routing (2a / 2b / generic) is untested
-50. LP-140 — strip-cmd-bullets must keep corpus-task:/qa-executor: bullets; untested
+50. LP-140 — strip-cmd-bullets must keep corpus-task:/rule:/verify: (alias qa-executor:) bullets; untested
 51. LP-143 — cap exhaustion in action 2a must fall through to FAIL handling; untested
 52. LP-149 — 17c resolution must re-run MATERIALIZE and Plan Review; untested
 53. LP-168 — blockers suppress save (save rules copy); untested
