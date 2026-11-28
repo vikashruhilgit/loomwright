@@ -5,9 +5,9 @@
 # `rule:` and `unknown_kind` bullets excluded), or the literal `none` when that filtered list is
 # empty (including when the section itself is absent). Kinds (exec-acceptance-lib.sh's
 # classify_kind): `cmd` | `corpus-task` | `rule` | `verify` | `unknown_kind`. A brief with no
-# `verify:`/`qa-executor:` bullet and no unknown-prefix bullet hashes exactly as under the earlier
-# cmd-only rule; any other stamped brief must be re-stamped (its `cmd:` bullets read `cmd_unapproved`
-# until then).
+# `qa-executor:` bullet and no unknown `<word>:` bullet (a prefix other than `cmd:`/`corpus-task:`/
+# `rule:`/`verify:`) hashes exactly as before (a `verify:` bullet was already hashed whole as a bare
+# line); a brief with either must be re-stamped (its `cmd:` bullets read `cmd_unapproved` until then).
 # The stamp still gates only `cmd:`/bare bullets at run time; `verify:` bullets run unstamped.
 #
 # This is the HUMAN-FACING / brief-authoring half of the content-keyed stamp gate (red-team-

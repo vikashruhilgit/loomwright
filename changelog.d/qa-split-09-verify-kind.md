@@ -4,8 +4,9 @@ A brief's `## Executable Acceptance` line that starts with an unknown `<word>:` 
 `verfy: the cart total updates`) used to be hashed into the stamp and, once stamped, run as a shell command. It is
 now the kind `unknown_kind`: never hashed, never run, recorded `unverified` with reason `unknown_kind`, and Plan
 Review Criterion 14 lists it as a line that will not run. A bare line with no such prefix is still a shell `cmd`,
-and a brief with no `verify:`/`qa-executor:` line and no unknown-prefix line hashes exactly as before; any other
-stamped brief must be re-stamped (its `cmd:` lines read `cmd_unapproved` until then). The new `verify:`
+and a brief with no `qa-executor:` line and no unknown `<word>:` line (a prefix other than `cmd:`/`corpus-task:`/
+`rule:`/`verify:`) hashes exactly as before (a `verify:` line was already hashed whole as a bare line); a brief
+with either must be re-stamped (its `cmd:` lines read `cmd_unapproved` until then). The new `verify:`
 kind (`qa-executor:` is kept as its alias) holds a criterion about what a user sees. `run-ground-truth.sh` sends
 every `verify:` line of a run to ONE Selvedge run through the new driver `ground-truth-verify.sh` (`criteria
 from-text`, then `plan --base <ref>`, then `run`), and maps each criterion's verdict from that run's
