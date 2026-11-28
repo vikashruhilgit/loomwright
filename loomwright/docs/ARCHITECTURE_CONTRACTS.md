@@ -595,9 +595,9 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
 | `launch-pad`        | 52591 | 47810¹ | 7 |
-| `orchestrator`      | 10357 | 9415¹ | 1 |
+| `orchestrator`      | 10357 | 9849¹ | 1 |
 | `plan-reviewer`     | 12462 | 11382¹ | 0 |
-| `product-owner`     | 19533 | 17757¹ | 3 |
+| `product-owner`     | 19533 | 18053¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
 | `review-pr`         | 30226 | 27478¹ | 2 |
 | `rubric-grader`     | 2486  | 2260¹ | 0 |
@@ -619,6 +619,8 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 > **Re-measure log (no raise — requirement-to-plan-checks, 2026-11-02):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agents `launch-pad` 44872 → 45127 (2430 headroom; the Phase 5.5 `--- SOURCE REQUIREMENT ---` spawn-contract paste and the refine branch's add-coverage rule), `product-owner` 15939 → 16719 (637 headroom; its Output Format and Persist step gained Non-goals, Owner decisions and Validation, plus the missing-proof flag); command `launch-pad` 5143 → 5326 (189 headroom; Criterion 22 in the Phase 5.5 conditional list). No budget breached; none raised, per the anti-treadmill rule. The two agent rows are ¹-marked LIVE rows; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
 > **Raise log (qa-split/09, the `verify:` kind and the `unknown_kind` refusal, 2026-11-28):** `launch-pad` 47557 → 52591 (measured 47556 → 47810¹) — Phase 6 action 2a's `strip-cmd-bullets` keep list and its non-interactive twin now name `rule:` and `verify:` (with its alias) and say an `unknown_kind` bullet is never flagged, and the preloaded `supervisor-readiness` skill's Executable Acceptance kind bullets gained `verify:` and `unknown_kind` and the new hash input; the breach was 253, restored to measured + ~10% per the raise rule. `plan-reviewer` (Criterion 14's `verify:` and `unknown_kind` LOW issues, live 11382 → 11713) and skills `self-heal-advisory` / `supervisor-readiness` stayed within budget, unchanged.
+
+> **Re-measure log (no raise — PO/Orchestrator publish-on-write, 2026-11-28):** live weight before → after this change, every `budget` unchanged (none breached), per `bash scripts/check-token-budget.sh`: agents `orchestrator` 9607 → 9849 (508 headroom), `product-owner` 17757 → 18053 (1480); commands `orchestrator` 3508 → 3751 (**108, 2.8%** — the next PR that grows it is likely to breach), `product-owner` 11617 → 11912 (867). The growth is the Persistence Mode publish step (`automate-helpers.sh meta-publish`) and the reworded Collaboration note, each mirrored in the agent and command copies. The four `measured` cells and JSON fields carry these figures.
 
 > **Raise log (#919, defect evidence at intake, 2026-11-15):** agent `product-owner` 17356 → 19533 (measured 17195 → 17757¹); command `product-owner` 11537 → 12779 (measured 11004 → 11617); skill `user-story-writing` 5709 → 6381 (measured 5535 → 5801), each raised to measured + ~10% per `bash scripts/check-token-budget.sh`. The growth is the mirrored **Defect evidence:** drafting bullet (three evidence classes), the unproven-defect flag at the Pre-persist gate (Assumption Check and Output Format lines, the 3a trigger, the `PO-DEFECT` option bullet, the `<n>` count, a checklist line) and the skill's Story Template bullet with its rule. The agent row stays ¹-marked LIVE.
 
@@ -755,9 +757,9 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `janitor` | 1470 | 1456 |
 | `launch-pad` | 6857 | 6439 |
 | `obsidian` | 1518 | 1380 |
-| `orchestrator` | 3859 | 3508 |
+| `orchestrator` | 3859 | 3751 |
 | `pr-postmortem` | 2215 | 2013 |
-| `product-owner` | 12779 | 11617 |
+| `product-owner` | 12779 | 11912 |
 | `propose` | 6018 | 5471 |
 | `red-team-reviewer` | 2046 | 1860 |
 | `review-pr` | 2574 | 2340 |
